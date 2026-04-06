@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Friends App - Web Preview</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f3f3f3;
+            color: #333;
+        }
+        .container {
+            max-width: 375px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .title {
+            font-size: 32px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            font-size: 16px;
+            text-align: center;
+            margin-bottom: 32px;
+            color: #666;
+        }
+        .section {
+            margin-bottom: 32px;
+        }
+        .section-title {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 16px;
+        }
+        .status {
+            font-size: 16px;
+            margin-bottom: 16px;
+        }
+        .button {
+            background-color: #007AFF;
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            width: 100%;
+            margin-bottom: 12px;
+            cursor: pointer;
+        }
+        .button:hover {
+            background-color: #0056CC;
+        }
+        .response-container {
+            background-color: #f0f0f0;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .text {
+            font-size: 14px;
+            line-height: 20px;
+            color: #666;
+        }
+        .status-connected {
+            color: #34C759;
+        }
+        .status-error {
+            color: #FF3B30;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="title">Your Friends App</h1>
+        <p class="subtitle">React Native + Django</p>
+        
+        <div class="section">
+            <h2 class="section-title">Backend Connection</h2>
+            <p class="status">Status: <span id="status">Checking...</span></p>
+            <div id="response" class="response-container" style="display: none;"></div>
+            <button class="button" onclick="testConnection()">Test Connection</button>
+            <button class="button" onclick="showApiInfo()">API Info</button>
+        </div>
+        
+        <div class="section">
+            <h2 class="section-title">Next Steps</h2>
+            <p class="text">
+                • Start the Django backend: cd back && python3 manage.py runserver<br>
+                • Start the React Native app: cd front && npx react-native run-android<br>
+                • Build your features!
+            </p>
+        </div>
+    </div>
+
+    <script>
+        async function testConnection() {
+            const statusEl = document.getElementById('status');
+            const responseEl = document.getElementById('response');
+            
+            statusEl.textContent = 'Testing connection...';
+            statusEl.className = '';
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/health/');
+                const data = await response.json();
+                
+                statusEl.textContent = 'Connected ✅';
+                statusEl.className = 'status-connected';
+                
+                responseEl.textContent = data.message;
+                responseEl.style.display = 'block';
+            } catch (error) {
+                statusEl.textContent = 'Connection failed ❌';
+                statusEl.className = 'status-error';
+                responseEl.style.display = 'none';
+                console.error('API connection error:', error);
+            }
+        }
+        
+        async function showApiInfo() {
+            try {
+                const response = await fetch('http://localhost:8000/api/');
+                const data = await response.json();
+                alert(JSON.stringify(data, null, 2));
+            } catch (error) {
+                alert('Failed to fetch API info. Make sure the backend is running.');
+            }
+        }
+        
+        // Test connection on page load
+        window.onload = testConnection;
+    </script>
+</body>
+</html>
