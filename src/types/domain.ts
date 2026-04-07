@@ -37,6 +37,18 @@ export interface Contact {
   nickname: string | null;
   // Store facts the owner wants to remember about this contact.
   facts: string[];
+  // Optionally store a path or URL for the contact's avatar image.
+  avatarPath?: string | null;
+  // Store relationship tags for this contact (e.g. "Best Friend", "Family").
+  tags: string[];
+  // Optionally store a short note or description about this contact.
+  note: string | null;
+  // Optionally store a card background color for this contact.
+  cardColor: string | null;
+  // Optionally store a profile background theme key.
+  profileBg: string | null;
+  // Whether this contact is pinned to the front of the carousel.
+  pinned: boolean;
   // Store the ISO timestamp for when the contact was created.
   createdAt: string;
 } // End the Contact interface.
@@ -71,8 +83,18 @@ export interface PeopleListItem {
   caption: string;
   // Store the accent color used for this person's avatar block.
   avatarColor: string;
+  // Optionally store an image URI for this person's avatar.
+  imageUri?: string | null;
+  // Store relationship tags shown on the card.
+  tags: string[];
+  // Optionally store a short note about this person.
+  note?: string | null;
+  // Optionally store a card background color.
+  cardColor?: string | null;
   // Optionally include a linked real user ID when the list item represents a linked contact.
   linkedUserId?: string | null;
+  // Whether this item is pinned to the front.
+  pinned?: boolean;
 } // End the PeopleListItem interface.
 
 // Describe the minimum data needed to create a user-like record in app logic.
@@ -99,6 +121,8 @@ export interface WallPost {
   body: string;
   // Optionally store the image URL or path attached to the memory.
   imageUri: string | null;
+  // Optionally store a custom card color for the polaroid frame.
+  cardColor: string | null;
   // Store the ISO timestamp for when the memory was created.
   createdAt: string;
 } // End the WallPost interface.
@@ -115,6 +139,8 @@ export interface CreateWallPostInput {
   body: string;
   // Optionally store the uploaded image URL or path for the new post.
   imageUri: string | null;
+  // Optionally store a card color for the new post.
+  cardColor?: string | null;
 } // End the CreateWallPostInput interface.
 
 // Describe the payload needed when creating a new private contact.
@@ -134,4 +160,17 @@ export interface FriendFact {
 export interface CreateFriendFactInput {
   subjectUserId: string;
   body: string;
+}
+
+export type NotificationType = 'wall_post' | 'friend_request' | 'contact_update';
+
+export interface Notification {
+  id: string;
+  recipientUserId: string;
+  actorUserId: string;
+  type: NotificationType;
+  referenceId: string | null;
+  message: string;
+  read: boolean;
+  createdAt: string;
 }

@@ -1,5 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { createContext, ReactNode, useCallback, useContext, useEffect } from 'react';
+import { decode } from 'base64-arraybuffer';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useRef } from 'react';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import { supabase } from '../../lib/supabase';
 import { accentPalette } from '../../theme/tokens';
@@ -11,6 +13,7 @@ import {
   CreateWallPostInput,
   FriendFact,
   Friendship,
+  Notification,
   PeopleListItem,
   WallPost,
 } from '../../types/domain';
@@ -20,7 +23,7 @@ interface SocialGraphContextValue {
   // Expose the raw contact list because several screens use it directly.
   contacts: Contact[];
   // Expose a helper for creating friendships through a friend code lookup.
-  addFriendByCode: (currentUserId: string, friendCode: string) => Promise<{ ok: true; friend: AppUser } | { ok: false; error: string }>;
+  addFriendByCode: (currentUserId: string, friendCode: string) => Promise<{ ok: true; friend: AppUser; contactId: string | null } | { ok: false; error: string }>;
   // Expose a helper for creating a private manual contact.
   addManualContact: (ownerUserId: string, input: CreateContactInput) => Promise<Contact>;
   // Expose a helper for creating a memory post.
@@ -35,11 +38,26 @@ interface SocialGraphContextValue {
   getUserById: (userId: string) => AppUser | undefined;
   // Expose a helper that returns wall posts for a given user or contact subject.
   getWallPostsForSubject: (subjectId: string, subjectType: 'user' | 'contact') => WallPost[];
+  // Return all visible_to_subject posts by a given author – RLS guarantees they're about the current user.
+  getVisiblePostsByAuthor: (authorId: string) => WallPost[];
+  // Find the contact card another user created about the current user.
+  getContactAboutMe: (ownerUserId: string, myUserId: string) => Contact | undefined;
   // Expose a helper that answers whether two real users are already connected.
   isConnected: (leftUserId: string, rightUserId: string) => boolean;
   addFriendFact: (authorUserId: string, input: CreateFriendFactInput) => Promise<FriendFact>;
   deleteFriendFact: (factId: string) => Promise<void>;
   getFriendFactsFor: (authorUserId: string, subjectUserId: string) => FriendFact[];
+  deleteWallPost: (postId: string) => Promise<void>;
+  updateWallPost: (postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null) => Promise<void>;
+  updateContact: (contactId: string, updates: { displayName?: string; avatarLocalUri?: string | null; tags?: string[]; linkedUserId?: string | null }) => Promise<void>;
+  addContactFact: (contactId: string, fact: string) => Promise<void>;
+  deleteContactFact: (contactId: string, fact: string) => Promise<void>;
+  migrateContactPostsToUser: (contactId: string, userId: string) => Promise<void>;
+  togglePin: (contactId: string) => Promise<void>;
+  notifications: Notification[];
+  unreadCount: number;
+  markNotificationRead: (notificationId: string) => Promise<void>;
+  markAllNotificationsRead: () => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -87,6 +105,18 @@ function rowToContact(row: any): Contact {
     nickname: row.nickname ?? null,
     // Use the facts array or fall back to an empty array.
     facts: row.facts ?? [],
+    // Use the stored avatar path or null if there is none.
+    avatarPath: row.avatar_path ?? null,
+    // Use the tags array or fall back to an empty array.
+    tags: row.tags ?? [],
+    // Use the stored note or null if there is none.
+    note: row.note ?? null,
+    // Use the stored card color or null if there is none.
+    cardColor: row.card_color ?? null,
+    // Use the stored profile background key or null if there is none.
+    profileBg: row.profile_bg ?? null,
+    // Whether the contact is pinned.
+    pinned: row.pinned ?? false,
     // Copy the creation timestamp.
     createdAt: row.created_at,
   };
@@ -127,6 +157,8 @@ function rowToWallPost(row: any): WallPost {
     body: row.body,
     // Copy the stored image path or URL if one exists.
     imageUri: row.image_path ?? null,
+    // Copy the custom card color if one exists.
+    cardColor: row.card_color ?? null,
     // Copy the creation timestamp.
     createdAt: row.created_at,
   };
@@ -149,6 +181,7 @@ export const socialQueryKeys = {
   friendships: ['social', 'friendships'] as const,
   wallPosts: ['social', 'wallPosts'] as const,
   friendFacts: ['social', 'friendFacts'] as const,
+  notifications: ['social', 'notifications'] as const,
   all: ['social'] as const,
 };
 
@@ -183,6 +216,25 @@ async function fetchFriendFacts(): Promise<FriendFact[]> {
   return (data ?? []).map(rowToFriendFact);
 }
 
+function rowToNotification(row: any): Notification {
+  return {
+    id: row.id,
+    recipientUserId: row.recipient_user_id,
+    actorUserId: row.actor_user_id,
+    type: row.type,
+    referenceId: row.reference_id ?? null,
+    message: row.message,
+    read: row.read,
+    createdAt: row.created_at,
+  };
+}
+
+async function fetchNotifications(): Promise<Notification[]> {
+  const { data, error } = await supabase.from('notifications').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map(rowToNotification);
+}
+
 export function SocialGraphProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
 
@@ -192,6 +244,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   const friendshipsQuery = useQuery({ queryKey: socialQueryKeys.friendships, queryFn: fetchFriendships });
   const wallPostsQuery = useQuery({ queryKey: socialQueryKeys.wallPosts, queryFn: fetchWallPosts });
   const friendFactsQuery = useQuery({ queryKey: socialQueryKeys.friendFacts, queryFn: fetchFriendFacts });
+  const notificationsQuery = useQuery({ queryKey: socialQueryKeys.notifications, queryFn: fetchNotifications });
 
   // Derive arrays from query data (empty array while loading/errored).
   const users = usersQuery.data ?? [];
@@ -199,6 +252,8 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   const friendships = friendshipsQuery.data ?? [];
   const wallPosts = wallPostsQuery.data ?? [];
   const friendFacts = friendFactsQuery.data ?? [];
+  const notifications = notificationsQuery.data ?? [];
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   // Invalidate all social queries when auth state changes (sign-in, sign-out).
   useEffect(() => {
@@ -208,10 +263,91 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, [queryClient]);
 
+  // Realtime: subscribe to changes on wall_posts, contacts, and notifications
+  // so the UI updates live when someone posts about you or updates your contact.
+  useEffect(() => {
+    const channel = supabase
+      .channel('social-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wall_posts' }, () => {
+        queryClient.invalidateQueries({ queryKey: socialQueryKeys.wallPosts });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contacts' }, () => {
+        queryClient.invalidateQueries({ queryKey: socialQueryKeys.contacts });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
+        queryClient.invalidateQueries({ queryKey: socialQueryKeys.notifications });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => {
+        queryClient.invalidateQueries({ queryKey: socialQueryKeys.friendships });
+        queryClient.invalidateQueries({ queryKey: socialQueryKeys.users });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [queryClient]);
+
+  // One-time: create linked contacts for any friends that don't have one yet.
+  const didMigrateOrphans = useRef(false);
+  useEffect(() => {
+    if (didMigrateOrphans.current) return;
+    // Wait until ALL data is loaded — otherwise an empty contacts array
+    // causes us to think every friend is an orphan and create duplicates.
+    if (!usersQuery.isSuccess || !contactsQuery.isSuccess || !friendshipsQuery.isSuccess) return;
+    didMigrateOrphans.current = true;
+
+    (async () => {
+      // Determine the current auth user.
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
+      const myId = authUser.id;
+
+      // Find friend user IDs that are NOT covered by any linked contact.
+      const linkedIds = new Set(contacts.filter((c) => c.ownerUserId === myId && c.linkedUserId).map((c) => c.linkedUserId!));
+      const myFriendIds = friendships
+        .map((f) => f.userLowId === myId ? f.userHighId : f.userHighId === myId ? f.userLowId : null)
+        .filter((id): id is string => id !== null);
+      const orphanIds = myFriendIds.filter((id) => !linkedIds.has(id));
+      if (!orphanIds.length) return;
+
+      // Create a contact for each orphaned friend, using their profile as a template.
+      // Use upsert with ignoreDuplicates to avoid creating duplicates if one already exists.
+      const inserts = orphanIds.map((friendId) => {
+        const friend = users.find((u) => u.id === friendId);
+        return {
+          owner_user_id: myId,
+          linked_user_id: friendId,
+          display_name: friend?.displayName ?? 'Friend',
+          avatar_path: friend?.avatarPath ?? null,
+          facts: friend?.profileFacts?.length ? friend.profileFacts : [],
+        };
+      });
+      const { data: rows } = await supabase.from('contacts').upsert(inserts, { onConflict: 'owner_user_id,linked_user_id', ignoreDuplicates: true }).select();
+      if (rows?.length) {
+        const newContacts = rows.map(rowToContact);
+        queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) => [...newContacts, ...(old ?? [])]);
+      }
+    })();
+  }, [usersQuery.isSuccess, contactsQuery.isSuccess, friendshipsQuery.isSuccess, users, contacts, friendships, queryClient]);
+
   // refresh() invalidates all social queries, triggering background refetch.
   const refresh = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: socialQueryKeys.all });
   }, [queryClient]);
+
+  async function markNotificationRead(notificationId: string) {
+    await supabase.from('notifications').update({ read: true }).eq('id', notificationId);
+    queryClient.setQueryData<Notification[]>(socialQueryKeys.notifications, (old) =>
+      (old ?? []).map((n) => n.id === notificationId ? { ...n, read: true } : n),
+    );
+  }
+
+  async function markAllNotificationsRead() {
+    const unread = notifications.filter((n) => !n.read);
+    if (!unread.length) return;
+    await supabase.from('notifications').update({ read: true }).eq('read', false);
+    queryClient.setQueryData<Notification[]>(socialQueryKeys.notifications, (old) =>
+      (old ?? []).map((n) => ({ ...n, read: true })),
+    );
+  }
 
   // Look up a real user by ID from the in-memory users array.
   function getUserById(userId: string) {
@@ -278,6 +414,10 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       caption: 'Connected friend',
       // Reuse the friend's avatar color in the UI view model.
       avatarColor: friend.avatarColor,
+      // Include the friend's avatar image if one exists.
+      imageUri: friend.avatarPath ?? null,
+      // Friends don't have relationship tags yet.
+      tags: [],
     }));
 
     // Convert owned contacts into the same `PeopleListItem` shape so the UI can render both kinds together.
@@ -295,19 +435,42 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         // Use the contact display name as the title.
         title: contact.displayName,
         // Show either the nickname or a generic contact label as supporting text.
-        subtitle: contact.nickname ? `Saved as ${contact.nickname}` : 'Manual contact',
+        subtitle: contact.nickname ? `Saved as ${contact.nickname}` : contact.linkedUserId ? 'Connected friend' : 'Contact',
         // Show whether the contact is linked to a real account or remains private-only.
-        caption: contact.linkedUserId ? 'Linked to a real account' : 'Private contact',
+        caption: contact.linkedUserId ? 'Connected friend' : 'Contact',
         // Derive a stable accent color from the contact ID.
         avatarColor: getContactAccent(contact.id),
+        // Include the contact's avatar image if one exists.
+        imageUri: contact.avatarPath ?? null,
+        // Carry forward the contact's relationship tags.
+        tags: contact.tags ?? [],
+        // Carry forward the contact's note.
+        note: contact.note ?? null,
+        // Carry forward the contact's card color.
+        cardColor: contact.cardColor ?? null,
         // Carry forward any linked real-user ID the contact may have.
         linkedUserId: contact.linkedUserId,
+        // Carry forward pinned status.
+        pinned: contact.pinned,
       }));
 
-    // Combine friends and contacts into one list and sort newest-first for the UI.
-    return [...friendItems, ...contactItems].sort((a, b) =>
-      // Sort descending by timestamp so the most recent relationships appear first.
-      b.createdAt.localeCompare(a.createdAt),
+    // Collect user IDs that are already represented by a linked contact so we
+    // don't show the same person twice (once as a friend AND once as a contact).
+    const linkedUserIds = new Set(
+      contacts
+        .filter((c) => c.ownerUserId === userId && c.linkedUserId)
+        .map((c) => c.linkedUserId!),
+    );
+
+    // Combine friends and contacts into one list, dropping friend entries that
+    // are already covered by a linked contact, then sort pinned first, then newest.
+    return [...friendItems.filter((f) => !linkedUserIds.has(f.id)), ...contactItems].sort(
+      (a, b) => {
+        const pinA = a.pinned ? 1 : 0;
+        const pinB = b.pinned ? 1 : 0;
+        if (pinA !== pinB) return pinB - pinA;
+        return b.createdAt.localeCompare(a.createdAt);
+      },
     );
   } // End getPeopleListForUser after building and sorting the mixed list.
 
@@ -378,10 +541,53 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ queryKey: socialQueryKeys.users }),
     ]);
 
-    // Map the found raw profile row into the app's `AppUser` shape.
-    const friend = rowToUser(profile);
+    // Notify the other user that they were added as a friend.
+    const currentUserProfile = users.find((u) => u.id === currentUserId);
+    const currentName = currentUserProfile?.displayName ?? 'Someone';
+    supabase.from('notifications').insert({
+      recipient_user_id: profile.id,
+      actor_user_id: currentUserId,
+      type: 'friend_request',
+      reference_id: null,
+      message: `${currentName} added you as a friend`,
+    }).then(({ error: nErr }) => { if (nErr) console.error('[notification] friend_request insert failed:', nErr); });
+
+    // Auto-link any existing contact that matches the new friend by name.
+    const friendUser = rowToUser(profile);
+    const matchingContact = contacts.find(
+      (c) => c.ownerUserId === currentUserId && !c.linkedUserId &&
+        c.displayName.toLowerCase() === friendUser.displayName.toLowerCase(),
+    );
+    if (matchingContact) {
+      await supabase.from('contacts').update({ linked_user_id: friendUser.id }).eq('id', matchingContact.id);
+      queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
+        (old ?? []).map((c) => c.id === matchingContact.id ? { ...c, linkedUserId: friendUser.id } : c),
+      );
+      // Migrate any memories about this contact so they become visible to the friend.
+      await migrateContactPostsToUser(matchingContact.id, friendUser.id);
+      return { ok: true as const, friend: friendUser, contactId: matchingContact.id };
+    } else {
+      // No existing contact — create one using the friend's profile as a template.
+      const { data: newContactRow } = await supabase
+        .from('contacts')
+        .insert({
+          owner_user_id: currentUserId,
+          linked_user_id: friendUser.id,
+          display_name: friendUser.displayName,
+          avatar_path: friendUser.avatarPath ?? null,
+          facts: friendUser.profileFacts.length > 0 ? friendUser.profileFacts : [],
+        })
+        .select()
+        .single();
+      if (newContactRow) {
+        const newContact = rowToContact(newContactRow);
+        queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) => [newContact, ...(old ?? [])]);
+        return { ok: true as const, friend: friendUser, contactId: newContact.id };
+      }
+    }
+
     // Return success along with the newly connected friend object.
-    return { ok: true as const, friend };
+    return { ok: true as const, friend: friendUser, contactId: null };
   } // End addFriendByCode after returning either success or failure.
 
   // Create a new private contact owned by the current user.
@@ -420,6 +626,33 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   } // End getWallPostsForSubject after filtering and sorting the result.
 
+  // Return visible_to_subject posts by a specific author.
+  // RLS guarantees wallPosts only contains posts the current user is authorized to see.
+  // We still filter by visibility so only posts the author chose to share appear.
+  function getVisiblePostsByAuthor(authorId: string) {
+    return wallPosts
+      .filter((p) => p.authorUserId === authorId && p.visibility === 'visible_to_subject')
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  // Find the contact card that `ownerUserId` created about `myUserId`.
+  // With the linked-user RLS policy, this contact will appear in the contacts array.
+  function getContactAboutMe(ownerUserId: string, myUserId: string) {
+    return contacts.find((c) => c.ownerUserId === ownerUserId && c.linkedUserId === myUserId);
+  }
+
+  // When a contact becomes linked to a real user, migrate any existing wall posts
+  // from subject_contact_id to subject_user_id so the subject can see them via RLS.
+  async function migrateContactPostsToUser(contactId: string, userId: string) {
+    const { error } = await supabase
+      .from('wall_posts')
+      .update({ subject_user_id: userId, subject_contact_id: null, visibility: 'visible_to_subject' })
+      .eq('subject_contact_id', contactId);
+    if (error) console.warn('Failed to migrate contact posts:', error.message);
+    // Refresh wall posts cache so the migrated posts appear immediately.
+    await queryClient.invalidateQueries({ queryKey: socialQueryKeys.wallPosts });
+  }
+
   // Create a new wall post and update the cache immediately.
   async function addWallPost(authorUserId: string, input: CreateWallPostInput) {
     const { data, error } = await supabase
@@ -431,6 +664,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         visibility: input.visibility,
         body: input.body,
         image_path: input.imageUri,
+        card_color: input.cardColor ?? null,
       })
       .select()
       .single();
@@ -439,6 +673,29 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
 
     const post = rowToWallPost(data);
     queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) => [post, ...(old ?? [])]);
+
+    // Send notification to the subject about the new memory.
+    {
+      let recipientId: string | null = input.subjectUserId;
+      // If subject is a contact, look up the linked user.
+      if (!recipientId && input.subjectContactId) {
+        const c = contacts.find((ct) => ct.id === input.subjectContactId);
+        recipientId = c?.linkedUserId ?? null;
+      }
+      console.log('[addWallPost notification] recipientId:', recipientId, 'authorUserId:', authorUserId, 'subjectUserId:', input.subjectUserId, 'subjectContactId:', input.subjectContactId);
+      const authorName = users.find((u) => u.id === authorUserId)?.displayName ?? 'Someone';
+      if (recipientId && recipientId !== authorUserId) {
+        console.log('[addWallPost notification] inserting wall_post notification for:', recipientId);
+        supabase.from('notifications').insert({
+          recipient_user_id: recipientId,
+          actor_user_id: authorUserId,
+          type: 'wall_post',
+          reference_id: post.id,
+          message: `${authorName} added a memory about you`,
+        }).then(({ error: nErr }) => { if (nErr) console.error('[notification] wall_post insert failed:', nErr); });
+      }
+    }
+
     return post;
   }
 
@@ -468,6 +725,169 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     );
   }
 
+  async function deleteWallPost(postId: string) {
+    const { error } = await supabase.from('wall_posts').delete().eq('id', postId);
+    if (error) throw new Error(error.message);
+    queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) =>
+      (old ?? []).filter((p) => p.id !== postId),
+    );
+  }
+
+  async function updateWallPost(postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null) {
+    const updateData: Record<string, unknown> = { body };
+
+    if (cardColor !== undefined) {
+      updateData.card_color = cardColor;
+    }
+
+    if (newLocalImageUri !== undefined) {
+      if (newLocalImageUri) {
+        const ext = newLocalImageUri.split('.').pop()?.toLowerCase() ?? 'jpg';
+        const fileName = `uploads/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const base64 = await FileSystem.readAsStringAsync(newLocalImageUri, { encoding: FileSystem.EncodingType.Base64 });
+        const { error: uploadErr } = await supabase.storage
+          .from('Memories')
+          .upload(fileName, decode(base64), { contentType: `image/${ext}`, upsert: false });
+        if (uploadErr) throw new Error(uploadErr.message);
+        const { data: urlData } = supabase.storage.from('Memories').getPublicUrl(fileName);
+        updateData.image_path = urlData.publicUrl;
+      } else {
+        updateData.image_path = null;
+      }
+    }
+
+    const { error } = await supabase.from('wall_posts').update(updateData).eq('id', postId);
+    if (error) throw new Error(error.message);
+    const newImageUri = typeof updateData.image_path === 'string' ? updateData.image_path : (updateData.image_path === null ? null : undefined);
+    queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) =>
+      (old ?? []).map((p) => {
+        if (p.id !== postId) return p;
+        const updated = { ...p, body };
+        if (newImageUri !== undefined) updated.imageUri = newImageUri;
+        if (cardColor !== undefined) updated.cardColor = cardColor;
+        return updated;
+      }),
+    );
+  }
+
+  async function updateContact(contactId: string, updates: { displayName?: string; avatarLocalUri?: string | null; tags?: string[]; note?: string | null; cardColor?: string | null; profileBg?: string | null; linkedUserId?: string | null; pinned?: boolean }) {
+    const dbUpdate: Record<string, unknown> = {};
+    if (updates.displayName !== undefined) dbUpdate.display_name = updates.displayName;
+    if (updates.tags !== undefined) dbUpdate.tags = updates.tags;
+    if (updates.note !== undefined) dbUpdate.note = updates.note;
+    if (updates.cardColor !== undefined) dbUpdate.card_color = updates.cardColor;
+    if (updates.profileBg !== undefined) dbUpdate.profile_bg = updates.profileBg;
+    if (updates.linkedUserId !== undefined) dbUpdate.linked_user_id = updates.linkedUserId;
+    if (updates.pinned !== undefined) dbUpdate.pinned = updates.pinned;
+
+    if (updates.avatarLocalUri !== undefined) {
+      if (updates.avatarLocalUri) {
+        const ext = updates.avatarLocalUri.split('.').pop()?.toLowerCase() ?? 'jpg';
+        const fileName = `uploads/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const base64 = await FileSystem.readAsStringAsync(updates.avatarLocalUri, { encoding: FileSystem.EncodingType.Base64 });
+        const { error: uploadErr } = await supabase.storage
+          .from('Memories')
+          .upload(fileName, decode(base64), { contentType: `image/${ext}`, upsert: false });
+        if (uploadErr) throw new Error(uploadErr.message);
+        const { data: urlData } = supabase.storage.from('Memories').getPublicUrl(fileName);
+        dbUpdate.avatar_path = urlData.publicUrl;
+      } else {
+        dbUpdate.avatar_path = null;
+      }
+    }
+
+    if (Object.keys(dbUpdate).length === 0) return;
+
+    const { error } = await supabase.from('contacts').update(dbUpdate).eq('id', contactId);
+    if (error) throw new Error(error.message);
+
+    // Notify the linked user that their contact profile was updated.
+    const contact = contacts.find((c) => c.id === contactId);
+    const linkedId = contact?.linkedUserId ?? (updates.linkedUserId ?? null);
+    console.log('[notification] updateContact — contactId:', contactId, 'linkedId:', linkedId, 'contact found:', !!contact);
+    if (linkedId && contact) {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      console.log('[notification] authUser:', authUser?.id, 'linkedId !== authUser:', linkedId !== authUser?.id);
+      if (authUser && linkedId !== authUser.id) {
+        const ownerName = users.find((u) => u.id === authUser.id)?.displayName ?? 'Someone';
+        console.log('[notification] inserting contact_update for recipient:', linkedId);
+        supabase.from('notifications').insert({
+          recipient_user_id: linkedId,
+          actor_user_id: authUser.id,
+          type: 'contact_update',
+          reference_id: contactId,
+          message: `${ownerName} updated your profile`,
+        }).then(({ error: nErr }) => { if (nErr) console.error('[notification] contact_update insert failed:', nErr); });
+      }
+    }
+
+    const newAvatarPath = typeof dbUpdate.avatar_path === 'string' ? dbUpdate.avatar_path : (dbUpdate.avatar_path === null ? null : undefined);
+    queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
+      (old ?? []).map((c) => {
+        if (c.id !== contactId) return c;
+        const updated = { ...c };
+        if (updates.displayName !== undefined) updated.displayName = updates.displayName;
+        if (newAvatarPath !== undefined) updated.avatarPath = newAvatarPath;
+        if (updates.tags !== undefined) updated.tags = updates.tags;
+        if (updates.note !== undefined) updated.note = updates.note;
+        if (updates.cardColor !== undefined) updated.cardColor = updates.cardColor;
+        if (updates.profileBg !== undefined) updated.profileBg = updates.profileBg;
+        if (updates.linkedUserId !== undefined) updated.linkedUserId = updates.linkedUserId;
+        if (updates.pinned !== undefined) updated.pinned = updates.pinned;
+        return updated;
+      }),
+    );
+  }
+
+  async function addContactFact(contactId: string, fact: string) {
+    console.log('[addContactFact] called — contactId:', contactId, 'fact:', fact);
+    const contact = contacts.find((c) => c.id === contactId);
+    console.log('[addContactFact] contact linkedUserId:', contact?.linkedUserId);
+    const updatedFacts = [...(contact?.facts ?? []), fact];
+    const { error } = await supabase.from('contacts').update({ facts: updatedFacts }).eq('id', contactId);
+    if (error) throw new Error(error.message);
+    queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
+      (old ?? []).map((c) => (c.id === contactId ? { ...c, facts: updatedFacts } : c)),
+    );
+
+    // Notify the linked user about the new fact.
+    const linkedId = contact?.linkedUserId;
+    if (linkedId) {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (authUser && linkedId !== authUser.id) {
+        const ownerName = users.find((u) => u.id === authUser.id)?.displayName ?? 'Someone';
+        supabase.from('notifications').insert({
+          recipient_user_id: linkedId,
+          actor_user_id: authUser.id,
+          type: 'contact_update',
+          reference_id: contactId,
+          message: `${ownerName} added a fact about you: ${fact}`,
+        }).then(({ error: nErr }) => { if (nErr) console.error('[notification] contact_fact insert failed:', nErr); });
+      }
+    }
+  }
+
+  async function deleteContactFact(contactId: string, fact: string) {
+    const contact = contacts.find((c) => c.id === contactId);
+    const updatedFacts = (contact?.facts ?? []).filter((f) => f !== fact);
+    const { error } = await supabase.from('contacts').update({ facts: updatedFacts }).eq('id', contactId);
+    if (error) throw new Error(error.message);
+    queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
+      (old ?? []).map((c) => (c.id === contactId ? { ...c, facts: updatedFacts } : c)),
+    );
+  }
+
+  async function togglePin(contactId: string) {
+    const contact = contacts.find((c) => c.id === contactId);
+    if (!contact) return;
+    const newPinned = !contact.pinned;
+    const { error } = await supabase.from('contacts').update({ pinned: newPinned }).eq('id', contactId);
+    if (error) throw new Error(error.message);
+    queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
+      (old ?? []).map((c) => (c.id === contactId ? { ...c, pinned: newPinned } : c)),
+    );
+  }
+
   // Render the provider so children can read social graph data and actions.
   return (
     // Provide the assembled social graph API to the component subtree.
@@ -492,11 +912,24 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         getUserById,
         // Expose the subject wall-post helper.
         getWallPostsForSubject,
+        getVisiblePostsByAuthor,
+        getContactAboutMe,
         // Expose the connection-check helper.
         isConnected,
         addFriendFact,
         deleteFriendFact,
         getFriendFactsFor,
+        deleteWallPost,
+        updateWallPost,
+        updateContact,
+        addContactFact,
+        deleteContactFact,
+        migrateContactPostsToUser,
+        togglePin,
+        notifications,
+        unreadCount,
+        markNotificationRead,
+        markAllNotificationsRead,
         refresh,
       }}
     >

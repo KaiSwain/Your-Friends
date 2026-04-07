@@ -1,6 +1,7 @@
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Redirect, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
@@ -11,7 +12,7 @@ import { useSocialGraph } from '../../../src/features/social/SocialGraphContext'
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
 import { fonts } from '../../../src/theme/typography';
-import { spacing } from '../../../src/theme/tokens';
+import { radius, spacing } from '../../../src/theme/tokens';
 
 export default function AddFriendScreen() {
   const router = useRouter();
@@ -28,6 +29,10 @@ export default function AddFriendScreen() {
   const [friendCode, setFriendCode] = useState('');
   const [friendError, setFriendError] = useState('');
   const [friendBusy, setFriendBusy] = useState(false);
+
+  const [scanning, setScanning] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const scannedRef = useRef(false);
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   const authenticatedUser = currentUser;
@@ -51,8 +56,32 @@ export default function AddFriendScreen() {
     setFriendError('');
     const result = await addFriendByCode(authenticatedUser.id, friendCode);
     if (!result.ok) { setFriendError(result.error); setFriendBusy(false); return; }
-    router.replace(`/(app)/profiles/user/${result.friend.id}`);
+    router.replace(result.contactId
+      ? `/(app)/profiles/contact/${result.contactId}`
+      : `/(app)/profiles/user/${result.friend.id}`,
+    );
   }
+
+  async function openScanner() {
+    if (!permission?.granted) {
+      const res = await requestPermission();
+      if (!res.granted) { setFriendError('Camera permission is required to scan QR codes.'); return; }
+    }
+    scannedRef.current = false;
+    setScanning(true);
+  }
+
+  const handleBarcodeScan = useCallback(({ data }: { data: string }) => {
+    if (scannedRef.current) return;
+    scannedRef.current = true;
+    setScanning(false);
+    // Extract friend code — supports "yourfriends://CODE" or plain code
+    const code = data.replace(/^yourfriends:\/\//, '').trim().toUpperCase();
+    if (code) {
+      setFriendCode(code);
+      setFriendError('');
+    }
+  }, []);
 
   return (
     <AppScreen>

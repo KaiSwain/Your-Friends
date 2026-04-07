@@ -21,6 +21,7 @@ function rowToWallPost(row: any): WallPost {
     visibility: row.visibility,
     body: row.body,
     imageUri: row.image_path ?? null,
+    cardColor: row.card_color ?? null,
     createdAt: row.created_at,
   };
 }
@@ -49,12 +50,33 @@ async function uploadImageAndCreatePost({ authorUserId, imageUri, post }: AddMem
       visibility: post.visibility,
       body: post.body,
       image_path: storedImagePath,
+      card_color: post.cardColor ?? null,
     })
     .select()
     .single();
 
   if (error || !data) throw new Error(error?.message ?? 'Failed to create memory');
-  return rowToWallPost(data);
+  const wallPost = rowToWallPost(data);
+
+  // Send notification to the subject about the new memory.
+  let recipientId: string | null = wallPost.subjectUserId;
+  if (!recipientId && wallPost.subjectContactId) {
+    const { data: contactRow } = await supabase.from('contacts').select('linked_user_id').eq('id', wallPost.subjectContactId).single();
+    recipientId = contactRow?.linked_user_id ?? null;
+  }
+  if (recipientId && recipientId !== authorUserId) {
+    const { data: authorRow } = await supabase.from('profiles').select('display_name').eq('id', authorUserId).single();
+    const authorName = authorRow?.display_name ?? 'Someone';
+    supabase.from('notifications').insert({
+      recipient_user_id: recipientId,
+      actor_user_id: authorUserId,
+      type: 'wall_post',
+      reference_id: wallPost.id,
+      message: `${authorName} added a memory about you`,
+    }).then(({ error: nErr }) => { if (nErr) console.error('[notification] wall_post insert failed:', nErr); });
+  }
+
+  return wallPost;
 }
 
 /** Mutation hook for creating a memory (optional image upload + wall post). */

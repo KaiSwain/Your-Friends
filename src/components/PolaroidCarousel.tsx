@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef } from 'react';
 import {
   Animated,
   FlatList,
+  Image,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Pressable,
@@ -14,6 +15,7 @@ import {
 
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
+import { contrastText, contrastTextSoft, contrastAccent } from '../lib/contrastText';
 import { PeopleListItem } from '../types/domain';
 import { fonts } from '../theme/typography';
 import { spacing } from '../theme/tokens';
@@ -23,6 +25,8 @@ interface PolaroidCarouselProps {
   items: PeopleListItem[];
   onIndexChange: (index: number) => void;
   onPressItem: (item: PeopleListItem) => void;
+  onLongPressItem?: (item: PeopleListItem) => void;
+  getUnreadCount?: (item: PeopleListItem) => number;
 }
 
 // Triplicate — just enough to scroll left/right and teleport back to centre copy.
@@ -32,7 +36,7 @@ const AnimatedFlatList = Animated.createAnimatedComponent(
   FlatList<PeopleListItem>,
 );
 
-export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressItem }: PolaroidCarouselProps) {
+export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressItem, onLongPressItem, getUnreadCount }: PolaroidCarouselProps) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { width } = useWindowDimensions();
@@ -40,10 +44,12 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
   const scrollX = useRef(new Animated.Value(0)).current;
 
   const compact = width < 390;
-  const cardWidth = Math.min(width * 0.62, 270);
+  const cardWidth = Math.min(width * 0.5, 230);
   const gap = spacing.md;
   const snapInterval = cardWidth + gap;
-  // Padding so the centred card's midpoint aligns with the screen midpoint.
+  // Each item occupies snapInterval wide. To centre item N the scroll offset is
+  // N * snapInterval. With paddingHorizontal = sideInset the visible card centre
+  // lands at sideInset + snapInterval/2 which must equal width/2.
   const sideInset = (width - snapInterval) / 2;
   const photoSize = cardWidth - 28;
   const cardMinHeight = photoSize + (compact ? 80 : 94) + 14;
@@ -105,6 +111,24 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
 
   return (
     <View style={styles.wrapper}>
+      {/* Scroll position indicator — above cards so it's always visible */}
+      <View style={styles.positionRow}>
+        <View style={styles.dotRow}>
+          {items.map((_, i) => (
+            <View
+              key={i}
+              style={[
+                styles.dot,
+                i === activeIndex ? styles.dotActive : styles.dotInactive,
+              ]}
+            />
+          ))}
+        </View>
+        <Text style={styles.positionText}>
+          {activeIndex + 1} of {count}
+        </Text>
+      </View>
+
       <AnimatedFlatList
         ref={flatListRef as any}
         horizontal
@@ -133,14 +157,18 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
           ];
           const scale = scrollX.interpolate({
             inputRange,
-            outputRange: [0.88, 1, 0.88],
+            outputRange: [0.85, 1, 0.85],
             extrapolate: 'clamp',
           });
           const cardOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.5, 1, 0.5],
+            outputRange: [0.65, 1, 0.65],
             extrapolate: 'clamp',
           });
+
+          const ct = contrastText(item.cardColor);
+          const ctSoft = contrastTextSoft(item.cardColor);
+          const ctAccent = contrastAccent(item.cardColor, colors.accent);
 
           return (
             <Animated.View
@@ -153,37 +181,65 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
             >
               <Pressable
                 onPress={() => onPressItem(item)}
+                onLongPress={onLongPressItem ? () => onLongPressItem(item) : undefined}
                 style={({ pressed }) => [
                   styles.card,
                   { width: cardWidth, minHeight: cardMinHeight },
+                  item.cardColor ? { backgroundColor: item.cardColor } : undefined,
                   pressed && styles.pressed,
                 ]}
               >
-                <View style={[styles.photoFrame, { width: photoSize, height: photoSize }]}>
-                  <View style={[styles.photoSurface, { backgroundColor: item.avatarColor }]}>
-                    <Text style={[styles.photoInitials, { fontSize: initialsSize }]}>
-                      {getInitials(item.title)}
-                    </Text>
+                {item.pinned && (
+                  <View style={styles.pinBadge}>
+                    <Text style={styles.pinBadgeText}>📌</Text>
                   </View>
+                )}
+                <View style={[styles.photoFrame, { width: photoSize, height: photoSize }]}>
+                  {item.imageUri ? (
+                    <Image source={{ uri: item.imageUri }} style={styles.photoImage} />
+                  ) : (
+                    <View style={[styles.photoSurface, { backgroundColor: item.avatarColor }]}>
+                      <Text style={[styles.photoInitials, { fontSize: initialsSize }]}>
+                        {getInitials(item.title)}
+                      </Text>
+                    </View>
+                  )}
                 </View>
                 <View style={styles.bottomStrip}>
-                  <Text style={[styles.name, { fontSize: nameSize }]} numberOfLines={1}>
+                  <Text style={[styles.name, { fontSize: nameSize }, item.cardColor && { color: ct }]} numberOfLines={1}>
                     {item.title}
                   </Text>
-                  <Text style={styles.caption}>{item.caption}</Text>
+                  {item.tags.length > 0 && (
+                    <View style={styles.tagRow}>
+                      {item.tags.slice(0, 2).map((tag) => (
+                        <View key={tag} style={[styles.tag, item.cardColor && { backgroundColor: ctAccent + '1A' }]}>
+                          <Text style={[styles.tagText, item.cardColor && { color: ctAccent }]} numberOfLines={1}>{tag}</Text>
+                        </View>
+                      ))}
+                      {item.tags.length > 2 && (
+                        <Text style={[styles.tagMore, item.cardColor && { color: ctSoft }]}>+{item.tags.length - 2}</Text>
+                      )}
+                    </View>
+                  )}
+                  {item.note ? (
+                    <Text style={[styles.note, item.cardColor && { color: ctSoft }]} numberOfLines={2}>{item.note}</Text>
+                  ) : !item.tags.length ? (
+                    <Text style={[styles.caption, item.cardColor && { color: ctAccent }]}>{item.caption}</Text>
+                  ) : null}
                 </View>
               </Pressable>
+              {(() => {
+                const count = getUnreadCount?.(item) ?? 0;
+                return count > 0 ? (
+                  <View style={styles.notifBadge}>
+                    <Text style={styles.notifBadgeText}>{count}</Text>
+                  </View>
+                ) : null;
+              })()}
             </Animated.View>
           );
         }}
       />
-
-      {/* Scroll position indicator */}
-      <View style={styles.positionRow}>
-        <Text style={styles.positionText}>
-          {activeIndex + 1} / {count}
-        </Text>
-      </View>
     </View>
   );
 }
@@ -193,9 +249,33 @@ const makeStyles = (colors: ColorTokens) =>
     wrapper: {
       paddingVertical: spacing.lg,
       alignItems: 'center',
+      // Break out of parent padding so the carousel spans the full screen width.
+      // The parent (AppScreen scroll content) has paddingHorizontal: spacing.lg.
+      marginHorizontal: -spacing.lg,
     },
     positionRow: {
       marginTop: spacing.sm,
+      alignItems: 'center',
+      gap: spacing.xs,
+    },
+    dotRow: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center',
+    },
+    dot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+    dotActive: {
+      backgroundColor: colors.accent,
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+    },
+    dotInactive: {
+      backgroundColor: colors.inkMuted,
     },
     positionText: {
       fontFamily: fonts.bodyMedium,
@@ -219,6 +299,22 @@ const makeStyles = (colors: ColorTokens) =>
       elevation: 4,
     },
     pressed: { transform: [{ scale: 0.985 }] },
+    pinBadge: { position: 'absolute', top: 6, right: 6, zIndex: 1 },
+    pinBadgeText: { fontSize: 16 },
+    notifBadge: {
+      position: 'absolute',
+      bottom: 8,
+      right: -6,
+      backgroundColor: colors.accent,
+      minWidth: 22,
+      height: 22,
+      borderRadius: 11,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 5,
+      zIndex: 2,
+    },
+    notifBadgeText: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.white },
     photoFrame: {
       borderRadius: 1,
       overflow: 'hidden',
@@ -230,6 +326,10 @@ const makeStyles = (colors: ColorTokens) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
+    photoImage: {
+      width: '100%',
+      height: '100%',
+    },
     photoInitials: {
       fontFamily: fonts.heading,
       color: colors.white,
@@ -238,7 +338,7 @@ const makeStyles = (colors: ColorTokens) =>
       width: '100%',
       paddingVertical: spacing.md,
       alignItems: 'center',
-      gap: 2,
+      gap: 4,
     },
     name: {
       fontFamily: fonts.heading,
@@ -251,6 +351,38 @@ const makeStyles = (colors: ColorTokens) =>
       color: colors.accent,
       textTransform: 'uppercase',
       letterSpacing: 0.7,
+    },
+    note: {
+      fontFamily: fonts.body,
+      fontSize: 12,
+      lineHeight: 16,
+      color: colors.inkSoft,
+      textAlign: 'center',
+    },
+    tagRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      gap: 4,
+    },
+    tag: {
+      backgroundColor: colors.accent + '1A',
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 999,
+    },
+    tagText: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 10,
+      color: colors.accent,
+      textTransform: 'uppercase',
+      letterSpacing: 0.3,
+    },
+    tagMore: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 10,
+      color: colors.inkMuted,
+      alignSelf: 'center',
     },
   });
 

@@ -58,6 +58,9 @@ export function DrawerMenu({ visible, onClose }: DrawerMenuProps) {
           <Pressable onPress={() => navigate('/(app)/friends')} style={styles.linkRow}>
             <Text style={styles.linkLabel}>🏠  Home</Text>
           </Pressable>
+          <Pressable onPress={() => navigate('/(app)/profiles/me')} style={styles.linkRow}>
+            <Text style={styles.linkLabel}>👤  Your Profile</Text>
+          </Pressable>
           <Pressable onPress={() => navigate('/(app)/settings')} style={styles.linkRow}>
             <Text style={styles.linkLabel}>⚙️  Settings</Text>
           </Pressable>

@@ -37,13 +37,22 @@ create table public.contacts ( -- Create the contacts table in the public schema
   display_name text not null, -- Store the contact's display name.
   nickname text, -- Optionally store a private nickname for the contact.
   facts text[] not null default '{}', -- Store contact facts as a text array.
-  created_at timestamptz not null default now() -- Store when the contact row was created.
+  avatar_path text, -- Optionally store a path to an uploaded avatar image.
+  tags text[] not null default '{}', -- Store relationship tags as a text array.
+  note text, -- Optionally store a short note about this contact.
+  card_color text, -- Optionally store a card background color.
+  profile_bg text, -- Optionally store a profile background theme key.
+  created_at timestamptz not null default now(), -- Store when the contact row was created.
+  constraint contacts_unique_link unique (owner_user_id, linked_user_id) -- Prevent duplicate linked contacts per owner.
 ); -- End the contacts table definition.
 
 alter table public.contacts enable row level security; -- Turn on row-level security for contacts.
 
 create policy "Users can manage own contacts" -- Name the policy that controls all contact operations.
   on public.contacts for all using (auth.uid() = owner_user_id); -- Only allow the owner to read, update, or delete their contacts.
+
+create policy "Linked users can read their contact" -- Let users see the contact card someone else created about them.
+  on public.contacts for select using (auth.uid() = linked_user_id);
 
 -- Mark the start of the friendships section.
 -- Explain that friendships are stored in canonical user-ID order.
@@ -77,6 +86,7 @@ create table public.wall_posts ( -- Create the wall_posts table in the public sc
   visibility text not null default 'private' check (visibility in ('private', 'visible_to_subject')), -- Restrict visibility to the supported values.
   body text not null, -- Store the main memory text.
   image_path text, -- Optionally store an uploaded image path or URL.
+  card_color text, -- Optionally store a custom card color for the polaroid frame.
   created_at timestamptz not null default now(), -- Store when the wall post row was created.
   constraint wall_posts_has_subject check ( -- Enforce that exactly one kind of subject is set.
     (subject_user_id is not null and subject_contact_id is null) or -- Allow a real-user subject with no contact subject.
@@ -95,6 +105,18 @@ create policy "Subjects can read visible posts about them" -- Name the policy th
     auth.uid() = subject_user_id -- Allow reads when the current user is the subject user.
     and visibility = 'visible_to_subject' -- Require the post visibility to permit subject access.
   ); -- End the subject-read policy.
+
+create policy "Subjects can read posts about linked contacts" -- Let users see posts about contacts linked to them.
+  on public.wall_posts for select
+  using (
+    visibility = 'visible_to_subject'
+    and subject_contact_id is not null
+    and exists (
+      select 1 from public.contacts c
+      where c.id = wall_posts.subject_contact_id
+        and c.linked_user_id = auth.uid()
+    )
+  );
 
 -- Mark the storage section for memory images.
 -- Tell the reader to create the bucket manually in the dashboard.
@@ -130,3 +152,33 @@ create policy "Subjects can read facts about them"
 
 create index idx_friend_facts_author on public.friend_facts(author_user_id);
 create index idx_friend_facts_subject on public.friend_facts(subject_user_id);
+
+-- Notifications table — stores events the recipient should see.
+create table public.notifications (
+  id uuid primary key default uuid_generate_v4(),
+  recipient_user_id uuid not null references public.profiles(id) on delete cascade,
+  actor_user_id uuid not null references public.profiles(id) on delete cascade,
+  type text not null, -- 'wall_post' | 'friend_request' | 'contact_update'
+  reference_id text, -- ID of the related wall_post, friendship, etc.
+  message text not null,
+  read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+alter table public.notifications enable row level security;
+
+create policy "Users can read own notifications"
+  on public.notifications for select using (auth.uid() = recipient_user_id);
+
+create policy "Users can update own notifications"
+  on public.notifications for update using (auth.uid() = recipient_user_id);
+
+create policy "Authenticated users can insert notifications"
+  on public.notifications for insert with check (true);
+
+create index idx_notifications_recipient on public.notifications(recipient_user_id);
+
+-- Enable realtime on wall_posts and contacts so clients receive live updates.
+alter publication supabase_realtime add table public.wall_posts;
+alter publication supabase_realtime add table public.contacts;
+alter publication supabase_realtime add table public.notifications;

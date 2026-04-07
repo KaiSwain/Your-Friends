@@ -1,15 +1,11 @@
-// Import the Supabase session type so local state can describe the auth session correctly.
 import { Session } from '@supabase/supabase-js';
-// Import React helpers used to create and consume the auth context.
+import { decode } from 'base64-arraybuffer';
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
+import * as FileSystem from 'expo-file-system/legacy';
 
-// Import the shared Supabase client configured for this app.
 import { supabase } from '../../lib/supabase';
-// Import the domain type used for the current signed-in user's profile data.
 import { AppUser } from '../../types/domain';
-// Import the helper that creates a friend code for a new account.
 import { createFriendCode } from '../../lib/friendCode';
-// Import the shared accent palette so new users can get a stable avatar color.
 import { accentPalette } from '../../theme/tokens';
 
 // Describe the full shape of the auth context that screens and components will consume.
@@ -33,6 +29,7 @@ interface AuthContextValue {
     // Accept the password entered by the user.
     password: string,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  updateProfile: (updates: { displayName?: string; avatarLocalUri?: string | null; profileFacts?: string[] }) => Promise<void>;
 } // End the AuthContextValue interface.
 
 // Create the auth context with a null default so missing providers fail fast.
@@ -218,6 +215,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { ok: true as const };
   } // End signUp after returning either success or failure.
 
+  // Update the current user's profile (display name, avatar, facts).
+  async function updateProfile(updates: { displayName?: string; avatarLocalUri?: string | null; profileFacts?: string[] }) {
+    if (!currentUser) throw new Error('Not signed in');
+    const dbUpdate: Record<string, unknown> = {};
+    if (updates.displayName !== undefined) dbUpdate.display_name = updates.displayName;
+    if (updates.profileFacts !== undefined) dbUpdate.profile_facts = updates.profileFacts;
+
+    if (updates.avatarLocalUri !== undefined) {
+      if (updates.avatarLocalUri) {
+        const ext = updates.avatarLocalUri.split('.').pop()?.toLowerCase() ?? 'jpg';
+        const fileName = `avatars/${currentUser.id}/${Date.now()}.${ext}`;
+        const base64 = await FileSystem.readAsStringAsync(updates.avatarLocalUri, { encoding: FileSystem.EncodingType.Base64 });
+        const { error: uploadErr } = await supabase.storage
+          .from('Memories')
+          .upload(fileName, decode(base64), { contentType: `image/${ext}`, upsert: false });
+        if (uploadErr) throw new Error(uploadErr.message);
+        const { data: urlData } = supabase.storage.from('Memories').getPublicUrl(fileName);
+        dbUpdate.avatar_path = urlData.publicUrl;
+      } else {
+        dbUpdate.avatar_path = null;
+      }
+    }
+
+    if (Object.keys(dbUpdate).length === 0) return;
+    const { error } = await supabase.from('profiles').update(dbUpdate).eq('id', currentUser.id);
+    if (error) throw new Error(error.message);
+
+    setCurrentUser((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        ...(updates.displayName !== undefined && { displayName: updates.displayName }),
+        ...(updates.profileFacts !== undefined && { profileFacts: updates.profileFacts }),
+        ...(typeof dbUpdate.avatar_path === 'string' && { avatarPath: dbUpdate.avatar_path }),
+        ...(dbUpdate.avatar_path === null && { avatarPath: null }),
+      };
+    });
+  }
+
   // Sign the current user out and clear the local profile cache.
   async function signOut() {
     // Ask Supabase Auth to end the current session.
@@ -244,6 +280,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         // Expose the sign-up action.
         signUp,
+        // Expose the profile update action.
+        updateProfile,
       }}
     >
       {/* Render whatever child components were wrapped by this provider. */}

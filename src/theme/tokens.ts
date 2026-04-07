@@ -119,3 +119,15 @@ export const accentPalette = [
   // Include the plum accent in the reusable palette.
   colors.plum,
 ]; // End the shared accent palette array.
+
+// Export profile background presets — dark-tinted gradients used on profile screens.
+export const profileBackgrounds: { key: string; label: string; gradient: readonly [string, string, string]; accent: string }[] = [
+  { key: 'sunset', label: 'Sunset', gradient: ['#2D1408', '#4A2010', '#2D1408'], accent: '#E8845C' },
+  { key: 'ocean', label: 'Ocean', gradient: ['#082028', '#104050', '#082028'], accent: '#5CB8D6' },
+  { key: 'forest', label: 'Forest', gradient: ['#0A2010', '#144028', '#0A2010'], accent: '#6ABF7B' },
+  { key: 'berry', label: 'Berry', gradient: ['#1E0828', '#3A1050', '#1E0828'], accent: '#C06AE0' },
+  { key: 'midnight', label: 'Midnight', gradient: ['#0A0A28', '#141450', '#0A0A28'], accent: '#7B7BEF' },
+  { key: 'golden', label: 'Golden', gradient: ['#28200A', '#504014', '#28200A'], accent: '#D4A843' },
+  { key: 'rose', label: 'Rosé', gradient: ['#280A14', '#501428', '#280A14'], accent: '#E06A8A' },
+  { key: 'slate', label: 'Slate', gradient: ['#141820', '#283040', '#141820'], accent: '#8BA0B8' },
+];

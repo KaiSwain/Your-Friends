@@ -11,10 +11,12 @@ interface AppScreenProps {
   children: ReactNode;
   contentContainerStyle?: StyleProp<ViewStyle>;
   footer?: ReactNode;
+  gradientColors?: readonly string[];
+  header?: ReactNode;
   scroll?: boolean;
 }
 
-export function AppScreen({ children, contentContainerStyle, footer, scroll = true }: AppScreenProps) {
+export function AppScreen({ children, contentContainerStyle, footer, gradientColors, header, scroll = true }: AppScreenProps) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -31,8 +33,9 @@ export function AppScreen({ children, contentContainerStyle, footer, scroll = tr
   );
 
   return (
-    <LinearGradient colors={[colors.canvas, colors.canvasAlt, colors.canvas]} style={styles.gradient}>
+    <LinearGradient colors={gradientColors ? [...gradientColors] : [colors.canvas, colors.canvasAlt, colors.canvas]} style={styles.gradient}>
       <SafeAreaView style={styles.safeArea}>
+        {header ? <View style={styles.header}>{header}</View> : null}
         {body}
         {footer ? <View style={styles.footer}>{footer}</View> : null}
       </SafeAreaView>
@@ -62,5 +65,10 @@ const makeStyles = (_colors: ColorTokens) =>
       paddingHorizontal: spacing.lg,
       paddingTop: spacing.sm,
       paddingBottom: spacing.lg,
+    },
+    header: {
+      paddingHorizontal: spacing.lg,
+      paddingTop: spacing.md,
+      paddingBottom: spacing.sm,
     },
   });
