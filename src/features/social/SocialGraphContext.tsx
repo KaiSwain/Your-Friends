@@ -41,6 +41,8 @@ interface SocialGraphContextValue {
   contacts: Contact[];
   wallPosts: WallPost[];
   addFriendByCode: (currentUserId: string, friendCode: string) => Promise<{ ok: true; friend: AppUser; contactId: string | null } | { ok: false; error: string }>;
+  removeFriend: (currentUserId: string, friendUserId: string) => Promise<void>;
+  deleteContact: (currentUserId: string, contactId: string) => Promise<void>;
   addManualContact: (ownerUserId: string, input: CreateContactInput) => Promise<Contact>;
   addWallPost: (authorUserId: string, input: CreateWallPostInput) => Promise<WallPost>;
   getContactById: (contactId: string) => Contact | undefined;
@@ -133,39 +135,73 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     return () => { supabase.removeChannel(channel); };
   }, [hasSettledInitialData, queryClient]);
 
-  const didMigrateOrphans = useRef(false);
   useEffect(() => {
     if (!socialEnabled) return;
-    if (didMigrateOrphans.current) return;
     if (!usersQuery.isSuccess || !contactsQuery.isSuccess || !friendshipsQuery.isSuccess) return;
-    didMigrateOrphans.current = true;
 
     (async () => {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) return;
       const myId = authUser.id;
 
-      const linkedIds = new Set(contacts.filter((c) => c.ownerUserId === myId && c.linkedUserId).map((c) => c.linkedUserId!));
+      const myContacts = contacts.filter((c) => c.ownerUserId === myId);
+      const linkedIds = new Set(myContacts.filter((c) => c.linkedUserId).map((c) => c.linkedUserId!));
       const myFriendIds = friendships
         .map((f) => f.userLowId === myId ? f.userHighId : f.userHighId === myId ? f.userLowId : null)
         .filter((id): id is string => id !== null);
+      const myFriendIdSet = new Set(myFriendIds);
       const orphanIds = myFriendIds.filter((id) => !linkedIds.has(id));
-      if (!orphanIds.length) return;
 
-      const inserts = orphanIds.map((friendId) => {
-        const friend = users.find((u) => u.id === friendId);
-        return {
-          owner_user_id: myId,
-          linked_user_id: friendId,
-          display_name: friend?.displayName ?? 'Friend',
-          avatar_path: friend?.avatarPath ?? null,
-          facts: friend?.profileFacts?.length ? friend.profileFacts : [],
-        };
-      });
-      const { data: rows } = await supabase.from('contacts').upsert(inserts, { onConflict: 'owner_user_id,linked_user_id', ignoreDuplicates: true }).select();
-      if (rows?.length) {
-        const newContacts = rows.map(rowToContact);
-        queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) => [...newContacts, ...(old ?? [])]);
+      if (orphanIds.length) {
+        const inserts = orphanIds.map((friendId) => {
+          const friend = users.find((u) => u.id === friendId);
+          return {
+            owner_user_id: myId,
+            linked_user_id: friendId,
+            display_name: friend?.displayName ?? 'Friend',
+            avatar_path: friend?.avatarPath ?? null,
+            facts: friend?.profileFacts?.length ? friend.profileFacts : [],
+          };
+        });
+        const { data: rows, error: upsertErr } = await supabase
+          .from('contacts')
+          .upsert(inserts, { onConflict: 'owner_user_id,linked_user_id', ignoreDuplicates: true })
+          .select();
+        if (upsertErr) {
+          console.warn('Failed to sync missing linked contacts:', upsertErr.message);
+        } else if (rows?.length) {
+          const newContacts = rows.map(rowToContact);
+          queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) => {
+            const existing = old ?? [];
+            const next = [...existing];
+            for (const contact of newContacts) {
+              const index = next.findIndex((item) => item.id === contact.id);
+              if (index >= 0) next[index] = contact;
+              else next.unshift(contact);
+            }
+            return next;
+          });
+        }
+      }
+
+      const staleLinkedContacts = myContacts.filter(
+        (contact) => contact.linkedUserId && !myFriendIdSet.has(contact.linkedUserId),
+      );
+      if (staleLinkedContacts.length) {
+        const staleIds = staleLinkedContacts.map((contact) => contact.id);
+        const { error: unlinkErr } = await supabase
+          .from('contacts')
+          .update({ linked_user_id: null })
+          .in('id', staleIds);
+        if (unlinkErr) {
+          console.warn('Failed to unlink stale contacts:', unlinkErr.message);
+        } else {
+          queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
+            (old ?? []).map((contact) =>
+              staleIds.includes(contact.id) ? { ...contact, linkedUserId: null } : contact,
+            ),
+          );
+        }
       }
     })();
   }, [socialEnabled, usersQuery.isSuccess, contactsQuery.isSuccess, friendshipsQuery.isSuccess, users, contacts, friendships, queryClient]);
@@ -296,50 +332,83 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
 
     const low = currentUserId < profile.id ? currentUserId : profile.id;
     const high = currentUserId < profile.id ? profile.id : currentUserId;
+    const alreadyFriends = isConnected(currentUserId, profile.id);
 
-    if (isConnected(currentUserId, profile.id)) {
-      return { ok: false as const, error: 'You are already friends with this person.' };
+    if (!alreadyFriends) {
+      const { error: insertErr } = await supabase.from('friendships').insert({
+        user_low_id: low,
+        user_high_id: high,
+        created_by_user_id: currentUserId,
+      });
+
+      if (insertErr) {
+        return { ok: false as const, error: insertErr.message };
+      }
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: socialQueryKeys.friendships }),
+        queryClient.invalidateQueries({ queryKey: socialQueryKeys.users }),
+      ]);
+
+      const currentUserProfile = users.find((u) => u.id === currentUserId);
+      const currentName = currentUserProfile?.displayName ?? 'Someone';
+      supabase.from('notifications').insert({
+        recipient_user_id: profile.id,
+        actor_user_id: currentUserId,
+        type: 'friend_request',
+        reference_id: null,
+        message: `${currentName} added you as a friend`,
+      }).then(({ error: nErr }) => { if (nErr) console.error('[notification] friend_request insert failed:', nErr); });
     }
-
-    const { error: insertErr } = await supabase.from('friendships').insert({
-      user_low_id: low,
-      user_high_id: high,
-      created_by_user_id: currentUserId,
-    });
-
-    if (insertErr) {
-      return { ok: false as const, error: insertErr.message };
-    }
-
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: socialQueryKeys.friendships }),
-      queryClient.invalidateQueries({ queryKey: socialQueryKeys.users }),
-    ]);
-
-    const currentUserProfile = users.find((u) => u.id === currentUserId);
-    const currentName = currentUserProfile?.displayName ?? 'Someone';
-    supabase.from('notifications').insert({
-      recipient_user_id: profile.id,
-      actor_user_id: currentUserId,
-      type: 'friend_request',
-      reference_id: null,
-      message: `${currentName} added you as a friend`,
-    }).then(({ error: nErr }) => { if (nErr) console.error('[notification] friend_request insert failed:', nErr); });
 
     const friendUser = rowToUser(profile);
+    const hydrateOwnedLinkedContact = async () => {
+      const { data: ownedLinkedContactRow, error: ownedLinkedContactErr } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('owner_user_id', currentUserId)
+        .eq('linked_user_id', friendUser.id)
+        .maybeSingle();
+      if (ownedLinkedContactErr || !ownedLinkedContactRow) return null;
+
+      const ownedLinkedContact = rowToContact(ownedLinkedContactRow);
+      queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) => {
+        const existing = old ?? [];
+        const found = existing.some((c) => c.id === ownedLinkedContact.id);
+        if (found) {
+          return existing.map((c) => c.id === ownedLinkedContact.id ? ownedLinkedContact : c);
+        }
+        return [ownedLinkedContact, ...existing];
+      });
+      return ownedLinkedContact;
+    };
+
+    const existingLinkedContact = contacts.find(
+      (c) => c.ownerUserId === currentUserId && c.linkedUserId === friendUser.id,
+    );
+    if (existingLinkedContact) {
+      return { ok: true as const, friend: friendUser, contactId: existingLinkedContact.id };
+    }
+
     const matchingContact = contacts.find(
       (c) => c.ownerUserId === currentUserId && !c.linkedUserId &&
         c.displayName.toLowerCase() === friendUser.displayName.toLowerCase(),
     );
     if (matchingContact) {
-      await supabase.from('contacts').update({ linked_user_id: friendUser.id }).eq('id', matchingContact.id);
+      const { error: linkErr } = await supabase
+        .from('contacts')
+        .update({ linked_user_id: friendUser.id })
+        .eq('id', matchingContact.id);
+      if (linkErr) {
+        return { ok: false as const, error: linkErr.message };
+      }
       queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
         (old ?? []).map((c) => c.id === matchingContact.id ? { ...c, linkedUserId: friendUser.id } : c),
       );
       await migrateContactPostsToUser(matchingContact.id, friendUser.id);
       return { ok: true as const, friend: friendUser, contactId: matchingContact.id };
     } else {
-      const { data: newContactRow } = await supabase
+      const { data: newContactRow, error: newContactErr } = await supabase
         .from('contacts')
         .insert({
           owner_user_id: currentUserId,
@@ -350,14 +419,102 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         })
         .select()
         .single();
+      if (newContactErr) {
+        const fetchedLinkedContact = await hydrateOwnedLinkedContact();
+        if (fetchedLinkedContact) {
+          return { ok: true as const, friend: friendUser, contactId: fetchedLinkedContact.id };
+        }
+        return { ok: false as const, error: newContactErr.message };
+      }
       if (newContactRow) {
         const newContact = rowToContact(newContactRow);
         queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) => [newContact, ...(old ?? [])]);
         return { ok: true as const, friend: friendUser, contactId: newContact.id };
       }
+
+      const fetchedLinkedContact = await hydrateOwnedLinkedContact();
+      if (fetchedLinkedContact) {
+        return { ok: true as const, friend: friendUser, contactId: fetchedLinkedContact.id };
+      }
     }
 
-    return { ok: true as const, friend: friendUser, contactId: null };
+    return { ok: false as const, error: 'We added the friendship, but could not create your editable contact card.' };
+  }
+
+  async function removeFriend(currentUserId: string, friendUserId: string) {
+    const ownedLinkedContact = contacts.find(
+      (contact) => contact.ownerUserId === currentUserId && contact.linkedUserId === friendUserId,
+    );
+
+    if (ownedLinkedContact) {
+      const { error: migrateBackErr } = await supabase
+        .from('wall_posts')
+        .update({
+          subject_user_id: null,
+          subject_contact_id: ownedLinkedContact.id,
+          visibility: 'private',
+        })
+        .eq('author_user_id', currentUserId)
+        .eq('subject_user_id', friendUserId);
+      if (migrateBackErr) throw new Error(migrateBackErr.message);
+    }
+
+    const low = currentUserId < friendUserId ? currentUserId : friendUserId;
+    const high = currentUserId < friendUserId ? friendUserId : currentUserId;
+    const { error: deleteErr } = await supabase
+      .from('friendships')
+      .delete()
+      .eq('user_low_id', low)
+      .eq('user_high_id', high);
+    if (deleteErr) throw new Error(deleteErr.message);
+
+    if (ownedLinkedContact) {
+      const { error: unlinkErr } = await supabase
+        .from('contacts')
+        .update({ linked_user_id: null })
+        .eq('id', ownedLinkedContact.id);
+      if (unlinkErr) throw new Error(unlinkErr.message);
+    }
+
+    queryClient.setQueryData<Friendship[]>(socialQueryKeys.friendships, (old) =>
+      (old ?? []).filter((friendship) => !(friendship.userLowId === low && friendship.userHighId === high)),
+    );
+    if (ownedLinkedContact) {
+      queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
+        (old ?? []).map((contact) =>
+          contact.id === ownedLinkedContact.id ? { ...contact, linkedUserId: null } : contact,
+        ),
+      );
+      queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) =>
+        (old ?? []).map((post) =>
+          post.authorUserId === currentUserId && post.subjectUserId === friendUserId
+            ? {
+                ...post,
+                subjectUserId: null,
+                subjectContactId: ownedLinkedContact.id,
+                visibility: 'private',
+              }
+            : post,
+        ),
+      );
+    }
+  }
+
+  async function deleteContact(currentUserId: string, contactId: string) {
+    const contact = contacts.find((entry) => entry.id === contactId);
+    if (!contact) throw new Error('Contact not found.');
+    if (contact.ownerUserId !== currentUserId) throw new Error("You don't own this contact.");
+    if (contact.linkedUserId) throw new Error('Unfriend this person before deleting their profile card.');
+
+    const { error } = await supabase.from('contacts').delete().eq('id', contactId);
+    if (error) throw new Error(error.message);
+
+    queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
+      (old ?? []).filter((entry) => entry.id !== contactId),
+    );
+    queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) =>
+      (old ?? []).filter((post) => post.subjectContactId !== contactId),
+    );
   }
 
   // ── Mutations: Contacts ──────────────────────────────────────────────
@@ -726,6 +883,8 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         contacts,
         wallPosts,
         addFriendByCode,
+        removeFriend,
+        deleteContact,
         addManualContact,
         addWallPost,
         getContactById,

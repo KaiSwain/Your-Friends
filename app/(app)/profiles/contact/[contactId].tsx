@@ -33,7 +33,7 @@ export default function ContactProfileScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ contactId: string | string[] }>();
   const { currentUser } = useAuth();
-  const { loading, getContactById, getUserById, getDirectFriends, getPeopleListForUser, getWallPostsForSubject, addContactFact, deleteContactFact, deleteWallPost, updateWallPost, updateContact, migrateContactPostsToUser, linkContactByFriendCode, togglePin, notifications, refresh } = useSocialGraph();
+  const { loading, getContactById, getUserById, getDirectFriends, getPeopleListForUser, getWallPostsForSubject, addContactFact, deleteContactFact, deleteWallPost, updateWallPost, updateContact, migrateContactPostsToUser, linkContactByFriendCode, togglePin, removeFriend, deleteContact, notifications, refresh } = useSocialGraph();
   const { colors, fonts } = useTheme();
 
   const [newFact, setNewFact] = useState('');
@@ -198,6 +198,59 @@ export default function ContactProfileScreen() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => deleteWallPost(postId) },
     ]);
+  }
+
+  function handleUnfriend() {
+    if (!currentUser || !contact.linkedUserId || !linkedUser) return;
+
+    Alert.alert(
+      `Unfriend ${linkedUser.displayName}?`,
+      'They will stay in your private contact list, but the friendship link will be removed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unfriend',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await removeFriend(currentUser.id, linkedUser.id);
+              setEditing(false);
+            } catch (err: any) {
+              Alert.alert('Error', err.message ?? 'Failed to remove friend.');
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  function handleDeleteProfile() {
+    if (!currentUser) return;
+
+    if (contact.linkedUserId) {
+      Alert.alert('Unfriend first', 'You can only delete this profile after you remove them as a friend.');
+      return;
+    }
+
+    Alert.alert(
+      `Delete ${contact.displayName}'s profile?`,
+      'This will delete this profile card and remove its saved memories and facts from your app.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete profile',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteContact(currentUser.id, contact.id);
+              router.replace('/(app)/friends');
+            } catch (err: any) {
+              Alert.alert('Error', err.message ?? 'Failed to delete profile.');
+            }
+          },
+        },
+      ],
+    );
   }
 
   function startEditingPost(post: WallPost) {
@@ -513,6 +566,23 @@ export default function ContactProfileScreen() {
     );
   }
 
+  if (editing) {
+    screenContent.push(
+      <View key="destructive-actions" style={styles.destructiveActions}>
+        {contact.linkedUserId && linkedUser ? (
+          <Pressable onPress={handleUnfriend} style={styles.unfriendButton} accessibilityRole="button" accessibilityLabel={`Unfriend ${linkedUser.displayName}`}>
+            <Text style={styles.unfriendLabel}>Unfriend {linkedUser.displayName}</Text>
+          </Pressable>
+        ) : null}
+        {!contact.linkedUserId ? (
+          <Pressable onPress={handleDeleteProfile} style={styles.deleteProfileButton} accessibilityRole="button" accessibilityLabel={`Delete ${contact.displayName}'s profile`}>
+            <Text style={styles.deleteProfileLabel}>Delete Profile</Text>
+          </Pressable>
+        ) : null}
+      </View>,
+    );
+  }
+
   return (
     <AppScreen header={topBar} floatingHeaderOnScroll gradientColors={themedColors ? [themedColors.canvas, themedColors.canvasAlt, themedColors.canvas] : undefined} onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }} refreshing={refreshing} stickyHeaderIndices={stickyHeaderIndex !== undefined ? [stickyHeaderIndex] : undefined}>
       {screenContent}
@@ -545,6 +615,27 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     topBarRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     pinButton: { padding: spacing.xs },
     pinLabel: { fontSize: 20 },
+    destructiveActions: { marginTop: spacing.lg, gap: spacing.sm, paddingBottom: spacing.md },
+    unfriendButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.error,
+      backgroundColor: colors.error + '10',
+    },
+    unfriendLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.error },
+    deleteProfileButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: colors.error,
+    },
+    deleteProfileLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.white },
     editButton: {
       paddingVertical: spacing.xs, paddingHorizontal: spacing.md,
       borderRadius: radius.pill, borderWidth: 1, borderColor: tint,

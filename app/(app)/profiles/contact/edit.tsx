@@ -592,11 +592,20 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingBottom: 28,
       alignItems: 'center',
       gap: 4,
+      overflow: 'visible' as const,
       minHeight: PREVIEW_BOTTOM_MIN_HEIGHT,
       justifyContent: 'flex-start',
     },
     previewNoteSlot: { width: '100%', minHeight: PREVIEW_NOTE_SLOT_HEIGHT, justifyContent: 'flex-start' },
-    previewName: { fontFamily: fonts.handwrittenBold, fontSize: 22, color: FRAME_INK, textAlign: 'center' },
+    previewName: {
+      fontFamily: fonts.handwrittenBold,
+      fontSize: 22,
+      color: FRAME_INK,
+      textAlign: 'center',
+      width: '100%',
+      paddingHorizontal: 10,
+      overflow: 'visible' as const,
+    },
     previewTagRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 4 },
     previewTag: {
       backgroundColor: colors.accent + '1A',
@@ -606,7 +615,16 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     previewTagText: { fontFamily: fonts.bodyBold, fontSize: 10, color: colors.accent, textTransform: 'uppercase', letterSpacing: 0.5 },
     previewTagMore: { fontFamily: fonts.bodyMedium, fontSize: 10, color: colors.inkMuted },
-    previewNote: { fontFamily: fonts.handwritten, fontSize: 14, lineHeight: PREVIEW_NOTE_LINE_HEIGHT, color: colors.inkSoft, textAlign: 'center' },
+    previewNote: {
+      fontFamily: fonts.handwritten,
+      fontSize: 14,
+      lineHeight: PREVIEW_NOTE_LINE_HEIGHT,
+      color: colors.inkSoft,
+      textAlign: 'center',
+      width: '100%',
+      paddingHorizontal: 10,
+      overflow: 'visible' as const,
+    },
     /* ── Back face ── */
     previewCardBack: {
       justifyContent: 'center',
@@ -621,6 +639,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       color: FRAME_INK,
       textAlign: 'center',
       flex: 1,
+      width: '100%',
+      overflow: 'visible' as const,
     },
     previewBackPlaceholder: {
       fontFamily: fonts.handwritten,
@@ -628,6 +648,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       color: FRAME_INK_SOFT,
       textAlign: 'center',
       flex: 1,
+      width: '100%',
+      overflow: 'visible' as const,
       opacity: 0.5,
     },
     previewBackHint: {

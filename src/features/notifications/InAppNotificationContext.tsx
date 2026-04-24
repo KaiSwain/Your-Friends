@@ -25,7 +25,7 @@ const SWIPE_DISMISS_THRESHOLD = -40;
 
 export function InAppNotificationProvider({ children }: { children: ReactNode }) {
   const { currentUser } = useAuth();
-  const { notifications, getUserById, markNotificationRead } = useSocialGraph();
+  const { notifications, contacts, getUserById, markNotificationRead } = useSocialGraph();
   const { colors, fonts } = useTheme();
   const router = useRouter();
   const pathname = usePathname();
@@ -132,10 +132,11 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
       if (n.type === 'wall_post' && n.actorUserId) {
         router.push(`/(app)/wall/${n.actorUserId}`);
       } else if (n.type === 'friend_request' && n.actorUserId) {
-        router.push(`/(app)/profiles/user/${n.actorUserId}`);
+        const linkedContactId = contacts.find((contact) => contact.linkedUserId === n.actorUserId)?.id;
+        router.push(linkedContactId ? `/(app)/profiles/contact/${linkedContactId}` : `/(app)/profiles/user/${n.actorUserId}`);
       }
     });
-  }, [active, hideActive, markNotificationRead, router]);
+  }, [active, contacts, hideActive, markNotificationRead, router]);
 
   const panResponder = useMemo(
     () =>

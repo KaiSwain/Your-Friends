@@ -15,7 +15,7 @@ export default function NotificationsScreen() {
   const router = useRouter();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
-  const { loading, notifications, getUserById, markNotificationRead, markAllNotificationsRead, refresh } = useSocialGraph();
+  const { loading, notifications, contacts, getUserById, markNotificationRead, markAllNotificationsRead, refresh } = useSocialGraph();
   const [refreshing, setRefreshing] = useState(false);
 
   const topBar = (
@@ -37,7 +37,8 @@ export default function NotificationsScreen() {
     if (n.type === 'wall_post' && n.actorUserId) {
       router.push(`/(app)/wall/${n.actorUserId}`);
     } else if (n.type === 'friend_request' && n.actorUserId) {
-      router.push(`/(app)/profiles/user/${n.actorUserId}`);
+      const linkedContactId = contacts.find((contact) => contact.linkedUserId === n.actorUserId)?.id;
+      router.push(linkedContactId ? `/(app)/profiles/contact/${linkedContactId}` : `/(app)/profiles/user/${n.actorUserId}`);
     }
   }
 
