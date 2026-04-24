@@ -1,19 +1,36 @@
 import { useRouter } from 'expo-router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AppScreen } from '../../src/components/AppScreen';
+import { ListRowSkeleton } from '../../src/components/Skeleton';
+import { ThemedIcon } from '../../src/components/ThemedIcon';
 import { useSocialGraph } from '../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
-import { fonts } from '../../src/theme/typography';
+import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
 
 export default function NotificationsScreen() {
   const router = useRouter();
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { notifications, getUserById, markNotificationRead, markAllNotificationsRead } = useSocialGraph();
+  const { colors, fonts } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
+  const { loading, notifications, getUserById, markNotificationRead, markAllNotificationsRead, refresh } = useSocialGraph();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const topBar = (
+    <View style={styles.topBar}>
+      <Pressable onPress={() => router.back()} style={[styles.backButton, { flexDirection: 'row', alignItems: 'center', gap: 2 }]} accessibilityRole="button" accessibilityLabel="Go back">
+        <ThemedIcon name="back" size={16} color={colors.inkSoft} />
+        <Text style={styles.backLabel}>Back</Text>
+      </Pressable>
+      {notifications.some((n) => !n.read) && (
+        <Pressable onPress={markAllNotificationsRead} accessibilityRole="button" accessibilityLabel="Mark all notifications as read">
+          <Text style={styles.markAllLabel}>Mark all read</Text>
+        </Pressable>
+      )}
+    </View>
+  );
 
   function handlePress(n: (typeof notifications)[0]) {
     if (!n.read) markNotificationRead(n.id);
@@ -36,26 +53,24 @@ export default function NotificationsScreen() {
   }
 
   return (
-    <AppScreen>
-      <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backLabel}>← Back</Text>
-        </Pressable>
-        {notifications.some((n) => !n.read) && (
-          <Pressable onPress={markAllNotificationsRead}>
-            <Text style={styles.markAllLabel}>Mark all read</Text>
-          </Pressable>
-        )}
-      </View>
+    <AppScreen header={topBar} floatingHeaderOnScroll onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }} refreshing={refreshing}>
 
+      <View style={styles.titleSpacer} />
       <Text style={styles.title}>Notifications</Text>
 
-      {notifications.length > 0 ? (
+      {loading ? (
+        <View style={styles.list}>
+          <ListRowSkeleton />
+          <ListRowSkeleton />
+          <ListRowSkeleton />
+          <ListRowSkeleton />
+        </View>
+      ) : notifications.length > 0 ? (
         <View style={styles.list}>
           {notifications.map((n) => {
             const actor = getUserById(n.actorUserId);
             return (
-              <Pressable key={n.id} onPress={() => handlePress(n)} style={[styles.row, !n.read && styles.rowUnread]}>
+              <Pressable key={n.id} onPress={() => handlePress(n)} style={[styles.row, !n.read && styles.rowUnread]} accessibilityRole="button" accessibilityLabel={`${n.read ? '' : 'Unread: '}${n.message}`}>
                 <View style={styles.avatarCircle}>
                   {actor?.avatarPath ? (
                     <Image source={{ uri: actor.avatarPath }} style={styles.avatarImage} />
@@ -76,7 +91,7 @@ export default function NotificationsScreen() {
         </View>
       ) : (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyEmoji}>🔔</Text>
+          <ThemedIcon name="bell" size={40} color={colors.inkMuted} />
           <Text style={styles.emptyTitle}>All caught up</Text>
           <Text style={styles.emptySubtitle}>
             Notifications will appear here when friends share memories about you.
@@ -87,12 +102,13 @@ export default function NotificationsScreen() {
   );
 }
 
-const makeStyles = (colors: ColorTokens) =>
+const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
-    topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    backButton: { paddingVertical: spacing.xs },
+    topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 0 },
+    backButton: { paddingVertical: 0 },
     backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
     markAllLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.accent },
+    titleSpacer: { height: spacing.lg },
     title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink },
     list: { gap: 0 },
     row: {

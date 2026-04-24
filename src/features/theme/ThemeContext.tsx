@@ -2,6 +2,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useColorScheme } from 'react-native';
 
+import type { FontSet } from '../../theme/typography';
+import { getFontSet } from '../../theme/typography';
+import type { EmojiSet, ThemePersonality } from './personality';
+import { getPersonality } from './personality';
 import type { ColorTokens, ThemeMode, ThemeName } from './themes';
 import { themes } from './themes';
 
@@ -10,6 +14,9 @@ const STORAGE_KEY_NAME = 'yourfriends:themeName';
 
 interface ThemeContextValue {
   colors: ColorTokens;
+  fonts: FontSet;
+  emojis: EmojiSet;
+  personality: ThemePersonality;
   themeMode: ThemeMode;
   themeName: ThemeName;
   resolvedMode: 'light' | 'dark';
@@ -58,13 +65,17 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     themeMode === 'system' ? (systemScheme === 'light' ? 'light' : 'dark') : themeMode;
 
   const colors = useMemo(
-    () => themes[themeName][resolvedMode],
+    () => (themes[themeName] ?? themes.default)[resolvedMode],
     [themeName, resolvedMode],
   );
 
+  const fonts = useMemo(() => getFontSet(themeName), [themeName]);
+  const personality = useMemo(() => getPersonality(themeName), [themeName]);
+  const emojis = personality.emojis;
+
   const value = useMemo<ThemeContextValue>(
-    () => ({ colors, themeMode, themeName, resolvedMode, setThemeMode, setThemeName }),
-    [colors, themeMode, themeName, resolvedMode, setThemeMode, setThemeName],
+    () => ({ colors, fonts, emojis, personality, themeMode, themeName, resolvedMode, setThemeMode, setThemeName }),
+    [colors, fonts, emojis, personality, themeMode, themeName, resolvedMode, setThemeMode, setThemeName],
   );
 
   // Don't render children until saved prefs have been loaded so there's no flash.

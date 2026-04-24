@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
-import { fonts } from '../theme/typography';
+import type { FontSet } from '../theme/typography';
 import { radius, spacing } from '../theme/tokens';
 
 // Define the allowed visual styles this button component supports.
@@ -27,8 +27,8 @@ export function ActionButton({
   onPress,
   variant = 'primary',
 }: ActionButtonProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, fonts } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
   return (
     // Use Pressable so the button can react to touch and pressed state.
@@ -74,7 +74,7 @@ export function ActionButton({
   );
 } // End ActionButton
 
-const makeStyles = (colors: ColorTokens) =>
+const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
   // Define the base layout shared by every button variant.
   base: {

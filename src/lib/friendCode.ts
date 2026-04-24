@@ -7,6 +7,32 @@ export function normalizeFriendCode(value: string) {
   return value.replace(/[^a-z0-9]/gi, '').toUpperCase();
 } // End normalizeFriendCode after returning the cleaned code.
 
+// Extract a friend code from plain text, QR payloads, or shareable deep links.
+export function extractFriendCode(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+
+  const queryMatch = trimmed.match(/[?&]code=([^&#]+)/i);
+  if (queryMatch?.[1]) {
+    return normalizeFriendCode(decodeURIComponent(queryMatch[1]));
+  }
+
+  const withoutScheme = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^\/+/, '');
+  const pathParts = withoutScheme.split(/[/?#]/).filter(Boolean);
+  if (pathParts.length === 1) {
+    return normalizeFriendCode(pathParts[0]);
+  }
+
+  return normalizeFriendCode(trimmed);
+} // End extractFriendCode after returning the best available code candidate.
+
+// Build the canonical deep link used when sharing friend invites.
+export function createFriendInviteLink(friendCode: string) {
+  const normalized = normalizeFriendCode(friendCode);
+  if (!normalized) return 'yourfriends://add-friend';
+  return `yourfriends://add-friend?code=${encodeURIComponent(normalized)}`;
+} // End createFriendInviteLink after returning the deep link.
+
 // Export a helper that generates an 8-character friend code from a stable seed value.
 export function createFriendCode(seed: string, existingCodes: string[]) {
   // Convert the existing code list into a Set so duplicate checks are fast.

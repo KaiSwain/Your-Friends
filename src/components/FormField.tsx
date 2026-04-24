@@ -3,7 +3,7 @@ import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
-import { fonts } from '../theme/typography';
+import type { FontSet } from '../theme/typography';
 import { radius, spacing } from '../theme/tokens';
 
 interface FormFieldProps {
@@ -25,8 +25,8 @@ export function FormField({
   secureTextEntry = false,
   value,
 }: FormFieldProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, fonts } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
   return (
     <View style={styles.wrapper}>
@@ -45,7 +45,7 @@ export function FormField({
   );
 }
 
-const makeStyles = (colors: ColorTokens) =>
+const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
     wrapper: {
       gap: spacing.xs,

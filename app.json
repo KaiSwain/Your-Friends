@@ -14,13 +14,22 @@
       "backgroundColor": "#0A0A0A"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourfriends.app",
+      "buildNumber": "1",
+      "usesAppleSignIn": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "YourFriends needs access to your camera to scan QR codes and capture memories.",
+        "NSPhotoLibraryUsageDescription": "YourFriends needs access to your photos to add memories.",
+        "NSPhotoLibraryAddUsageDescription": "YourFriends needs permission to save photos to your library."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0A0A"
       },
+      "package": "com.yourfriends.app",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
@@ -33,11 +42,25 @@
     "plugins": [
       "expo-router",
       "expo-font",
+      "expo-apple-authentication",
       [
         "expo-image-picker",
         {
           "photosPermission": "YourFriends needs access to your photos to add memories.",
           "cameraPermission": "YourFriends needs access to your camera to capture memories."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "YourFriends needs access to your camera to scan QR codes."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0A0A0A"
         }
       ]
     ]

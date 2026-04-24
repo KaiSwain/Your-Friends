@@ -1,26 +1,48 @@
 import { Link, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
+import { Ionicons } from '@expo/vector-icons';
+
+WebBrowser.maybeCompleteAuthSession();
 
 import { ActionButton } from '../../src/components/ActionButton';
 import { AppScreen } from '../../src/components/AppScreen';
 import { FormField } from '../../src/components/FormField';
-import { SectionCard } from '../../src/components/SectionCard';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
-import { fonts } from '../../src/theme/typography';
-import { spacing } from '../../src/theme/tokens';
+import type { FontSet } from '../../src/theme/typography';
+import { radius, spacing } from '../../src/theme/tokens';
 
 export default function SignInScreen() {
   const router = useRouter();
-  const { signIn } = useAuth();
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { signIn, signInWithApple, signInWithGoogle } = useAuth();
+  const { colors, fonts } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showEmail, setShowEmail] = useState(false);
+
+  const [_googleRequest, googleResponse, googlePromptAsync] = Google.useIdTokenAuthRequest({
+    clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '',
+    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '',
+  });
+
+  useEffect(() => {
+    if (googleResponse?.type === 'success') {
+      const idToken = googleResponse.params.id_token;
+      setBusy(true);
+      setError('');
+      signInWithGoogle(idToken).then((result) => {
+        if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
+        router.replace('/(app)/friends');
+      });
+    }
+  }, [googleResponse]);
 
   async function handleSignIn() {
     setBusy(true);
@@ -30,39 +52,130 @@ export default function SignInScreen() {
     router.replace('/(app)/friends');
   }
 
+  async function handleApple() {
+    setBusy(true);
+    setError('');
+    const result = await signInWithApple();
+    if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
+    router.replace('/(app)/friends');
+  }
+
+  async function handleGoogle() {
+    googlePromptAsync();
+  }
+
   return (
     <AppScreen>
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>Your Friends</Text>
         <Text style={styles.title}>A warm little place to remember the people who matter.</Text>
-        <Text style={styles.subtitle}>Sign in with your email and password to pick up where you left off.</Text>
+        <Text style={styles.subtitle}>Sign in to pick up where you left off.</Text>
       </View>
 
-      <SectionCard eyebrow="Sign in" title="Welcome back">
-        <FormField autoCapitalize="none" keyboardType="email-address" label="Email" onChangeText={setEmail} placeholder="avery@yourfriends.app" value={email} />
-        <FormField autoCapitalize="none" label="Password" onChangeText={setPassword} placeholder="Your password" secureTextEntry value={password} />
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        <ActionButton label={busy ? 'Signing in…' : 'Sign in'} onPress={handleSignIn} disabled={busy} />
-      </SectionCard>
+      <View style={styles.socialSection}>
+        {Platform.OS === 'ios' && (
+          <Pressable
+            style={({ pressed }) => [styles.socialButton, styles.appleButton, pressed && styles.pressed]}
+            onPress={handleApple}
+            disabled={busy}
+          >
+            <Ionicons name="logo-apple" size={20} color="#FFFFFF" />
+            <Text style={[styles.socialLabel, { color: '#FFFFFF' }]}>Continue with Apple</Text>
+          </Pressable>
+        )}
 
-      <SectionCard eyebrow="Need an account?">
-        <Text style={styles.note}>Don't have an account yet? It only takes a moment.</Text>
+        <Pressable
+          style={({ pressed }) => [styles.socialButton, styles.googleButton, pressed && styles.pressed]}
+          onPress={handleGoogle}
+          disabled={busy}
+        >
+          <Ionicons name="logo-google" size={18} color="#1F1F1F" />
+          <Text style={[styles.socialLabel, { color: '#1F1F1F' }]}>Continue with Google</Text>
+        </Pressable>
+
+        {error && !showEmail ? <Text style={styles.error}>{error}</Text> : null}
+      </View>
+
+      <View style={styles.dividerRow}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>or</Text>
+        <View style={styles.dividerLine} />
+      </View>
+
+      {!showEmail ? (
+        <Pressable
+          style={({ pressed }) => [styles.socialButton, styles.emailButton, pressed && styles.pressed]}
+          onPress={() => setShowEmail(true)}
+        >
+          <Ionicons name="mail-outline" size={18} color={colors.ink} />
+          <Text style={[styles.socialLabel, { color: colors.ink }]}>Continue with email</Text>
+        </Pressable>
+      ) : (
+        <View style={styles.emailSection}>
+          <FormField autoCapitalize="none" keyboardType="email-address" label="Email" onChangeText={setEmail} placeholder="avery@yourfriends.app" value={email} />
+          <FormField autoCapitalize="none" label="Password" onChangeText={setPassword} placeholder="Your password" secureTextEntry value={password} />
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+          <ActionButton label={busy ? 'Signing in…' : 'Sign in'} onPress={handleSignIn} disabled={busy} />
+        </View>
+      )}
+
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>Don't have an account?</Text>
         <Link href="/(auth)/sign-up" style={styles.link}>Create account</Link>
-      </SectionCard>
+      </View>
     </AppScreen>
   );
 }
 
-const makeStyles = (colors: ColorTokens) =>
+const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
-    hero: { gap: spacing.sm, paddingTop: spacing.lg },
+    hero: { gap: spacing.sm, paddingTop: spacing.xl },
     eyebrow: {
       fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent,
       letterSpacing: 0.8, textTransform: 'uppercase',
     },
-    title: { fontFamily: fonts.heading, fontSize: 42, lineHeight: 46, color: colors.ink },
+    title: { fontFamily: fonts.heading, fontSize: 38, lineHeight: 42, color: colors.ink },
     subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 23, color: colors.inkSoft },
+    socialSection: { gap: spacing.sm, paddingTop: spacing.lg },
+    socialButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.sm,
+      height: 52,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+    },
+    appleButton: { backgroundColor: '#000000' },
+    googleButton: { backgroundColor: '#FFFFFF' },
+    emailButton: {
+      backgroundColor: 'transparent',
+      borderWidth: 1,
+      borderColor: colors.line,
+    },
+    socialLabel: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 16,
+    },
+    pressed: { opacity: 0.7, transform: [{ scale: 0.98 }] },
+    dividerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingVertical: spacing.md,
+    },
+    dividerLine: { flex: 1, height: 1, backgroundColor: colors.line },
+    dividerText: { fontFamily: fonts.body, fontSize: 13, color: colors.inkMuted },
+    emailSection: { gap: spacing.sm },
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
-    note: { fontFamily: fonts.body, fontSize: 14, lineHeight: 21, color: colors.inkSoft },
-    link: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
+    footer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xs,
+      paddingTop: spacing.lg,
+      paddingBottom: spacing.xl,
+    },
+    footerText: { fontFamily: fonts.body, fontSize: 14, color: colors.inkSoft },
+    link: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.accent },
   });

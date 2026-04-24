@@ -13,6 +13,7 @@ create table public.profiles ( -- Create the profiles table in the public schema
   friend_code text unique not null, -- Store the unique friend code used to connect users.
   avatar_color text not null default '#7C5CFC', -- Store a fallback avatar color for the profile.
   avatar_path text, -- Optionally store a path to an uploaded avatar image.
+  push_token text, -- Store the Expo push notification token for server-side sends.
   profile_facts text[] not null default '{}', -- Store profile facts as a text array.
   created_at timestamptz not null default now() -- Store when the profile row was created.
 ); -- End the profiles table definition.
@@ -41,6 +42,7 @@ create table public.contacts ( -- Create the contacts table in the public schema
   tags text[] not null default '{}', -- Store relationship tags as a text array.
   note text, -- Optionally store a short note about this contact.
   card_color text, -- Optionally store a card background color.
+  back_text text, -- Optionally store text written on the back of the profile card.
   profile_bg text, -- Optionally store a profile background theme key.
   created_at timestamptz not null default now(), -- Store when the contact row was created.
   constraint contacts_unique_link unique (owner_user_id, linked_user_id) -- Prevent duplicate linked contacts per owner.
@@ -87,6 +89,9 @@ create table public.wall_posts ( -- Create the wall_posts table in the public sc
   body text not null, -- Store the main memory text.
   image_path text, -- Optionally store an uploaded image path or URL.
   card_color text, -- Optionally store a custom card color for the polaroid frame.
+  back_text text, -- Optionally store text written on the back of the polaroid.
+  filter text, -- Optionally store a photo filter key (e.g. vintage, warm, cool).
+  date_stamp boolean not null default false, -- Optionally store whether to show a date stamp overlay on the photo.
   created_at timestamptz not null default now(), -- Store when the wall post row was created.
   constraint wall_posts_has_subject check ( -- Enforce that exactly one kind of subject is set.
     (subject_user_id is not null and subject_contact_id is null) or -- Allow a real-user subject with no contact subject.
@@ -177,6 +182,11 @@ create policy "Authenticated users can insert notifications"
   on public.notifications for insert with check (true);
 
 create index idx_notifications_recipient on public.notifications(recipient_user_id);
+
+-- Migrations: add columns that were added after initial table creation.
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS date_stamp boolean not null default false;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS filter text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS back_text text;
 
 -- Enable realtime on wall_posts and contacts so clients receive live updates.
 alter publication supabase_realtime add table public.wall_posts;

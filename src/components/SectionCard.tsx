@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
-import { fonts } from '../theme/typography';
+import type { FontSet } from '../theme/typography';
 import { radius, shadow, spacing } from '../theme/tokens';
 
 interface SectionCardProps {
@@ -13,8 +13,8 @@ interface SectionCardProps {
 }
 
 export function SectionCard({ children, eyebrow, title }: SectionCardProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, fonts } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
   return (
     <View style={styles.card}>
@@ -25,7 +25,7 @@ export function SectionCard({ children, eyebrow, title }: SectionCardProps) {
   );
 }
 
-const makeStyles = (colors: ColorTokens) =>
+const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
     card: {
       borderRadius: radius.lg,

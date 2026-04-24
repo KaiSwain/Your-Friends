@@ -2,6 +2,7 @@ import { Session } from '@supabase/supabase-js';
 import { decode } from 'base64-arraybuffer';
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as AppleAuthentication from 'expo-apple-authentication';
 
 import { supabase } from '../../lib/supabase';
 import { AppUser } from '../../types/domain';
@@ -30,6 +31,8 @@ interface AuthContextValue {
     password: string,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   updateProfile: (updates: { displayName?: string; avatarLocalUri?: string | null; profileFacts?: string[] }) => Promise<void>;
+  signInWithApple: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  signInWithGoogle: (idToken: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 } // End the AuthContextValue interface.
 
 // Create the auth context with a null default so missing providers fail fast.
@@ -254,6 +257,72 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }
 
+  async function ensureProfile(userId: string, email: string, displayName?: string) {
+    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    if (data) {
+      await fetchProfile(userId);
+      return;
+    }
+    const friendCode = createFriendCode(email, []);
+    const colorIndex = email.split('').reduce((sum, c) => sum + c.charCodeAt(0), 0);
+    await supabase.from('profiles').insert({
+      id: userId,
+      email,
+      display_name: displayName || email.split('@')[0],
+      friend_code: friendCode,
+      avatar_color: accentPalette[colorIndex % accentPalette.length],
+      profile_facts: [],
+    });
+    await fetchProfile(userId);
+  }
+
+  async function signInWithApple(): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      if (!credential.identityToken) {
+        return { ok: false, error: 'Apple Sign In failed — no identity token.' };
+      }
+      const { data, error } = await supabase.auth.signInWithIdToken({
+        provider: 'apple',
+        token: credential.identityToken,
+      });
+      if (error) return { ok: false, error: error.message };
+      if (!data.user) return { ok: false, error: 'Apple Sign In failed.' };
+
+      const name = credential.fullName
+        ? [credential.fullName.givenName, credential.fullName.familyName].filter(Boolean).join(' ')
+        : undefined;
+      await ensureProfile(data.user.id, data.user.email ?? '', name);
+      return { ok: true };
+    } catch (e: any) {
+      if (e.code === 'ERR_REQUEST_CANCELED') return { ok: false, error: '' };
+      return { ok: false, error: e.message ?? 'Apple Sign In failed.' };
+    }
+  }
+
+  async function signInWithGoogle(idToken: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      const { data, error } = await supabase.auth.signInWithIdToken({
+        provider: 'google',
+        token: idToken,
+      });
+      if (error) return { ok: false, error: error.message };
+      if (!data.user) return { ok: false, error: 'Google Sign In failed.' };
+
+      const meta = data.user.user_metadata;
+      const name = meta?.full_name || meta?.name || undefined;
+      await ensureProfile(data.user.id, data.user.email ?? '', name);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e.message ?? 'Google Sign In failed.' };
+    }
+  }
+
   // Sign the current user out and clear the local profile cache.
   async function signOut() {
     // Ask Supabase Auth to end the current session.
@@ -282,6 +351,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signUp,
         // Expose the profile update action.
         updateProfile,
+        signInWithApple,
+        signInWithGoogle,
       }}
     >
       {/* Render whatever child components were wrapped by this provider. */}

@@ -2,6 +2,14 @@
 export type EntityType = 'user' | 'contact';
 // Define the allowed visibility modes for a wall post.
 export type WallPostVisibility = 'private' | 'visible_to_subject';
+// Define the supported font presets for text-only memories.
+export type WallPostTextFont = 'handwritten' | 'handwrittenBold' | 'marker' | 'editorial' | 'modern' | 'body' | 'heading';
+// Define the numeric size used for text-only memory text.
+export type WallPostTextSize = number;
+// Define the supported text effects for text-only memories.
+export type WallPostTextEffect = 'none' | 'shadow' | 'glow' | 'echo' | 'dreamy';
+// Define the supported text color presets for text-only memories.
+export type WallPostTextColor = 'ink' | 'accent' | 'terracotta' | 'rose' | 'plum' | 'lavender' | 'sky';
 
 // Describe the shape of a real app user after profile data has been loaded.
 export interface AppUser {
@@ -45,6 +53,8 @@ export interface Contact {
   note: string | null;
   // Optionally store a card background color for this contact.
   cardColor: string | null;
+  // Optionally store text written on the back of the profile card.
+  backText: string | null;
   // Optionally store a profile background theme key.
   profileBg: string | null;
   // Whether this contact is pinned to the front of the carousel.
@@ -123,6 +133,20 @@ export interface WallPost {
   imageUri: string | null;
   // Optionally store a custom card color for the polaroid frame.
   cardColor: string | null;
+  // Optionally store text written on the back of the polaroid.
+  backText: string | null;
+  // Optionally store a photo filter key.
+  filter: string | null;
+  // Optionally store a text font preset for text-only memories.
+  textFont?: WallPostTextFont | null;
+  // Optionally store a text size preset for text-only memories.
+  textSize?: WallPostTextSize | null;
+  // Optionally store a text effect preset for text-only memories.
+  textEffect?: WallPostTextEffect | null;
+  // Optionally store a text color preset for text-only memories.
+  textColor?: WallPostTextColor | null;
+  // Optionally store whether the date stamp overlay is shown.
+  dateStamp: boolean;
   // Store the ISO timestamp for when the memory was created.
   createdAt: string;
 } // End the WallPost interface.
@@ -141,6 +165,20 @@ export interface CreateWallPostInput {
   imageUri: string | null;
   // Optionally store a card color for the new post.
   cardColor?: string | null;
+  // Optionally store text written on the back of the polaroid.
+  backText?: string | null;
+  // Optionally store a photo filter key for the new post.
+  filter?: string | null;
+  // Optionally store a text font preset for text-only memories.
+  textFont?: WallPostTextFont | null;
+  // Optionally store a text size preset for text-only memories.
+  textSize?: WallPostTextSize | null;
+  // Optionally store a text effect preset for text-only memories.
+  textEffect?: WallPostTextEffect | null;
+  // Optionally store a text color preset for text-only memories.
+  textColor?: WallPostTextColor | null;
+  // Optionally store whether the date stamp overlay should be shown.
+  dateStamp?: boolean;
 } // End the CreateWallPostInput interface.
 
 // Describe the payload needed when creating a new private contact.

@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
 import { PeopleListItem } from '../types/domain';
-import { fonts } from '../theme/typography';
+import type { FontSet } from '../theme/typography';
 import { radius, shadow, spacing } from '../theme/tokens';
 
 interface PersonCardProps {
@@ -14,8 +14,8 @@ interface PersonCardProps {
 }
 
 export function PersonCard({ item, onPress }: PersonCardProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, fonts } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
@@ -32,7 +32,7 @@ export function PersonCard({ item, onPress }: PersonCardProps) {
   );
 }
 
-const makeStyles = (colors: ColorTokens) =>
+const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
     card: {
       flexDirection: 'row',

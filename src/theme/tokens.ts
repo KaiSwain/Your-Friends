@@ -36,6 +36,34 @@ export const colors = {
   sky: '#9AB7C9',
   // Keep this plum color available for avatars and decorative accents.
   plum: '#8A6D7D',
+  // Keep this rose color available for avatars and decorative accents.
+  rose: '#D4888C',
+  // Keep this lavender color available for avatars and decorative accents.
+  lavender: '#A992D4',
+  // Keep this mint color available for avatars and decorative accents.
+  mint: '#8CC9A8',
+  // Keep this coral color available for avatars and decorative accents.
+  coral: '#E08870',
+  // Keep this slate color available for avatars and decorative accents.
+  slate: '#7A8FA0',
+  // Keep this peach color available for avatars and decorative accents.
+  peach: '#F0C5A0',
+  // Keep this red color available for avatars and decorative accents.
+  red: '#C94040',
+  // Keep this charcoal color available for avatars and decorative accents.
+  charcoal: '#3A3A3A',
+  // Keep this grey color available for avatars and decorative accents.
+  grey: '#9E9E9E',
+  // Keep this navy color available for avatars and decorative accents.
+  navy: '#2C3E6B',
+  // Keep this forest color available for avatars and decorative accents.
+  forest: '#2E5E3E',
+  // Keep this burgundy color available for avatars and decorative accents.
+  burgundy: '#6B2D3E',
+  // Keep this teal color available for avatars and decorative accents.
+  teal: '#3A8C8C',
+  // Keep this cream color available for avatars and decorative accents.
+  cream: '#F5E6D0',
   // Use pure white when UI text or elements need the strongest possible contrast.
   white: '#FFFFFF',
   // Keep pure black available for shadows or absolute contrast cases.
@@ -118,16 +146,45 @@ export const accentPalette = [
   colors.sky,
   // Include the plum accent in the reusable palette.
   colors.plum,
+  // Include the rose accent in the reusable palette.
+  colors.rose,
+  // Include the lavender accent in the reusable palette.
+  colors.lavender,
+  // Include the mint accent in the reusable palette.
+  colors.mint,
+  // Include the coral accent in the reusable palette.
+  colors.coral,
+  // Include the slate accent in the reusable palette.
+  colors.slate,
+  // Include the peach accent in the reusable palette.
+  colors.peach,
+  // Include the red accent in the reusable palette.
+  colors.red,
+  // Include the charcoal accent in the reusable palette.
+  colors.charcoal,
+  // Include the grey accent in the reusable palette.
+  colors.grey,
+  // Include the navy accent in the reusable palette.
+  colors.navy,
+  // Include the forest accent in the reusable palette.
+  colors.forest,
+  // Include the burgundy accent in the reusable palette.
+  colors.burgundy,
+  // Include the teal accent in the reusable palette.
+  colors.teal,
+  // Include the cream accent in the reusable palette.
+  colors.cream,
 ]; // End the shared accent palette array.
 
 // Export profile background presets — dark-tinted gradients used on profile screens.
-export const profileBackgrounds: { key: string; label: string; gradient: readonly [string, string, string]; accent: string }[] = [
-  { key: 'sunset', label: 'Sunset', gradient: ['#2D1408', '#4A2010', '#2D1408'], accent: '#E8845C' },
-  { key: 'ocean', label: 'Ocean', gradient: ['#082028', '#104050', '#082028'], accent: '#5CB8D6' },
-  { key: 'forest', label: 'Forest', gradient: ['#0A2010', '#144028', '#0A2010'], accent: '#6ABF7B' },
-  { key: 'berry', label: 'Berry', gradient: ['#1E0828', '#3A1050', '#1E0828'], accent: '#C06AE0' },
-  { key: 'midnight', label: 'Midnight', gradient: ['#0A0A28', '#141450', '#0A0A28'], accent: '#7B7BEF' },
-  { key: 'golden', label: 'Golden', gradient: ['#28200A', '#504014', '#28200A'], accent: '#D4A843' },
-  { key: 'rose', label: 'Rosé', gradient: ['#280A14', '#501428', '#280A14'], accent: '#E06A8A' },
-  { key: 'slate', label: 'Slate', gradient: ['#141820', '#283040', '#141820'], accent: '#8BA0B8' },
+// Each preset is linked to a ThemeName so the picker can gate by unlocked themes.
+export const profileBackgrounds: { key: string; label: string; gradient: readonly [string, string, string]; accent: string; themeKey: string }[] = [
+  { key: 'sunset', label: 'Sunset', gradient: ['#2D1408', '#4A2010', '#2D1408'], accent: '#E8845C', themeKey: 'sunset' },
+  { key: 'ocean', label: 'Ocean', gradient: ['#082028', '#104050', '#082028'], accent: '#5CB8D6', themeKey: 'arctic' },
+  { key: 'forest', label: 'Forest', gradient: ['#0A2010', '#144028', '#0A2010'], accent: '#6ABF7B', themeKey: 'forest' },
+  { key: 'berry', label: 'Berry', gradient: ['#1E0828', '#3A1050', '#1E0828'], accent: '#C06AE0', themeKey: 'grape' },
+  { key: 'midnight', label: 'Midnight', gradient: ['#0A0A28', '#141450', '#0A0A28'], accent: '#7B7BEF', themeKey: 'noir' },
+  { key: 'golden', label: 'Golden', gradient: ['#28200A', '#504014', '#28200A'], accent: '#D4A843', themeKey: 'vintage' },
+  { key: 'rose', label: 'Rosé', gradient: ['#280A14', '#501428', '#280A14'], accent: '#E06A8A', themeKey: 'peach' },
+  { key: 'slate', label: 'Slate', gradient: ['#141820', '#283040', '#141820'], accent: '#8BA0B8', themeKey: 'cocoa' },
 ];

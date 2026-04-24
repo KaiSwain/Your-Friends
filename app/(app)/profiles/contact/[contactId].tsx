@@ -1,42 +1,40 @@
+import { Ionicons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ReactNode, useEffect, useMemo, useCallback, useRef, useState } from 'react';
+import { Alert, Animated, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ActionButton } from '../../../../src/components/ActionButton';
 import { AppScreen } from '../../../../src/components/AppScreen';
+import { CardFlourish } from '../../../../src/components/CardFlourish';
+import {
+  MonthMemoryWallContent,
+  MonthMemoryWallPicker,
+  MonthMemoryWallStickyHeader,
+  useMonthScrollableMemoryWall,
+} from '../../../../src/components/MonthScrollableMemoryWall';
 import { SectionCard } from '../../../../src/components/SectionCard';
+import { ProfileSkeleton } from '../../../../src/components/Skeleton';
 import { WallPostCard } from '../../../../src/components/WallPostCard';
 import { useAuth } from '../../../../src/features/auth/AuthContext';
 import { useSocialGraph } from '../../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../../src/features/theme/ThemeContext';
-import type { ColorTokens } from '../../../../src/features/theme/themes';
-import { fonts } from '../../../../src/theme/typography';
-import { accentPalette, profileBackgrounds, radius, spacing } from '../../../../src/theme/tokens';
+import type { ColorTokens, ThemeName } from '../../../../src/features/theme/themes';
+import { themes, themeNames } from '../../../../src/features/theme/themes';
+import type { FontSet } from '../../../../src/theme/typography';
+import { accentPalette, radius, spacing } from '../../../../src/theme/tokens';
+import { fontSets } from '../../../../src/theme/typography';
 import { contrastText, contrastTextSoft, contrastAccent } from '../../../../src/lib/contrastText';
 import type { WallPost } from '../../../../src/types/domain';
-
-function groupPostsByDate(posts: WallPost[]) {
-  const groups: { label: string; posts: WallPost[] }[] = [];
-  let currentLabel = '';
-  for (const post of posts) {
-    const d = new Date(post.createdAt);
-    const label = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-    if (label !== currentLabel) {
-      currentLabel = label;
-      groups.push({ label, posts: [] });
-    }
-    groups[groups.length - 1].posts.push(post);
-  }
-  return groups;
-}
 
 export default function ContactProfileScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ contactId: string | string[] }>();
   const { currentUser } = useAuth();
-  const { getContactById, getUserById, getDirectFriends, getPeopleListForUser, getWallPostsForSubject, addContactFact, deleteContactFact, deleteWallPost, updateWallPost, updateContact, migrateContactPostsToUser, togglePin, notifications } = useSocialGraph();
-  const { colors } = useTheme();
+  const { loading, getContactById, getUserById, getDirectFriends, getPeopleListForUser, getWallPostsForSubject, addContactFact, deleteContactFact, deleteWallPost, updateWallPost, updateContact, migrateContactPostsToUser, linkContactByFriendCode, togglePin, notifications, refresh } = useSocialGraph();
+  const { colors, fonts } = useTheme();
 
   const [newFact, setNewFact] = useState('');
   const [factBusy, setFactBusy] = useState(false);
@@ -47,6 +45,35 @@ export default function ContactProfileScreen() {
   const [editingPostColor, setEditingPostColor] = useState<string | null>(null);
   const [imageChanged, setImageChanged] = useState(false);
   const [savingPost, setSavingPost] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [linkingOpen, setLinkingOpen] = useState(false);
+  const [linkCode, setLinkCode] = useState('');
+  const [linkError, setLinkError] = useState('');
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkScanning, setLinkScanning] = useState(false);
+  const [linkCameraPermission, requestLinkCameraPermission] = useCameraPermissions();
+  const linkScannedRef = useRef(false);
+
+  const openLinkScanner = useCallback(async () => {
+    if (!linkCameraPermission?.granted) {
+      const res = await requestLinkCameraPermission();
+      if (!res.granted) { setLinkError('Camera permission is required to scan QR codes.'); return; }
+    }
+    linkScannedRef.current = false;
+    setLinkError('');
+    setLinkScanning(true);
+  }, [linkCameraPermission, requestLinkCameraPermission]);
+
+  const handleLinkBarcodeScan = useCallback(({ data }: { data: string }) => {
+    if (linkScannedRef.current) return;
+    linkScannedRef.current = true;
+    setLinkScanning(false);
+    const code = data.replace(/^yourfriends:\/\//, '').trim().toUpperCase();
+    if (code) {
+      setLinkCode(code.slice(0, 8));
+      setLinkError('');
+    }
+  }, []);
 
   const contactId = Array.isArray(params.contactId) ? params.contactId[0] : params.contactId;
   const contact = contactId ? getContactById(contactId) : undefined;
@@ -59,9 +86,51 @@ export default function ContactProfileScreen() {
         ) ?? undefined
       : undefined;
 
-  const bgPreset = contact?.profileBg ? profileBackgrounds.find((b) => b.key === contact.profileBg) : undefined;
-  const tint = bgPreset?.accent ?? colors.accent;
-  const styles = useMemo(() => makeStyles(colors, tint), [colors, tint]);
+  // Profile theme override — when a contact has a profileBg theme set, use that theme's palette on their profile.
+  const { resolvedMode } = useTheme();
+  const profileThemeName = contact?.profileBg && (themeNames as string[]).includes(contact.profileBg)
+    ? (contact.profileBg as ThemeName)
+    : null;
+  const themedColors = profileThemeName ? themes[profileThemeName][resolvedMode] : null;
+  const effectiveColors = themedColors ?? colors;
+  const effectiveFonts = profileThemeName ? (fontSets[profileThemeName] ?? fonts) : fonts;
+  const tint = themedColors?.accent ?? colors.accent;
+
+  const styles = useMemo(() => makeStyles(effectiveColors, tint, effectiveFonts), [effectiveColors, tint, effectiveFonts]);
+
+  // ── Hero card flip ──
+  const [showBack, setShowBack] = useState(false);
+  const [heroFrontHeight, setHeroFrontHeight] = useState(0);
+  const flipAnim = useRef(new Animated.Value(0)).current;
+  const flipping = useRef(false);
+  const flipTarget = useRef(0);
+
+  // Single continuous rotation 0 → 180° driving both faces. The back face is
+  // offset by 180° so backfaceVisibility cleanly hides whichever side is facing
+  // away at any given frame — no mid-flip image "ghost" during the swap.
+  const frontRotateY = flipAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+  const backRotateY = flipAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['180deg', '360deg'],
+  });
+
+  const handleHeroPress = useCallback(() => {
+    if (editing) {
+      router.push(`/(app)/profiles/contact/edit?contactId=${contact!.id}`);
+      return;
+    }
+    if (flipping.current) return;
+    flipping.current = true;
+    const next = flipTarget.current === 0 ? 1 : 0;
+    flipTarget.current = next;
+    setShowBack(next === 1);
+    Animated.timing(flipAnim, { toValue: next, duration: 360, useNativeDriver: true }).start(() => {
+      flipping.current = false;
+    });
+  }, [editing, contact?.id, flipAnim, router]);
 
   // Persist the discovered link so future memories route through subject_user_id.
   // Also migrate any existing wall posts so the friend can see them via RLS.
@@ -75,7 +144,20 @@ export default function ContactProfileScreen() {
     }
   }, [contact?.id, contact?.linkedUserId, linkedUser?.id]);
 
+  // Compute wall posts + month buckets unconditionally so the hook count stays
+  // stable across renders (including during sign-out when `currentUser` becomes null).
+  const contactPostsAll = contact ? getWallPostsForSubject(contact.id, 'contact') : [];
+  const linkedPostsAll = contact?.linkedUserId ? getWallPostsForSubject(contact.linkedUserId, 'user') : [];
+  const wallPosts = [...contactPostsAll, ...linkedPostsAll]
+    .filter((p, i, arr) => arr.findIndex((x) => x.id === p.id) === i)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const monthWall = useMonthScrollableMemoryWall(wallPosts);
+
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
+
+  if (loading) {
+    return <AppScreen><ProfileSkeleton /></AppScreen>;
+  }
 
   if (!contact || contact.ownerUserId !== currentUser.id) {
     return (
@@ -88,15 +170,9 @@ export default function ContactProfileScreen() {
   }
 
   const accentColor = getPeopleListForUser(currentUser.id).find((item) => item.id === contact.id)?.avatarColor ?? colors.apricot;
-  // Show posts targeting the contact OR the linked user (after migration).
-  const contactPosts = getWallPostsForSubject(contact.id, 'contact');
-  const linkedPosts = contact.linkedUserId ? getWallPostsForSubject(contact.linkedUserId, 'user') : [];
-  const wallPosts = [...contactPosts, ...linkedPosts]
-    .filter((p, i, arr) => arr.findIndex((x) => x.id === p.id) === i)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const heroCt = contrastText(contact.cardColor);
-  const heroCtSoft = contrastTextSoft(contact.cardColor);
-  const heroCtAccent = contrastAccent(contact.cardColor, tint);
+  const heroCt = contact.cardColor ? contrastText(contact.cardColor) : FRAME_INK;
+  const heroCtSoft = contact.cardColor ? contrastTextSoft(contact.cardColor) : FRAME_INK_SOFT;
+  const heroCtAccent = contact.cardColor ? contrastAccent(contact.cardColor, tint) : tint;
 
   async function handleAddFact() {
     if (!newFact.trim()) return;
@@ -160,210 +236,286 @@ export default function ContactProfileScreen() {
     cancelEditingPost();
   }
 
+  function handleSaveBackText(postId: string, text: string) {
+    const post = wallPosts.find((p) => p.id === postId);
+    if (post) updateWallPost(postId, post.body, undefined, undefined, text);
+  }
+
   const topBar = (
     <View style={styles.topBar}>
-      <Pressable onPress={() => router.back()} style={styles.backButton}>
-        <Text style={styles.backLabel}>← Back</Text>
+      <Pressable onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
+        <Text style={styles.backLabel}><Ionicons name="chevron-back" size={16} /> Back</Text>
       </Pressable>
       <View style={styles.topBarRight}>
-        <Pressable onPress={() => togglePin(contact.id)} style={styles.pinButton}>
-          <Text style={styles.pinLabel}>{contact.pinned ? '📌' : '📍'}</Text>
+        <Pressable onPress={() => togglePin(contact.id)} style={styles.pinButton} accessibilityRole="button" accessibilityLabel={contact.pinned ? 'Unpin contact' : 'Pin contact'}>
+          <Text style={styles.pinLabel}>{contact.pinned ? <Ionicons name="pin" size={20} color="#E74C3C" /> : <Ionicons name="pin-outline" size={20} color={colors.inkMuted} />}</Text>
         </Pressable>
-        <Pressable onPress={() => setEditing((prev) => !prev)} style={[styles.editButton, editing && styles.editButtonActive]}>
+        <Pressable onPress={() => setEditing((prev) => !prev)} style={[styles.editButton, editing && styles.editButtonActive]} accessibilityRole="button" accessibilityLabel={editing ? 'Done editing' : 'Edit contact'}>
           <Text style={[styles.editButtonLabel, editing && styles.editButtonLabelActive]}>{editing ? 'Done' : 'Edit'}</Text>
         </Pressable>
       </View>
     </View>
   );
 
-  return (
-    <AppScreen header={topBar} gradientColors={bgPreset?.gradient}>
+  const screenContent: ReactNode[] = [];
+  let stickyHeaderIndex: number | undefined;
 
-      <Pressable onPress={() => router.push(`/(app)/profiles/contact/edit?contactId=${contact.id}`)} style={styles.heroSection}>
-        <View style={[styles.heroCard, contact.cardColor ? { backgroundColor: contact.cardColor } : undefined]}>
-          <View style={styles.heroPhotoFrame}>
-            {contact.avatarPath ? (
-              <Image source={{ uri: contact.avatarPath }} style={styles.heroPhoto} />
-            ) : (
-              <View style={[styles.heroPhotoSurface, { backgroundColor: accentColor }]}>
-                <Text style={styles.heroInitials}>{getInitials(contact.displayName)}</Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.heroBottom}>
-            <Text style={[styles.heroName, contact.cardColor && { color: heroCt }]} numberOfLines={1}>{contact.displayName}</Text>
-            {contact.tags.length > 0 && (
-              <View style={styles.heroTagRow}>
-                {contact.tags.slice(0, 2).map((tag) => (
-                  <View key={tag} style={[styles.heroTag, contact.cardColor && { backgroundColor: heroCtAccent + '1A' }]}>
-                    <Text style={[styles.heroTagText, contact.cardColor && { color: heroCtAccent }]} numberOfLines={1}>{tag}</Text>
+  screenContent.push(
+    <Pressable key="hero" onPress={handleHeroPress} style={styles.heroSection}>
+      <View style={styles.heroAmbientShadow} renderToHardwareTextureAndroid>
+        <View onLayout={(e) => { const h = e.nativeEvent.layout.height; if (h > 0) setHeroFrontHeight(h); }} style={styles.heroFaceHost}>
+          <Animated.View pointerEvents={showBack ? 'none' : 'auto'} style={[styles.heroFace, { transform: [{ perspective: 1000 }, { rotateY: frontRotateY }] }]}>
+            <View style={styles.heroTape} />
+            <View style={[styles.heroCard, contact.cardColor ? { backgroundColor: contact.cardColor } : undefined]}>
+              <View style={styles.heroPhotoFrame}>
+                {contact.avatarPath ? (
+                  <>
+                    <Image source={{ uri: contact.avatarPath }} style={styles.heroPhoto} fadeDuration={0} />
+                    <View style={styles.heroWarmBaseTint} />
+                    <LinearGradient
+                      colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.heroPhotoSheen}
+                    />
+                    <View style={styles.heroInsetShadowTop} />
+                    <View style={styles.heroInsetShadowLeft} />
+                  </>
+                ) : (
+                  <View style={[styles.heroPhotoSurface, { backgroundColor: accentColor }]}> 
+                    <Text style={styles.heroInitials}>{getInitials(contact.displayName)}</Text>
                   </View>
-                ))}
-                {contact.tags.length > 2 && (
-                  <Text style={[styles.heroTagMore, contact.cardColor && { color: heroCtSoft }]}>+{contact.tags.length - 2}</Text>
                 )}
               </View>
-            )}
-            {contact.note ? (
-              <Text style={[styles.heroNote, contact.cardColor && { color: heroCtSoft }]} numberOfLines={2}>{contact.note}</Text>
-            ) : null}
-          </View>
-        </View>
-        <Text style={styles.heroSubtitle}>{contact.nickname ? `Saved as ${contact.nickname}` : 'Contact'}</Text>
-        {linkedUser ? (
-          <Pressable
-            onPress={() => router.push(`/(app)/wall/${linkedUser.id}`)}
-            style={styles.wallButton}
-          >
-            <View style={styles.wallButtonRow}>
-              <Text style={styles.wallButtonLabel}>See their profile of you →</Text>
-              {(() => {
-                const unseenCount = notifications.filter(
-                  (n) => !n.read && n.actorUserId === linkedUser.id &&
-                    (n.type === 'wall_post' || n.type === 'contact_update'),
-                ).length;
-                return unseenCount > 0 ? (
-                  <View style={styles.wallBadge}>
-                    <Text style={styles.wallBadgeText}>{unseenCount}</Text>
-                  </View>
-                ) : null;
-              })()}
-            </View>
-          </Pressable>
-        ) : (
-          <View style={[styles.statusBadge, styles.statusBadgePrivate]}>
-            <Text style={[styles.statusBadgeText, styles.statusBadgeTextPrivate]}>Not on Your Friends yet</Text>
-          </View>
-        )}
-      </Pressable>
-
-
-
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Facts</Text>
-        </View>
-        {contact.facts.length > 0 ? (
-          <View style={styles.factList}>
-            {contact.facts.map((fact) => (
-              <View key={fact} style={styles.factRow}>
-                <Text style={styles.factText}>{fact}</Text>
-                {editing && (
-                  <Pressable onPress={() => handleDeleteFact(fact)}>
-                    <Text style={styles.deleteLink}>×</Text>
-                  </Pressable>
-                )}
-              </View>
-            ))}
-          </View>
-        ) : (
-          <Text style={styles.emptyHint}>No facts added yet.</Text>
-        )}
-        {editing && (
-          <View style={styles.addFactRow}>
-            <TextInput
-              style={styles.addFactInput}
-              value={newFact}
-              onChangeText={setNewFact}
-              placeholder="Add a fact…"
-              placeholderTextColor={colors.inkMuted}
-            />
-            <Pressable onPress={handleAddFact} disabled={factBusy} style={styles.addFactButton}>
-              <Text style={styles.addFactButtonLabel}>{factBusy ? '…' : '+'}</Text>
-            </Pressable>
-          </View>
-        )}
-      </View>
-
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Memory Wall</Text>
-          <Pressable onPress={() => router.push(`/(app)/memories/add?subjectId=${contact.id}&subjectType=contact`)}>
-            <Text style={styles.addLink}>Add</Text>
-          </Pressable>
-        </View>
-        {wallPosts.length > 0 ? (
-          <View style={styles.wallList}>
-            {groupPostsByDate(wallPosts).map((group) => (
-              <View key={group.label}>
-                <View style={styles.dateHeader}>
-                  <View style={styles.dateLine} />
-                  <Text style={styles.dateLabel}>{group.label}</Text>
-                  <View style={styles.dateLine} />
+              <View style={styles.heroBottom}>
+                <Text style={[styles.heroName, { color: heroCt }]} numberOfLines={1}>{contact.displayName}</Text>
+                <View style={styles.heroNoteSlot}>
+                  {contact.note ? (
+                    <Text style={[styles.heroNote, { color: heroCtSoft }]} numberOfLines={HERO_NOTE_LINES}>{contact.note}</Text>
+                  ) : null}
                 </View>
-                {group.posts.map((post) => {
-                  const author = getUserById(post.authorUserId);
-                  const isEditingThis = editingPostId === post.id;
-                  return (
-                    <View key={post.id}>
-                      {isEditingThis ? (
-                        <View style={styles.editPanel}>
-                          <WallPostCard
-                            authorName={author?.displayName ?? 'Unknown'}
-                            post={{ ...post, body: editingPostBody.trim(), imageUri: editingPostImage }}
-                            cardColor={editingPostColor}
-                          />
-                          <View style={styles.editControls}>
-                            <View style={styles.editPhotoRow}>
-                              <Pressable onPress={pickEditImage} style={styles.editPhotoButton}>
-                                <Text style={styles.editPhotoButtonLabel}>📷 Change Photo</Text>
-                              </Pressable>
-                              {editingPostImage && (
-                                <Pressable onPress={() => { setEditingPostImage(null); setImageChanged(true); }} style={styles.editPhotoButton}>
-                                  <Text style={[styles.editPhotoButtonLabel, { color: colors.error }]}>Remove Photo</Text>
-                                </Pressable>
-                              )}
-                            </View>
-                            <TextInput
-                              style={styles.editPostInput}
-                              value={editingPostBody}
-                              onChangeText={setEditingPostBody}
-                              placeholder="Write something…"
-                              placeholderTextColor={colors.inkMuted}
-                              multiline
-                            />
-                            <View style={styles.colorRow}>
-                              <Pressable onPress={() => setEditingPostColor(null)} style={[styles.colorSwatch, { backgroundColor: colors.paper, borderColor: !editingPostColor ? colors.accent : colors.line }]}>
-                                {!editingPostColor && <Text style={styles.colorCheck}>✓</Text>}
-                              </Pressable>
-                              {accentPalette.map((c) => (
-                                <Pressable key={c} onPress={() => setEditingPostColor(c)} style={[styles.colorSwatch, { backgroundColor: c, borderColor: editingPostColor === c ? colors.ink : 'transparent' }]}>
-                                  {editingPostColor === c && <Text style={styles.colorCheck}>✓</Text>}
-                                </Pressable>
-                              ))}
-                            </View>
-                            <View style={styles.editActions}>
-                              <Pressable onPress={saveEditingPost} disabled={savingPost} style={styles.editSaveButton}>
-                                <Text style={styles.editSaveLabel}>{savingPost ? 'Saving…' : 'Save'}</Text>
-                              </Pressable>
-                              <Pressable onPress={cancelEditingPost} style={styles.editCancelButton}>
-                                <Text style={styles.editCancelLabel}>Cancel</Text>
-                              </Pressable>
-                              <View style={{ flex: 1 }} />
-                              <Pressable onPress={() => { cancelEditingPost(); handleDeleteWallPost(post.id); }} style={styles.editDeleteButton}>
-                                <Text style={styles.editDeleteLabel}>Delete</Text>
-                              </Pressable>
-                            </View>
-                          </View>
-                        </View>
-                      ) : (
-                        <WallPostCard
-                          authorName={author?.displayName ?? 'Unknown'}
-                          post={post}
-                          cardColor={post.cardColor}
-                          onPress={editing ? () => startEditingPost(post) : undefined}
-                        />
-                      )}
-                    </View>
-                  );
-                })}
               </View>
-            ))}
+              <CardFlourish size={16} color={heroCtSoft} opacity={0.28} inset={12} />
+            </View>
+          </Animated.View>
+
+          <Animated.View pointerEvents={showBack ? 'auto' : 'none'} style={[styles.heroFaceOverlay, styles.heroFace, { transform: [{ perspective: 1000 }, { rotateY: backRotateY }] }]}>
+            <View style={styles.heroTape} />
+            <View style={[styles.heroCard, styles.heroCardBack, contact.cardColor ? { backgroundColor: contact.cardColor } : undefined, heroFrontHeight > 0 && { height: heroFrontHeight }]}> 
+              {contact.backText ? (
+                <Text style={[styles.backText, { color: heroCt }]}>{contact.backText}</Text>
+              ) : (
+                <Text style={[styles.backPlaceholder, { color: heroCtSoft }]}>Nothing written on the back yet</Text>
+              )}
+              <Text style={[styles.backHint, { color: heroCtSoft }]}>tap to flip back</Text>
+            </View>
+          </Animated.View>
+        </View>
+      </View>
+      <View style={styles.statusRow}>
+        <View style={[styles.statusDot, linkedUser ? styles.statusDotOn : styles.statusDotOff]} />
+        <Text style={styles.heroSubtitle}>
+          {linkedUser ? 'Connected' : 'Not Connected'}
+        </Text>
+      </View>
+    </Pressable>,
+  );
+
+  screenContent.push(
+    linkedUser ? (
+      <Pressable
+        key="wall-button"
+        onPress={() => router.push(`/(app)/wall/${linkedUser.id}`)}
+        style={styles.wallButton}
+      >
+        <View style={styles.wallButtonRow}>
+          <Text style={styles.wallButtonLabel}>See their profile of you →</Text>
+          {(() => {
+            const unseenCount = notifications.filter(
+              (n) => !n.read && n.actorUserId === linkedUser.id &&
+                (n.type === 'wall_post' || n.type === 'contact_update'),
+            ).length;
+            return unseenCount > 0 ? (
+              <View style={styles.wallBadge}>
+                <Text style={styles.wallBadgeText}>{unseenCount}</Text>
+              </View>
+            ) : null;
+          })()}
+        </View>
+      </Pressable>
+    ) : (
+      <View key="connect-block" style={styles.connectBlock}>
+        {linkingOpen ? (
+          <View style={styles.connectForm}>
+            <Text style={styles.connectFormTitle}>Link to {contact.displayName.split(' ')[0]}'s account</Text>
+            {linkScanning ? (
+              <View style={styles.scannerContainer}>
+                <CameraView
+                  style={styles.scanner}
+                  facing="back"
+                  barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                  onBarcodeScanned={handleLinkBarcodeScan}
+                />
+                <View style={styles.scannerOverlay} pointerEvents="none">
+                  <View style={styles.scannerFrame} />
+                </View>
+                <Pressable onPress={() => setLinkScanning(false)} style={styles.cancelScan}>
+                  <Text style={styles.cancelScanLabel}>Cancel</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.connectHint}>Scan their QR code or type their friend code.</Text>
+                <Pressable onPress={openLinkScanner} style={styles.scanButton}>
+                  <Ionicons name="qr-code-outline" size={16} color={colors.accent} />
+                  <Text style={styles.scanButtonLabel}>Scan QR Code</Text>
+                </Pressable>
+                <View style={styles.orRow}>
+                  <View style={styles.orLine} />
+                  <Text style={styles.orText}>or type it</Text>
+                  <View style={styles.orLine} />
+                </View>
+                <TextInput
+                  value={linkCode}
+                  onChangeText={(v) => { setLinkCode(v.toUpperCase()); setLinkError(''); }}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  placeholder="AB3XK7PN"
+                  placeholderTextColor={effectiveColors.inkMuted}
+                  style={styles.connectInput}
+                  maxLength={8}
+                />
+                {linkError ? <Text style={styles.connectError}>{linkError}</Text> : null}
+                <View style={styles.connectActions}>
+                  <Pressable
+                    onPress={() => { setLinkingOpen(false); setLinkCode(''); setLinkError(''); }}
+                    style={styles.connectCancel}
+                  >
+                    <Text style={styles.connectCancelLabel}>Cancel</Text>
+                  </Pressable>
+                  <ActionButton
+                    label={linkBusy ? 'Linking…' : 'Link'}
+                    disabled={linkBusy}
+                    onPress={async () => {
+                      if (!linkCode.trim()) { setLinkError('Enter a friend code.'); return; }
+                      setLinkBusy(true);
+                      setLinkError('');
+                      const res = await linkContactByFriendCode(contact.id, currentUser.id, linkCode);
+                      setLinkBusy(false);
+                      if (!res.ok) { setLinkError(res.error); return; }
+                      setLinkingOpen(false);
+                      setLinkCode('');
+                      Alert.alert('Linked!', `This card is now connected to ${res.friend.displayName}'s account. Memories you wrote will appear on their profile.`);
+                    }}
+                  />
+                </View>
+              </>
+            )}
           </View>
         ) : (
-          <Text style={styles.emptyHint}>No memories yet. Be the first to write one.</Text>
+          <Pressable onPress={() => setLinkingOpen(true)} style={styles.connectCta}>
+            <Text style={styles.connectCtaLabel}>Did {contact.displayName.split(' ')[0]} join the app?</Text>
+            <Text style={styles.connectCtaAction}>Link with friend code  →</Text>
+          </Pressable>
         )}
       </View>
+    ),
+  );
+
+  screenContent.push(
+    <View key="facts" style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Facts</Text>
+      </View>
+      {contact.facts.length > 0 ? (
+        <View style={styles.factList}>
+          {contact.facts.map((fact) => (
+            <View key={fact} style={styles.factChip}>
+              <Text style={styles.factChipText}>{fact}</Text>
+              {editing && (
+                <Pressable onPress={() => handleDeleteFact(fact)}>
+                  <Ionicons name="close" size={14} color={effectiveColors.error} />
+                </Pressable>
+              )}
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.emptyHint}>No facts added yet.</Text>
+      )}
+      {editing && (
+        <View style={styles.addFactRow}>
+          <TextInput
+            style={styles.addFactInput}
+            value={newFact}
+            onChangeText={setNewFact}
+            placeholder="Add a fact…"
+            placeholderTextColor={effectiveColors.inkMuted}
+          />
+          <Pressable onPress={handleAddFact} disabled={factBusy} style={styles.addFactButton}>
+            <Text style={styles.addFactButtonLabel}>{factBusy ? '…' : '+'}</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>,
+  );
+
+  screenContent.push(
+    <View key="memory-wall-controls" style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Memory Wall</Text>
+        <Pressable onPress={() => router.push(`/(app)/memories/add?subjectId=${contact.id}&subjectType=contact&backTo=${encodeURIComponent(`/(app)/profiles/contact/${contact.id}`)}`)}>
+          <Text style={styles.addLink}>Add</Text>
+        </Pressable>
+      </View>
+      <MonthMemoryWallPicker
+        monthGroups={monthWall.monthGroups}
+        activeMonthKey={monthWall.activeMonth?.key ?? ''}
+        onSelectMonth={monthWall.setSelectedMonthKey}
+        themeColors={effectiveColors}
+      />
+    </View>,
+  );
+
+  if (!monthWall.activeMonth) {
+    screenContent.push(
+      <Text key="memory-wall-empty" style={styles.emptyHint}>No memories yet. Be the first to write one.</Text>,
+    );
+  } else {
+    stickyHeaderIndex = screenContent.length;
+    screenContent.push(
+      <MonthMemoryWallStickyHeader key="memory-wall-month" label={monthWall.activeMonth.label} themeColors={effectiveColors} />,
+    );
+    screenContent.push(
+      <View key="memory-wall-posts" style={styles.monthWallPostsBlock}>
+        <MonthMemoryWallContent
+          dayGroups={monthWall.activeMonth.dayGroups}
+          themeColors={effectiveColors}
+          renderPost={(post) => {
+            const author = getUserById(post.authorUserId);
+            return (
+              <View key={post.id}>
+                <WallPostCard
+                  authorName={author?.displayName ?? 'Unknown'}
+                  post={post}
+                  cardColor={post.cardColor}
+                  themeColors={effectiveColors}
+                  editing={editing}
+                  shareable={!editing}
+                  onPress={editing ? () => router.push({ pathname: '/(app)/memories/edit', params: { postId: post.id } }) : undefined}
+                  onSaveBackText={handleSaveBackText}
+                />
+              </View>
+            );
+          }}
+        />
+      </View>,
+    );
+  }
+
+  return (
+    <AppScreen header={topBar} floatingHeaderOnScroll gradientColors={themedColors ? [themedColors.canvas, themedColors.canvasAlt, themedColors.canvas] : undefined} onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }} refreshing={refreshing} stickyHeaderIndices={stickyHeaderIndex !== undefined ? [stickyHeaderIndex] : undefined}>
+      {screenContent}
     </AppScreen>
   );
 }
@@ -373,9 +525,19 @@ function getInitials(value: string) {
 }
 
 const HERO_PHOTO = 200;
-const HERO_PADDING = 14;
+const HERO_PAD_SIDE = 10;
+const HERO_PAD_TOP = 10;
+const HERO_NOTE_LINES = 2;
+const HERO_NOTE_LINE_HEIGHT = 20;
+const HERO_NOTE_SLOT_HEIGHT = HERO_NOTE_LINES * HERO_NOTE_LINE_HEIGHT;
+const HERO_BOTTOM_MIN_HEIGHT = 108;
 
-const makeStyles = (colors: ColorTokens, tint: string) =>
+// Warm ivory — real Polaroid frames are never pure white.
+const POLAROID_FRAME = '#F5F2EA';
+const FRAME_INK = '#2A2218';
+const FRAME_INK_SOFT = '#6B6052';
+
+const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
   StyleSheet.create({
     backButton: { paddingVertical: spacing.xs },
     backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
@@ -394,9 +556,17 @@ const makeStyles = (colors: ColorTokens, tint: string) =>
     sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     sectionTitle: { fontFamily: fonts.heading, fontSize: 22, color: colors.ink },
     addLink: { fontFamily: fonts.bodyBold, fontSize: 14, color: tint },
-    factList: { gap: spacing.xs },
-    factRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.line },
-    factText: { flex: 1, fontFamily: fonts.body, fontSize: 15, color: colors.ink },
+    factList: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: spacing.sm },
+    factChip: {
+      flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.xs,
+      borderRadius: radius.pill,
+      backgroundColor: colors.accent + '18',
+      borderWidth: 1,
+      borderColor: colors.accent + '40',
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    factChipText: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.ink },
     deleteLink: { fontFamily: fonts.heading, fontSize: 20, color: colors.error, paddingLeft: spacing.sm },
     emptyHint: { fontFamily: fonts.body, fontSize: 14, color: colors.inkMuted },
     addFactRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
@@ -410,12 +580,7 @@ const makeStyles = (colors: ColorTokens, tint: string) =>
       alignItems: 'center', justifyContent: 'center',
     },
     addFactButtonLabel: { fontFamily: fonts.heading, fontSize: 22, color: colors.white },
-    wallList: {
-      gap: spacing.sm,
-    },
-    dateHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm },
-    dateLine: { flex: 1, height: 1, backgroundColor: colors.line },
-    dateLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+    monthWallPostsBlock: { marginTop: -spacing.md },
     editPanel: {
       gap: spacing.sm,
     },
@@ -449,38 +614,128 @@ const makeStyles = (colors: ColorTokens, tint: string) =>
 
     /* ── Hero polaroid card (matches carousel style) ── */
     heroSection: { alignItems: 'center', gap: spacing.sm },
-    heroCard: {
-      width: HERO_PHOTO + HERO_PADDING * 2,
+    heroAmbientShadow: {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.1,
+      shadowRadius: 20,
+    },
+    heroTape: {
+      width: 48,
+      height: 14,
+      backgroundColor: 'rgba(255,255,220,0.35)',
       borderRadius: 2,
-      backgroundColor: colors.paper,
-      borderWidth: 1,
-      borderColor: colors.line,
-      padding: HERO_PADDING,
+      alignSelf: 'center',
+      marginBottom: -7,
+      zIndex: 1,
+    },
+    heroFaceHost: {
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+    },
+    heroFaceOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+    },
+    heroFace: {
+      backfaceVisibility: 'hidden',
+    },
+    heroHiddenFace: {
+      opacity: 0,
+    },
+    heroCard: {
+      width: HERO_PHOTO + HERO_PAD_SIDE * 2,
+      borderRadius: 3,
+      backgroundColor: POLAROID_FRAME,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(180,170,155,0.4)',
+      paddingTop: HERO_PAD_TOP,
+      paddingHorizontal: HERO_PAD_SIDE,
       paddingBottom: 0,
       alignItems: 'center',
+      // Contact shadow (tight, dark)
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.12,
-      shadowRadius: 10,
-      elevation: 4,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.25,
+      shadowRadius: 3,
+      elevation: 5,
     },
     heroPhotoFrame: {
       width: HERO_PHOTO,
       height: HERO_PHOTO,
       borderRadius: 1,
       overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: 'rgba(0,0,0,0.045)',
     },
-    heroPhoto: { width: '100%', height: '100%' },
+    heroPhoto: { width: '100%', height: '100%', transform: [{ scale: 1.01 }] },
     heroPhotoSurface: {
       flex: 1, width: '100%', height: '100%',
       alignItems: 'center', justifyContent: 'center',
     },
     heroInitials: { fontFamily: fonts.heading, fontSize: 64, color: colors.white },
-    heroBottom: {
-      width: '100%', paddingVertical: spacing.md,
-      alignItems: 'center', gap: 4,
+    heroWarmBaseTint: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(210,180,140,0.04)',
+      zIndex: 4,
+      pointerEvents: 'none' as const,
     },
-    heroName: { fontFamily: fonts.heading, fontSize: 24, color: colors.ink, textAlign: 'center' },
+    heroPhotoSheen: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 5,
+      pointerEvents: 'none' as const,
+    },
+    heroInsetShadowTop: {
+      position: 'absolute' as const,
+      top: 0,
+      left: 0,
+      right: 0,
+      height: 6,
+      backgroundColor: 'transparent',
+      zIndex: 6,
+      pointerEvents: 'none' as const,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.15,
+      shadowRadius: 3,
+    },
+    heroInsetShadowLeft: {
+      position: 'absolute' as const,
+      top: 0,
+      left: 0,
+      bottom: 0,
+      width: 4,
+      backgroundColor: 'transparent',
+      zIndex: 6,
+      pointerEvents: 'none' as const,
+      shadowColor: '#000',
+      shadowOffset: { width: 3, height: 0 },
+      shadowOpacity: 0.1,
+      shadowRadius: 3,
+    },
+    heroBottom: {
+      width: '100%',
+      paddingTop: 6,
+      paddingBottom: 28,
+      alignItems: 'center',
+      gap: 4,
+      overflow: 'visible' as const,
+      minHeight: HERO_BOTTOM_MIN_HEIGHT,
+      justifyContent: 'flex-start',
+    },
+    heroNoteSlot: { width: '100%', minHeight: HERO_NOTE_SLOT_HEIGHT, justifyContent: 'flex-start' },
+    heroName: {
+      fontFamily: fonts.handwrittenBold,
+      fontSize: 26,
+      color: FRAME_INK,
+      textAlign: 'center',
+      width: '100%',
+      paddingHorizontal: 10,
+      overflow: 'visible' as const,
+    },
     heroTagRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 4 },
     heroTag: {
       backgroundColor: tint + '1A',
@@ -488,11 +743,38 @@ const makeStyles = (colors: ColorTokens, tint: string) =>
     },
     heroTagText: { fontFamily: fonts.bodyBold, fontSize: 10, color: tint, textTransform: 'uppercase', letterSpacing: 0.5 },
     heroTagMore: { fontFamily: fonts.bodyMedium, fontSize: 10, color: colors.inkMuted },
-    heroNote: { fontFamily: fonts.body, fontSize: 12, lineHeight: 16, color: colors.inkSoft, textAlign: 'center' },
+    heroNote: {
+      fontFamily: fonts.handwritten,
+      fontSize: 15,
+      lineHeight: HERO_NOTE_LINE_HEIGHT,
+      color: colors.inkSoft,
+      textAlign: 'center',
+      width: '100%',
+      paddingHorizontal: 10,
+      overflow: 'visible' as const,
+    },
+
+    /* ── Back face ── */
+    heroCardBack: {
+      paddingTop: 24,
+      paddingHorizontal: HERO_PAD_SIDE + 6,
+      paddingBottom: 24,
+      justifyContent: 'center',
+      gap: 8,
+    },
+    backText: { fontFamily: fonts.handwritten, fontSize: 17, lineHeight: 24, textAlign: 'center', color: FRAME_INK, flex: 1 },
+    backPlaceholder: { fontFamily: fonts.handwritten, fontSize: 17, textAlign: 'center', color: FRAME_INK_SOFT, flex: 1, opacity: 0.5 },
+    backHint: { fontFamily: fonts.body, fontSize: 10, textAlign: 'center', color: FRAME_INK_SOFT, opacity: 0.5, paddingTop: 2 },
+
     heroSubtitle: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.inkSoft },
+    statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+    statusDot: { width: 7, height: 7, borderRadius: 4 },
+    statusDotOn: { backgroundColor: '#34C759' },
+    statusDotOff: { backgroundColor: '#8E8E93' },
     wallButton: {
-      paddingVertical: spacing.xs,
-      paddingHorizontal: spacing.md,
+      alignSelf: 'center',
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.xl,
       borderRadius: radius.pill,
       backgroundColor: tint + '18',
       borderWidth: 1,
@@ -516,4 +798,85 @@ const makeStyles = (colors: ColorTokens, tint: string) =>
     statusBadgePrivate: { borderColor: colors.line, backgroundColor: colors.paper },
     statusBadgeText: { fontFamily: fonts.bodyBold, fontSize: 11, letterSpacing: 0.3 },
     statusBadgeTextPrivate: { color: colors.inkMuted },
+    connectBlock: { marginTop: spacing.md, alignItems: 'center' },
+    connectCta: {
+      alignSelf: 'center',
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      alignItems: 'center',
+      gap: 2,
+    },
+    connectCtaLabel: { fontFamily: fonts.body, fontSize: 13, color: colors.inkSoft },
+    connectCtaAction: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.accent, letterSpacing: 0.2 },
+    connectForm: {
+      alignSelf: 'stretch',
+      padding: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+      gap: spacing.sm,
+    },
+    connectFormTitle: { fontFamily: fonts.heading, fontSize: 18, color: colors.ink },
+    connectHint: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.inkSoft },
+    connectInput: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 20,
+      letterSpacing: 4,
+      color: colors.ink,
+      borderWidth: 1,
+      borderColor: colors.line,
+      borderRadius: radius.sm,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      backgroundColor: colors.paperMuted,
+      textAlign: 'center',
+    },
+    connectError: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error, textAlign: 'center' },
+    connectActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
+    connectCancel: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+    connectCancelLabel: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.inkSoft },
+    scanButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xs,
+      paddingVertical: spacing.sm + 2,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: colors.accent + '40',
+      backgroundColor: colors.accent + '10',
+    },
+    scanButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.accent },
+    orRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    orLine: { flex: 1, height: 1, backgroundColor: colors.line },
+    orText: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted, letterSpacing: 0.3 },
+    scannerContainer: {
+      width: '100%',
+      aspectRatio: 1,
+      borderRadius: radius.md,
+      overflow: 'hidden',
+      backgroundColor: '#000',
+      position: 'relative',
+    },
+    scanner: { ...StyleSheet.absoluteFillObject },
+    scannerOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+    scannerFrame: {
+      width: '70%',
+      aspectRatio: 1,
+      borderWidth: 2,
+      borderColor: '#FFFFFF',
+      borderRadius: radius.sm,
+      backgroundColor: 'transparent',
+    },
+    cancelScan: {
+      position: 'absolute',
+      bottom: spacing.md,
+      alignSelf: 'center',
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.xs + 2,
+      borderRadius: 999,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+    },
+    cancelScanLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: '#FFFFFF' },
   });

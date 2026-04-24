@@ -1,32 +1,38 @@
+import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Redirect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import QRCode from 'react-native-qrcode-svg';
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
 import { FormField } from '../../../src/components/FormField';
 import { SectionCard } from '../../../src/components/SectionCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
+import { FREE_FRIEND_LIMIT, FRIENDS_UNLOCK_PRICE, usePremium } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
-import { fonts } from '../../../src/theme/typography';
+import { createFriendInviteLink, extractFriendCode } from '../../../src/lib/friendCode';
+import type { FontSet } from '../../../src/theme/typography';
 import { radius, spacing } from '../../../src/theme/tokens';
 
 export default function AddFriendScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ code?: string }>();
   const { currentUser } = useAuth();
-  const { addFriendByCode, addManualContact } = useSocialGraph();
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { friendsUnlocked, unlockFriends } = usePremium();
+  const { addFriendByCode, addManualContact, contacts } = useSocialGraph();
+  const { colors, fonts } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
   const [displayName, setDisplayName] = useState('');
   const [nickname, setNickname] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const [friendCode, setFriendCode] = useState('');
+  const [friendCode, setFriendCode] = useState(extractFriendCode(params.code ?? ''));
   const [friendError, setFriendError] = useState('');
   const [friendBusy, setFriendBusy] = useState(false);
 
@@ -36,8 +42,26 @@ export default function AddFriendScreen() {
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   const authenticatedUser = currentUser;
+  const inviteLink = createFriendInviteLink(authenticatedUser.friendCode);
+
+  const friendCount = contacts.filter((c) => c.ownerUserId === authenticatedUser.id).length;
+  const atLimit = !friendsUnlocked && friendCount >= FREE_FRIEND_LIMIT;
+
+  function guardLimit(): boolean {
+    if (!atLimit) return false;
+    Alert.alert(
+      'Friend Limit Reached',
+      `You've got ${FREE_FRIEND_LIMIT} friends! Unlock unlimited friends for ${FRIENDS_UNLOCK_PRICE}.`,
+      [
+        { text: 'Not now', style: 'cancel' },
+        { text: `Unlock ${FRIENDS_UNLOCK_PRICE}`, onPress: () => unlockFriends() },
+      ],
+    );
+    return true;
+  }
 
   async function handleCreateManualContact() {
+    if (guardLimit()) return;
     if (!displayName.trim()) { setError('A display name is required.'); return; }
     setBusy(true);
     setError('');
@@ -51,6 +75,7 @@ export default function AddFriendScreen() {
   }
 
   async function handleAddByCode() {
+    if (guardLimit()) return;
     if (!friendCode.trim()) { setFriendError('Enter a friend code.'); return; }
     setFriendBusy(true);
     setFriendError('');
@@ -75,8 +100,7 @@ export default function AddFriendScreen() {
     if (scannedRef.current) return;
     scannedRef.current = true;
     setScanning(false);
-    // Extract friend code — supports "yourfriends://CODE" or plain code
-    const code = data.replace(/^yourfriends:\/\//, '').trim().toUpperCase();
+    const code = extractFriendCode(data);
     if (code) {
       setFriendCode(code);
       setFriendError('');
@@ -91,11 +115,76 @@ export default function AddFriendScreen() {
         <Text style={styles.subtitle}>Add a real friend by their code, or save someone as a private contact.</Text>
       </View>
 
+      {atLimit && (
+        <Pressable
+          onPress={() => unlockFriends()}
+          style={[styles.limitBanner, { backgroundColor: colors.accent + '18', borderColor: colors.accent + '40' }]}
+        >
+          <Ionicons name="lock-closed" size={16} color={colors.accent} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.limitBannerTitle, { color: colors.ink }]}>Friend limit reached</Text>
+            <Text style={[styles.limitBannerSub, { color: colors.inkSoft }]}>
+              Unlock unlimited friends for {FRIENDS_UNLOCK_PRICE}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.accent} />
+        </Pressable>
+      )}
+
       <SectionCard eyebrow="Connect" title="Add by friend code">
-        <Text style={styles.note}>Ask your friend for their code — you can find yours on your profile screen.</Text>
-        <FormField autoCapitalize="characters" label="Friend code" onChangeText={setFriendCode} placeholder="e.g. AB3XK7PN" value={friendCode} />
-        {friendError ? <Text style={styles.error}>{friendError}</Text> : null}
-        <ActionButton label={friendBusy ? 'Looking up…' : 'Add friend'} onPress={handleAddByCode} disabled={friendBusy} />
+        <Text style={styles.note}>Ask your friend for their code, paste their invite link, or scan their QR.</Text>
+
+        {scanning ? (
+          <View style={styles.scannerContainer}>
+            <CameraView
+              style={styles.scanner}
+              facing="back"
+              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+              onBarcodeScanned={handleBarcodeScan}
+            />
+            <View style={styles.scannerOverlay}>
+              <View style={styles.scannerFrame} />
+            </View>
+            <Pressable onPress={() => setScanning(false)} style={styles.cancelScan} accessibilityRole="button" accessibilityLabel="Cancel scanning">
+              <Text style={styles.cancelScanLabel}>Cancel</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <>
+            <Pressable onPress={openScanner} style={styles.scanButton} accessibilityRole="button" accessibilityLabel="Scan QR code">
+              <Text style={styles.scanButtonLabel}><Ionicons name="camera-outline" size={16} />  Scan QR Code</Text>
+            </Pressable>
+            <View style={styles.orRow}>
+              <View style={styles.orLine} />
+              <Text style={styles.orText}>or type it</Text>
+              <View style={styles.orLine} />
+            </View>
+            <FormField autoCapitalize="characters" label="Friend code" onChangeText={setFriendCode} placeholder="e.g. AB3XK7PN" value={friendCode} />
+            {friendError ? <Text style={styles.error}>{friendError}</Text> : null}
+            <ActionButton label={friendBusy ? 'Looking up…' : 'Add friend'} onPress={handleAddByCode} disabled={friendBusy} />
+          </>
+        )}
+      </SectionCard>
+
+      <SectionCard eyebrow="Your Code" title="Show your QR">
+        <Text style={styles.note}>Let a friend scan this to add you instantly.</Text>
+        <View style={styles.qrCard}>
+          <QRCode
+            value={inviteLink}
+            size={160}
+            backgroundColor={colors.paper}
+            color={colors.ink}
+          />
+          <Text style={styles.qrCodeText}>{authenticatedUser.friendCode}</Text>
+        </View>
+        <Pressable
+          onPress={() => Share.share({ message: `Add me on Your Friends!\n${inviteLink}\nFriend code: ${authenticatedUser.friendCode}` })}
+          style={styles.shareButton}
+          accessibilityRole="button"
+          accessibilityLabel="Share your friend link"
+        >
+          <Text style={styles.shareButtonLabel}>Share Link</Text>
+        </Pressable>
       </SectionCard>
 
       <SectionCard eyebrow="Private" title="Add manually">
@@ -109,7 +198,7 @@ export default function AddFriendScreen() {
   );
 }
 
-const makeStyles = (colors: ColorTokens) =>
+const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
     hero: { gap: spacing.sm },
     eyebrow: {
@@ -120,4 +209,56 @@ const makeStyles = (colors: ColorTokens) =>
     subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
     note: { fontFamily: fonts.body, fontSize: 14, lineHeight: 21, color: colors.inkSoft },
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
+
+    scanButton: {
+      backgroundColor: colors.accent, borderRadius: radius.md,
+      paddingVertical: spacing.md, alignItems: 'center',
+    },
+    scanButtonLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.white },
+
+    orRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    orLine: { flex: 1, height: 1, backgroundColor: colors.line },
+    orText: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted },
+
+    scannerContainer: {
+      height: 280, borderRadius: radius.md, overflow: 'hidden',
+      position: 'relative',
+    },
+    scanner: { flex: 1 },
+    scannerOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    scannerFrame: {
+      width: 200, height: 200, borderRadius: radius.md,
+      borderWidth: 2, borderColor: colors.accent,
+    },
+    cancelScan: {
+      position: 'absolute', bottom: spacing.md,
+      alignSelf: 'center',
+      paddingHorizontal: spacing.lg, paddingVertical: spacing.xs,
+      borderRadius: radius.pill, backgroundColor: 'rgba(0,0,0,0.6)',
+    },
+    cancelScanLabel: { fontFamily: fonts.bodyMedium, fontSize: 14, color: '#fff' },
+
+    qrCard: {
+      alignItems: 'center', gap: spacing.sm,
+      backgroundColor: colors.paper, borderRadius: radius.md,
+      paddingVertical: spacing.lg,
+    },
+    qrCodeText: { fontFamily: fonts.heading, fontSize: 20, color: colors.accent, letterSpacing: 3 },
+    shareButton: {
+      alignSelf: 'center',
+      paddingHorizontal: spacing.lg, paddingVertical: spacing.xs,
+      borderRadius: radius.pill, backgroundColor: colors.accent,
+    },
+    shareButtonLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.white },
+
+    limitBanner: {
+      flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+      padding: spacing.md, borderRadius: radius.md,
+      borderWidth: 1,
+    },
+    limitBannerTitle: { fontFamily: fonts.bodyBold, fontSize: 14 },
+    limitBannerSub: { fontFamily: fonts.body, fontSize: 12, marginTop: 2 },
   });

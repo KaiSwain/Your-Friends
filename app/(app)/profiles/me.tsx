@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useMemo, useState } from 'react';
@@ -10,14 +11,15 @@ import { useAuth } from '../../../src/features/auth/AuthContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
 import { contrastText, contrastTextSoft } from '../../../src/lib/contrastText';
-import { fonts } from '../../../src/theme/typography';
+import { createFriendInviteLink } from '../../../src/lib/friendCode';
+import type { FontSet } from '../../../src/theme/typography';
 import { radius, spacing } from '../../../src/theme/tokens';
 
 export default function MyProfileScreen() {
   const router = useRouter();
   const { currentUser, updateProfile } = useAuth();
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, fonts } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
   const [displayName, setDisplayName] = useState(currentUser?.displayName ?? '');
   const [localImageUri, setLocalImageUri] = useState<string | null>(null);
@@ -29,6 +31,7 @@ export default function MyProfileScreen() {
 
   const displayImage = localImageUri ?? currentUser.avatarPath ?? null;
   const previewName = displayName.trim() || currentUser.displayName;
+  const inviteLink = createFriendInviteLink(currentUser.friendCode);
 
   async function pickPhoto() {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
@@ -71,20 +74,17 @@ export default function MyProfileScreen() {
 
   return (
     <AppScreen
+      floatingHeaderOnScroll
       footer={
         <ActionButton label={saving ? 'Saving…' : 'Save Profile'} onPress={handleSave} disabled={saving} />
       }
     >
-      <Pressable onPress={() => router.back()} style={styles.backButton}>
-        <Text style={styles.backLabel}>← Back</Text>
-      </Pressable>
-
       <Text style={styles.title}>Your Profile</Text>
       <Text style={styles.subtitle}>This is how friends see you when they add you.</Text>
 
       {/* Avatar */}
       <View style={styles.avatarSection}>
-        <Pressable onPress={pickPhoto} style={styles.avatarFrame}>
+        <Pressable onPress={pickPhoto} style={styles.avatarFrame} accessibilityRole="button" accessibilityLabel="Change profile photo">
           {displayImage ? (
             <Image source={{ uri: displayImage }} style={styles.avatarImage} />
           ) : (
@@ -99,10 +99,10 @@ export default function MyProfileScreen() {
           </View>
         </Pressable>
         <View style={styles.photoActions}>
-          <Pressable onPress={pickPhoto} style={styles.photoPill}>
+          <Pressable onPress={pickPhoto} style={styles.photoPill} accessibilityRole="button" accessibilityLabel="Choose from gallery">
             <Text style={styles.photoPillLabel}>Gallery</Text>
           </Pressable>
-          <Pressable onPress={takePhoto} style={styles.photoPill}>
+          <Pressable onPress={takePhoto} style={styles.photoPill} accessibilityRole="button" accessibilityLabel="Take a photo">
             <Text style={styles.photoPillLabel}>Camera</Text>
           </Pressable>
         </View>
@@ -126,19 +126,19 @@ export default function MyProfileScreen() {
         <View style={styles.qrCard}>
           <View style={styles.qrWrapper}>
             <QRCode
-              value={`yourfriends://${currentUser.friendCode}`}
+              value={inviteLink}
               size={160}
               backgroundColor={colors.paper}
               color={colors.ink}
             />
           </View>
           <Text style={styles.codeValue}>{currentUser.friendCode}</Text>
-          <Text style={styles.codeHint}>Friends scan this to add you</Text>
+          <Text style={styles.codeHint}>Friends can scan this or open your shared link to add you</Text>
           <Pressable
-            onPress={() => Share.share({ message: `Add me on Your Friends! My code is ${currentUser.friendCode}` })}
+            onPress={() => Share.share({ message: `Add me on Your Friends!\n${inviteLink}\nFriend code: ${currentUser.friendCode}` })}
             style={styles.sharePill}
           >
-            <Text style={styles.sharePillLabel}>Share Code</Text>
+            <Text style={styles.sharePillLabel}>Share Link</Text>
           </Pressable>
         </View>
       </View>
@@ -152,8 +152,8 @@ export default function MyProfileScreen() {
             {facts.map((f) => (
               <View key={f} style={styles.factChip}>
                 <Text style={styles.factChipText}>{f}</Text>
-                <Pressable onPress={() => removeFact(f)} hitSlop={8}>
-                  <Text style={styles.factChipRemove}>×</Text>
+                <Pressable onPress={() => removeFact(f)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Remove fact: ${f}`}>
+                  <Ionicons name="close" size={14} color={colors.error} />
                 </Pressable>
               </View>
             ))}
@@ -169,31 +169,9 @@ export default function MyProfileScreen() {
             onSubmitEditing={addFact}
             returnKeyType="done"
           />
-          <Pressable onPress={addFact} style={styles.addFactButton}>
+          <Pressable onPress={addFact} style={styles.addFactButton} accessibilityRole="button" accessibilityLabel="Add fact">
             <Text style={styles.addFactButtonLabel}>+</Text>
           </Pressable>
-        </View>
-      </View>
-
-      {/* Preview Card */}
-      <View style={styles.fieldGroup}>
-        <Text style={styles.fieldLabel}>Preview</Text>
-        <View style={[styles.previewCard, { backgroundColor: currentUser.avatarColor }]}>
-          {displayImage ? (
-            <Image source={{ uri: displayImage }} style={styles.previewImage} />
-          ) : (
-            <View style={[styles.previewImagePlaceholder, { backgroundColor: currentUser.avatarColor }]}>
-              <Text style={[styles.previewInitials, { color: contrastText(currentUser.avatarColor) }]}>
-                {previewName.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('')}
-              </Text>
-            </View>
-          )}
-          <Text style={[styles.previewName, { color: contrastText(currentUser.avatarColor) }]} numberOfLines={1}>
-            {previewName}
-          </Text>
-          <Text style={[styles.previewCaption, { color: contrastTextSoft(currentUser.avatarColor) }]}>
-            Connected friend
-          </Text>
         </View>
       </View>
     </AppScreen>
@@ -203,7 +181,7 @@ export default function MyProfileScreen() {
 const AVATAR_SIZE = 100;
 const PREVIEW_WIDTH = 160;
 
-const makeStyles = (colors: ColorTokens) =>
+const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
     backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
     backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
