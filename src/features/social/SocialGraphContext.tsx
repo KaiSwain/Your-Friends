@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { decode } from 'base64-arraybuffer';
-import { createContext, ReactNode, useCallback, useContext, useEffect, useRef } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { useAuth } from '../auth/AuthContext';
@@ -74,6 +74,15 @@ interface SocialGraphContextValue {
 
 const SocialGraphContext = createContext<SocialGraphContextValue | null>(null);
 
+function dedupeWallPostsById(posts: WallPost[]) {
+  const seen = new Set<string>();
+  return posts.filter((post) => {
+    if (seen.has(post.id)) return false;
+    seen.add(post.id);
+    return true;
+  });
+}
+
 export function SocialGraphProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const { currentUser } = useAuth();
@@ -90,7 +99,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   const users = usersQuery.data ?? [];
   const contacts = contactsQuery.data ?? [];
   const friendships = friendshipsQuery.data ?? [];
-  const wallPosts = wallPostsQuery.data ?? [];
+  const wallPosts = useMemo(() => dedupeWallPostsById(wallPostsQuery.data ?? []), [wallPostsQuery.data]);
   const friendFacts = friendFactsQuery.data ?? [];
   const notifications = notificationsQuery.data ?? [];
   const unreadCount = notifications.filter((n) => !n.read).length;
@@ -742,7 +751,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     if (error || !data) throw new Error(error?.message ?? 'Failed to create memory');
 
     const post = rowToWallPost(data);
-    queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) => [post, ...(old ?? [])]);
+    queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) => dedupeWallPostsById([post, ...(old ?? [])]));
 
     {
       let recipientId: string | null = input.subjectUserId;

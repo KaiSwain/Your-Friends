@@ -89,12 +89,10 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, editing
       duration: 180,
       useNativeDriver: true,
     }).start(() => {
-      // Swap content at midpoint
-      setShowBack((prev) => {
-        const next = !prev;
-        onFlip?.(next);
-        return next;
-      });
+      // Swap content at midpoint.
+      const nextShowBack = !showBack;
+      setShowBack(nextShowBack);
+      onFlip?.(nextShowBack);
       // Animate from midpoint back to flat
       Animated.timing(animValue, {
         toValue: 1,

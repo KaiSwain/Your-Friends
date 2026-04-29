@@ -7,12 +7,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 
 // Read the public Supabase project URL from Expo environment variables, or fall back to an empty string.
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() ?? '';
 // Read the public Supabase anon key from Expo environment variables, or fall back to an empty string.
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? '';
+
+export const supabaseConfigError = !supabaseUrl
+  ? 'Missing EXPO_PUBLIC_SUPABASE_URL in the app build environment.'
+  : !supabaseAnonKey
+    ? 'Missing EXPO_PUBLIC_SUPABASE_ANON_KEY in the app build environment.'
+    : null;
+
+const resolvedSupabaseUrl = supabaseConfigError ? 'https://placeholder.supabase.co' : supabaseUrl;
+const resolvedSupabaseAnonKey = supabaseConfigError ? 'placeholder-anon-key' : supabaseAnonKey;
 
 // Create and export one shared Supabase client so the rest of the app can reuse the same configuration.
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(resolvedSupabaseUrl, resolvedSupabaseAnonKey, {
   // Configure how Supabase auth behaves inside this mobile app.
   auth: {
     // Store auth session data in AsyncStorage so login state survives app restarts.

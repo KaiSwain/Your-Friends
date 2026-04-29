@@ -49,19 +49,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Restore any existing session on mount and subscribe to future auth state changes.
   useEffect(() => {
-    // Ask Supabase for the current persisted session when the provider first mounts.
-    supabase.auth.getSession().then(({ data: { session: current } }) => {
-      // Save the returned session into local state.
-      setSession(current);
-      // If a session exists, fetch the matching profile row.
-      if (current) {
-        // Load the app-specific user profile using the auth user's ID.
-        fetchProfile(current.user.id);
-      } else {
-        // If there is no session, mark loading as complete immediately.
+    let cancelled = false;
+
+    async function restoreSession() {
+      try {
+        // Ask Supabase for the current persisted session when the provider first mounts.
+        const { data: { session: current }, error } = await supabase.auth.getSession();
+        if (cancelled) return;
+
+        if (error) {
+          const staleRefreshToken = error.message.toLowerCase().includes('refresh token');
+          if (staleRefreshToken) {
+            await supabase.auth.signOut({ scope: 'local' });
+          }
+          setSession(null);
+          setCurrentUser(null);
+          setLoading(false);
+          return;
+        }
+
+        // Save the returned session into local state.
+        setSession(current);
+        // If a session exists, fetch the matching profile row.
+        if (current) {
+          // Load the app-specific user profile using the auth user's ID.
+          fetchProfile(current.user.id);
+        } else {
+          // If there is no session, mark loading as complete immediately.
+          setLoading(false);
+        }
+      } catch {
+        if (cancelled) return;
+        setSession(null);
+        setCurrentUser(null);
         setLoading(false);
       }
-    });
+    }
+
+    void restoreSession();
 
     // Subscribe to sign-in, sign-out, and token refresh events from Supabase Auth.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
@@ -78,7 +103,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     // Return a cleanup function so React unsubscribes when the provider unmounts.
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []); // Run this setup effect only once when the provider mounts.
 
   // Load a profile row from the `profiles` table and map it into the app's user shape.

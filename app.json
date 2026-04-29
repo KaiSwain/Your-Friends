@@ -21,7 +21,8 @@
       "infoPlist": {
         "NSCameraUsageDescription": "YourFriends needs access to your camera to scan QR codes and capture memories.",
         "NSPhotoLibraryUsageDescription": "YourFriends needs access to your photos to add memories.",
-        "NSPhotoLibraryAddUsageDescription": "YourFriends needs permission to save photos to your library."
+        "NSPhotoLibraryAddUsageDescription": "YourFriends needs permission to save photos to your library.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -31,7 +32,11 @@
       },
       "package": "com.yourfriends.app",
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -63,6 +68,13 @@
           "color": "#0A0A0A"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e5f4a02e-e2e0-4d98-9f5d-475103a549fc"
+      }
+    },
+    "owner": "kaiferrr"
   }
 }

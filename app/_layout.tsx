@@ -14,6 +14,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { AuthProvider } from '../src/features/auth/AuthContext';
 import { ThemeProvider, useTheme } from '../src/features/theme/ThemeContext';
 import { asyncStoragePersister, queryClient } from '../src/lib/queryClient';
+import { supabaseConfigError } from '../src/lib/supabase';
 import { colors as fallbackColors } from '../src/theme/tokens';
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
@@ -61,6 +62,18 @@ export default function RootLayout() {
     return (
       <View style={styles.loadingScreen}>
         <ActivityIndicator color={fallbackColors.accent} size="large" />
+      </View>
+    );
+  }
+
+  if (supabaseConfigError) {
+    return (
+      <View style={errorStyles.container}>
+        <Ionicons name="cloud-offline-outline" size={48} color="#FAFAFA" style={{ marginBottom: 16 }} />
+        <Text style={errorStyles.title}>App Configuration Missing</Text>
+        <Text style={errorStyles.message}>
+          {supabaseConfigError} Configure the matching EAS environment so release builds include your Supabase keys.
+        </Text>
       </View>
     );
   }
