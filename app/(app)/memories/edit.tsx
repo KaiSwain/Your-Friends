@@ -1,16 +1,20 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
 import { MemoryTextStylePicker } from '../../../src/components/MemoryTextStylePicker';
 import { WallPostCard } from '../../../src/components/WallPostCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
+import { usePremium } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
+import { AI_CAPTION_TONES, AiCaptionContext, AiCaptionTone, generateAiCaptions } from '../../../src/lib/aiCaptions';
 import { getCureProgress } from '../../../src/lib/polaroidCure';
+import { showAiCaptionPaywall } from '../../../src/lib/premiumGates';
 import {
   defaultWallPostTextColor,
   defaultWallPostTextEffect,
@@ -23,13 +27,25 @@ import {
 import type { FontSet } from '../../../src/theme/typography';
 import { ThemedGlyph } from '../../../src/components/ThemedGlyph';
 import { radius, spacing } from '../../../src/theme/tokens';
-import { WallPostTextColor, WallPostTextEffect, WallPostTextFont, WallPostTextSize, WallPostVisibility } from '../../../src/types/domain';
+import { WallPost, WallPostTextColor, WallPostTextEffect, WallPostTextFont, WallPostTextSize, WallPostVisibility } from '../../../src/types/domain';
 
 export default function EditMemoryScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ postId: string | string[] }>();
   const { currentUser } = useAuth();
-  const { getWallPostById, updateWallPost, deleteWallPost, getUserById } = useSocialGraph();
+  const {
+    contacts,
+    getWallPostById,
+    updateWallPost,
+    deleteWallPost,
+    getUserById,
+    getContactById,
+    getWallPostsForSubject,
+    getPrivateNotesForContact,
+    getPrivateNoteBlocks,
+    getFriendFactsFor,
+  } = useSocialGraph();
+  const { isPremium } = usePremium();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
@@ -44,6 +60,9 @@ export default function EditMemoryScreen() {
   const [textSize, setTextSize] = useState<WallPostTextSize>(post?.textSize ?? defaultWallPostTextSize);
   const [textEffect, setTextEffect] = useState<WallPostTextEffect>(post?.textEffect ?? defaultWallPostTextEffect);
   const [textColor, setTextColor] = useState<WallPostTextColor>(post?.textColor ?? defaultWallPostTextColor);
+  const [captionTone, setCaptionTone] = useState<AiCaptionTone>('witty');
+  const [captionSuggestions, setCaptionSuggestions] = useState<string[]>([]);
+  const [isGeneratingCaption, setIsGeneratingCaption] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -58,6 +77,10 @@ export default function EditMemoryScreen() {
     return () => clearInterval(id);
   }, [developing]);
 
+  useEffect(() => {
+    setCaptionSuggestions([]);
+  }, [post?.id, post?.imageUri]);
+
   const onFlip = useCallback((back: boolean) => setShowingBack(back), []);
   const textInputTypography = useMemo(
     () => (!post?.imageUri ? resolveWallPostTextStyle(fonts, textFont, textSize) : null),
@@ -67,9 +90,75 @@ export default function EditMemoryScreen() {
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   if (!post) return <Redirect href="/" />;
+  if (post.authorUserId !== currentUser.id) return <Redirect href="/" />;
 
+  const editablePost = post;
   const authenticatedUser = currentUser;
-  const authorName = getUserById(post.authorUserId)?.displayName ?? 'Unknown';
+  const authorName = getUserById(editablePost.authorUserId)?.displayName ?? 'Unknown';
+
+  function buildCaptionContext(): AiCaptionContext {
+    const linkedContact = editablePost.subjectUserId
+      ? contacts.find((contact) => contact.ownerUserId === authenticatedUser.id && contact.linkedUserId === editablePost.subjectUserId)
+      : null;
+    const contact = editablePost.subjectContactId ? getContactById(editablePost.subjectContactId) : linkedContact;
+    const user = editablePost.subjectUserId
+      ? getUserById(editablePost.subjectUserId)
+      : contact?.linkedUserId
+        ? getUserById(contact.linkedUserId)
+        : null;
+
+    const contactPosts = contact ? getWallPostsForSubject(contact.id, 'contact') : [];
+    const userPosts = user ? getWallPostsForSubject(user.id, 'user') : [];
+    const previousPosts = dedupePosts([...contactPosts, ...userPosts], editablePost.id);
+    const privateNotes = contact ? getPrivateNotesForContact(contact.id) : [];
+    const privateNoteText = privateNotes.flatMap((note) =>
+      getPrivateNoteBlocks(note.id)
+        .filter((block) => block.type === 'text' && block.content)
+        .map((block) => block.content ?? ''),
+    );
+    const friendFacts = user ? getFriendFactsFor(authenticatedUser.id, user.id).map((fact) => fact.body) : [];
+
+    return {
+      authorName: authenticatedUser.displayName,
+      subjectName: contact?.nickname || contact?.displayName || user?.displayName || 'someone',
+      subjectType: editablePost.subjectUserId ? 'user' : 'contact',
+      memoryDate: editablePost.createdAt,
+      draftCaption: body.trim() || null,
+      relationshipTags: contact?.tags ?? [],
+      facts: [...(contact?.facts ?? []), ...(user?.profileFacts ?? []), ...friendFacts],
+      notes: [contact?.note ?? '', ...privateNoteText],
+      previousCaptions: previousPosts.map((previousPost) => previousPost.body),
+      previousBackText: previousPosts.map((previousPost) => previousPost.backText ?? ''),
+    };
+  }
+
+  async function handleGenerateCaption() {
+    if (!editablePost.imageUri) {
+      Alert.alert('Add a photo first', 'AI captions need a photo to look at.');
+      return;
+    }
+    if (!isPremium) {
+      showAiCaptionPaywall(() => router.push('/(app)/store'));
+      return;
+    }
+
+    setError('');
+    setShowingBack(false);
+    setIsGeneratingCaption(true);
+    try {
+      const captions = await generateAiCaptions({
+        context: buildCaptionContext(),
+        imageUri: editablePost.imageUri,
+        tone: captionTone,
+      });
+      setCaptionSuggestions(captions);
+      if (!body.trim() && captions[0]) setBody(captions[0]);
+    } catch (err) {
+      Alert.alert('Could not write captions', err instanceof Error ? err.message : 'Try again in a moment.');
+    } finally {
+      setIsGeneratingCaption(false);
+    }
+  }
 
   function handleBack() {
     router.back();
@@ -149,7 +238,27 @@ export default function EditMemoryScreen() {
       )}
 
       <View style={styles.inputSection}>
-        <Text style={styles.inputLabel}>{showingBack ? 'Back of Card' : 'Front Caption'}</Text>
+        <View style={styles.inputHeaderRow}>
+          <Text style={styles.inputLabel}>{showingBack ? 'Back of Card' : 'Front Caption'}</Text>
+          {post.imageUri && !showingBack ? (
+            <Pressable onPress={handleGenerateCaption} disabled={isGeneratingCaption} style={[styles.aiButton, isGeneratingCaption && styles.aiButtonDisabled]}>
+              <Ionicons name="sparkles-outline" size={16} color={colors.accent} />
+              <Text style={styles.aiButtonText}>{isGeneratingCaption ? 'Writing…' : 'AI Caption'}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {post.imageUri && !showingBack ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.toneScroll}>
+            {AI_CAPTION_TONES.map((tone) => {
+              const active = captionTone === tone.id;
+              return (
+                <Pressable key={tone.id} onPress={() => setCaptionTone(tone.id)} style={[styles.toneChip, active && styles.toneChipActive]}>
+                  <Text style={[styles.toneChipText, active && styles.toneChipTextActive]}>{tone.label}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
         <TextInput
           multiline
           onChangeText={showingBack ? setBackText : setBody}
@@ -158,6 +267,15 @@ export default function EditMemoryScreen() {
           style={[styles.textInput, !post.imageUri && !showingBack && textInputTypography, !post.imageUri && !showingBack && { color: selectedTextColor }]}
           value={showingBack ? backText : body}
         />
+        {post.imageUri && !showingBack && captionSuggestions.length > 0 ? (
+          <View style={styles.captionSuggestionList}>
+            {captionSuggestions.map((caption) => (
+              <Pressable key={caption} onPress={() => setBody(caption)} style={[styles.captionSuggestion, body.trim() === caption && styles.captionSuggestionActive]}>
+                <Text style={styles.captionSuggestionText}>{caption}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </View>
 
       {!post.imageUri ? (
@@ -193,7 +311,44 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
     inputSection: { gap: spacing.xs },
+    inputHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
     inputLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+    aiButton: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 5,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 7,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.accent + '66',
+      backgroundColor: colors.accent + '12',
+    },
+    aiButtonDisabled: { opacity: 0.6 },
+    aiButtonText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent },
+    toneScroll: { gap: spacing.xs, paddingVertical: 2 },
+    toneChip: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: 7,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+    },
+    toneChipActive: { borderColor: colors.accent, backgroundColor: colors.accent + '14' },
+    toneChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    toneChipTextActive: { fontFamily: fonts.bodyBold, color: colors.accent },
+    captionSuggestionList: { gap: spacing.xs },
+    captionSuggestion: {
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    captionSuggestionActive: { borderColor: colors.accent, backgroundColor: colors.accent + '10' },
+    captionSuggestionText: { fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 19, color: colors.ink },
     previewSection: { gap: spacing.sm, alignItems: 'center' as const },
     previewHint: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted, textAlign: 'center' as const },
     developingRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: spacing.xs },
@@ -203,3 +358,14 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     deleteButton: { alignSelf: 'center', paddingVertical: spacing.md },
     deleteLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.error },
   });
+
+function dedupePosts(posts: WallPost[], excludePostId: string) {
+  const seen = new Set<string>();
+  const result: WallPost[] = [];
+  for (const post of posts) {
+    if (post.id === excludePostId || seen.has(post.id)) continue;
+    seen.add(post.id);
+    result.push(post);
+  }
+  return result.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10);
+}

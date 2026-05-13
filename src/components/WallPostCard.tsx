@@ -10,6 +10,7 @@ import { getFilterByKey } from '../lib/polaroidFilters';
 import { getCureProgress, getCureStyles, CURE_DURATION_MS } from '../lib/polaroidCure';
 import { sharePolaroid } from '../lib/sharePolaroid';
 import { resolveWallPostTextColor, resolveWallPostTextStyle } from '../lib/wallPostTextStyle';
+import { usePolaroidImageReady } from '../hooks/usePolaroidImageReady';
 import { MemoryStyledText } from './MemoryStyledText';
 import { WallPost } from '../types/domain';
 import type { FontSet } from '../theme/typography';
@@ -37,6 +38,7 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, editing
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
   const [frameWidth, setFrameWidth] = useState(0);
   const [frontHeight, setFrontHeight] = useState(0);
+  const imageState = usePolaroidImageReady(post.imageUri);
 
   // ── Capture ref for sharing ──────────────────────────────────────────
   const captureRef = useRef<View>(null);
@@ -127,7 +129,7 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, editing
   };
 
   const date = new Date(post.createdAt);
-  const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
   // Classic film-camera date stamp: YY.MM.DD HH:MM
   const stampText = post.dateStamp
@@ -153,11 +155,50 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, editing
   );
   const textOnlyColor = useMemo(() => resolveWallPostTextColor(post.textColor, colors), [colors, post.textColor]);
   const showDevelopingStatus = cure.developing && (editMode || !showBack);
+  const showPolaroidCard = !post.imageUri || imageState.imageReady;
+
+  const photoContent = imageState.showImage ? (
+    <>
+      <Image source={{ uri: post.imageUri! }} style={[styles.image, { height: imageHeight }]} fadeDuration={0} blurRadius={cure.imageBlur} onLoad={imageState.handleImageLoad} onError={imageState.handleImageError} />
+      <View style={styles.warmBaseTint} />
+      {cure.developing && (
+        <>
+          <View style={[styles.darkOverlay, { opacity: cure.darkOverlay }]} />
+          {cure.warmOverlay > 0 && <View style={[styles.warmOverlay, { opacity: cure.warmOverlay }]} />}
+        </>
+      )}
+      {post.filter && (() => {
+        const f = getFilterByKey(post.filter);
+        if (!f) return null;
+        return (
+          <>
+            {f.overlay && <View style={[styles.filterOverlay, { backgroundColor: f.overlay }]} />}
+            {f.overlay2 && <View style={[styles.filterOverlay, { backgroundColor: f.overlay2 }]} />}
+          </>
+        );
+      })()}
+      <LinearGradient
+        colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.photoSheen}
+      />
+      <View style={styles.insetShadowTop} />
+      <View style={styles.insetShadowLeft} />
+      {stampText && <Text style={[styles.dateStamp, cure.developing && { opacity: 1 - cure.darkOverlay }]}>{stampText}</Text>}
+    </>
+  ) : (
+    <View style={styles.photoFallbackSurface}>
+      <Ionicons name="image-outline" size={32} color={ctSoft} />
+      <Text style={[styles.photoFallbackLabel, { color: ctSoft }]}>Image unavailable</Text>
+    </View>
+  );
 
   if (isTextOnly) {
     return (
       <Pressable onPress={onPress} disabled={!onPress} style={({ pressed }) => [styles.wrapper, pressed && onPress && styles.pressed]}>
         <View style={[styles.textOnlyCard, { transform: [{ rotate: `${tilt}deg` }] }]}>
+          <Text style={styles.textOnlyDate}>{formatted}</Text>
           {post.body ? (
             <MemoryStyledText
               text={post.body}
@@ -168,7 +209,7 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, editing
               style={[styles.textOnlyBody, textOnlyTypography]}
             />
           ) : null}
-          <Text style={styles.textOnlyDate}>{formatted}</Text>
+          <Text style={styles.textOnlyAuthor}>— {authorName}</Text>
         </View>
       </Pressable>
     );
@@ -184,40 +225,14 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, editing
     <View style={[styles.wrapper, showBack && !editMode && { zIndex: 10 }]}>
       <Animated.View style={{ transform: [{ perspective: 800 }, { rotateY }, { scaleX }] }} renderToHardwareTextureAndroid shouldRasterizeIOS>
         {editMode ? (
-          <Pressable onPress={onPress}>
+          <Pressable onPress={onPress} disabled={!onPress}>
             {/* Front of the polaroid — edit mode (no flip animation) */}
-            <View style={styles.cardWithStatus}>
+            <View style={[styles.cardWithStatus, !showPolaroidCard && styles.hiddenUntilReady]}>
               <View onLayout={onFrontLayout} style={styles.ambientShadow}>
                 <View style={styles.tape} />
                 <View style={[styles.card, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}>
                   <View style={[styles.photoFrame, { transform: [{ rotate: `${photoTilt}deg` }] }]} onLayout={onFrameLayout}>
-                    <Image source={{ uri: post.imageUri! }} style={[styles.image, { height: imageHeight }]} fadeDuration={0} blurRadius={cure.imageBlur} />
-                    <View style={styles.warmBaseTint} />
-                    {cure.developing && (
-                      <>
-                        <View style={[styles.darkOverlay, { opacity: cure.darkOverlay }]} />
-                        {cure.warmOverlay > 0 && <View style={[styles.warmOverlay, { opacity: cure.warmOverlay }]} />}
-                      </>
-                    )}
-                    {post.filter && (() => {
-                      const f = getFilterByKey(post.filter);
-                      if (!f) return null;
-                      return (
-                        <>
-                          {f.overlay && <View style={[styles.filterOverlay, { backgroundColor: f.overlay }]} />}
-                          {f.overlay2 && <View style={[styles.filterOverlay, { backgroundColor: f.overlay2 }]} />}
-                        </>
-                      );
-                    })()}
-                    <LinearGradient
-                      colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.photoSheen}
-                    />
-                    <View style={styles.insetShadowTop} />
-                    <View style={styles.insetShadowLeft} />
-                    {stampText && <Text style={[styles.dateStamp, cure.developing && { opacity: 1 - cure.darkOverlay }]}>{stampText}</Text>}
+                    {photoContent}
                   </View>
                   <View style={styles.bottomStrip}>
                     <Text style={[styles.date, { color: ctAccent }]}>{formatted}</Text>
@@ -235,42 +250,13 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, editing
           <Pressable onPress={handleFlip}>
             <View style={styles.cardWithStatus}>
               <View ref={captureRef} collapsable={false} style={shareable ? styles.captureStage : undefined}>
-                <View onLayout={onFrontLayout} style={styles.flipCardHost}>
+                <View onLayout={onFrontLayout} style={[styles.flipCardHost, !showPolaroidCard && styles.hiddenUntilReady]}>
                   <View pointerEvents={showBack ? 'none' : 'auto'} style={[styles.flipFace, showBack && styles.hiddenFace]}>
                     <View style={styles.ambientShadow}>
                       <View style={styles.tape} />
                       <View style={[styles.card, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}> 
                         <View style={[styles.photoFrame, { transform: [{ rotate: `${photoTilt}deg` }] }]} onLayout={onFrameLayout}>
-                          <Image source={{ uri: post.imageUri! }} style={[styles.image, { height: imageHeight }]} fadeDuration={0} blurRadius={cure.imageBlur} />
-                          {/* Permanent subtle warm base — Polaroid chemistry tint */}
-                          <View style={styles.warmBaseTint} />
-                          {cure.developing && (
-                            <>
-                              <View style={[styles.darkOverlay, { opacity: cure.darkOverlay }]} />
-                              {cure.warmOverlay > 0 && <View style={[styles.warmOverlay, { opacity: cure.warmOverlay }]} />}
-                            </>
-                          )}
-                          {post.filter && (() => {
-                            const f = getFilterByKey(post.filter);
-                            if (!f) return null;
-                            return (
-                              <>
-                                {f.overlay && <View style={[styles.filterOverlay, { backgroundColor: f.overlay }]} />}
-                                {f.overlay2 && <View style={[styles.filterOverlay, { backgroundColor: f.overlay2 }]} />}
-                              </>
-                            );
-                          })()}
-                          {/* Glossy sheen — diagonal light reflection */}
-                          <LinearGradient
-                            colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                            style={styles.photoSheen}
-                          />
-                          {/* Inset shadow — pressed-in photo area */}
-                          <View style={styles.insetShadowTop} />
-                          <View style={styles.insetShadowLeft} />
-                          {stampText && <Text style={[styles.dateStamp, cure.developing && { opacity: 1 - cure.darkOverlay }]}>{stampText}</Text>}
+                          {photoContent}
                         </View>
                         <View style={styles.bottomStrip}>
                           <Text style={[styles.date, { color: ctAccent }]}>{formatted}</Text>
@@ -370,6 +356,9 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     hiddenFace: {
       opacity: 0,
     },
+    hiddenUntilReady: {
+      opacity: 0,
+    },
 
     /* ── Share button ── */
     shareButton: {
@@ -392,6 +381,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontFamily: fonts.handwritten,
       fontSize: 13,
       color: colors.accent,
+    },
+    textOnlyAuthor: {
+      fontFamily: fonts.handwritten,
+      fontSize: 14,
+      color: colors.inkSoft,
     },
 
     /* ── Polaroid card ── */
@@ -432,6 +426,18 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: colors.canvasAlt,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    photoFallbackSurface: {
+      minHeight: 220,
+      width: '100%',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xs,
+      backgroundColor: 'rgba(0,0,0,0.05)',
+    },
+    photoFallbackLabel: {
+      fontFamily: fonts.bodyMedium,
+      fontSize: 12,
     },
     image: { width: '100%', transform: [{ scale: 1.01 }] },
     photoPlaceholder: { fontSize: 36 },

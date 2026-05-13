@@ -32,7 +32,7 @@ function getPeopleListForUser(
     )?.createdAt ?? friend.createdAt,
     title: friend.displayName,
     subtitle: `Friend code ${friend.friendCode}`,
-    caption: 'Connected friend',
+    caption: '',
     avatarColor: friend.avatarColor,
     imageUri: friend.avatarPath ?? null,
     tags: [],
@@ -45,8 +45,8 @@ function getPeopleListForUser(
       entityType: 'contact',
       createdAt: c.createdAt,
       title: c.displayName,
-      subtitle: c.linkedUserId ? 'Connected friend' : 'Contact',
-      caption: c.linkedUserId ? 'Connected friend' : 'Contact',
+      subtitle: c.nickname ? `Saved as ${c.nickname}` : '',
+      caption: '',
       avatarColor: '#888',
       imageUri: c.avatarPath ?? null,
       tags: c.tags ?? [],
@@ -54,6 +54,7 @@ function getPeopleListForUser(
       cardColor: c.cardColor ?? null,
       linkedUserId: c.linkedUserId,
       pinned: c.pinned,
+      pinnedAt: c.pinnedAt,
     }));
 
   const linkedUserIds = new Set(
@@ -65,6 +66,12 @@ function getPeopleListForUser(
       const pinA = a.pinned ? 1 : 0;
       const pinB = b.pinned ? 1 : 0;
       if (pinA !== pinB) return pinB - pinA;
+      if (pinA && pinB) {
+        const pinnedAtA = a.pinnedAt ?? a.createdAt;
+        const pinnedAtB = b.pinnedAt ?? b.createdAt;
+        const pinOrder = pinnedAtA.localeCompare(pinnedAtB);
+        if (pinOrder !== 0) return pinOrder;
+      }
       return b.createdAt.localeCompare(a.createdAt);
     },
   );
@@ -132,6 +139,23 @@ describe('getPeopleListForUser', () => {
     const list = getPeopleListForUser('me', [c1, c2], [], [me]);
     expect(list[0].title).toBe('Pinned');
     expect(list[1].title).toBe('Recent');
+  });
+
+  it('keeps existing pinned contacts ahead of newly pinned contacts', () => {
+    const firstPinned = rowToContact({
+      id: 'c1', owner_user_id: 'me', display_name: 'First pinned', pinned: true,
+      pinned_at: '2024-06-01T00:00:00Z', created_at: '2024-06-10T00:00:00Z',
+    });
+    const secondPinned = rowToContact({
+      id: 'c2', owner_user_id: 'me', display_name: 'Second pinned', pinned: true,
+      pinned_at: '2024-06-02T00:00:00Z', created_at: '2024-06-11T00:00:00Z',
+    });
+    const newlyPinned = rowToContact({
+      id: 'c3', owner_user_id: 'me', display_name: 'Newly pinned', pinned: true,
+      pinned_at: '2024-06-03T00:00:00Z', created_at: '2024-06-12T00:00:00Z',
+    });
+    const list = getPeopleListForUser('me', [newlyPinned, secondPinned, firstPinned], [], [me]);
+    expect(list.map((item) => item.title)).toEqual(['First pinned', 'Second pinned', 'Newly pinned']);
   });
 
   it('sorts newest first within unpinned items', () => {

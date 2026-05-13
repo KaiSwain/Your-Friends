@@ -12,6 +12,8 @@ import { AppScreen } from '../../src/components/AppScreen';
 import { FormField } from '../../src/components/FormField';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
+import { normalizeFriendCode } from '../../src/lib/friendCode';
+import { peekIncomingReferralCode } from '../../src/lib/referrals';
 import type { ColorTokens } from '../../src/features/theme/themes';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
@@ -21,9 +23,9 @@ export default function SignUpScreen() {
   const { signUp, signInWithApple, signInWithGoogle } = useAuth();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
-  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -33,13 +35,19 @@ export default function SignUpScreen() {
   });
 
   useEffect(() => {
+    peekIncomingReferralCode().then((code) => {
+      if (code) setReferralCode((current) => current || code);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (googleResponse?.type === 'success') {
       const idToken = googleResponse.params.id_token;
       setBusy(true);
       setError('');
-      signInWithGoogle(idToken).then((result) => {
+      signInWithGoogle(idToken, referralCode).then((result) => {
         if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
-        router.replace('/(app)/friends');
+        router.replace('/');
       });
     }
   }, [googleResponse]);
@@ -47,17 +55,18 @@ export default function SignUpScreen() {
   async function handleSignUp() {
     setBusy(true);
     setError('');
-    const result = await signUp(displayName, email, password);
+    // Display name is collected during onboarding; pass empty so signUp falls back to the email prefix.
+    const result = await signUp('', email, password, referralCode);
     if (!result.ok) { setError(result.error); setBusy(false); return; }
-    router.replace('/(app)/friends');
+    router.replace('/');
   }
 
   async function handleApple() {
     setBusy(true);
     setError('');
-    const result = await signInWithApple();
+    const result = await signInWithApple(referralCode);
     if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
-    router.replace('/(app)/friends');
+    router.replace('/');
   }
 
   async function handleGoogle() {
@@ -93,7 +102,7 @@ export default function SignUpScreen() {
           <Text style={[styles.socialLabel, { color: '#1F1F1F' }]}>Continue with Google</Text>
         </Pressable>
 
-        {error && displayName === '' && email === '' ? <Text style={styles.error}>{error}</Text> : null}
+        {error && email === '' ? <Text style={styles.error}>{error}</Text> : null}
       </View>
 
       <View style={styles.dividerRow}>
@@ -103,9 +112,15 @@ export default function SignUpScreen() {
       </View>
 
       <View style={styles.emailSection}>
-        <FormField label="Display name" onChangeText={setDisplayName} placeholder="Avery Hart" value={displayName} />
         <FormField autoCapitalize="none" keyboardType="email-address" label="Email" onChangeText={setEmail} placeholder="you@example.com" value={email} />
         <FormField autoCapitalize="none" label="Password" onChangeText={setPassword} placeholder="Choose a password" secureTextEntry value={password} />
+        <FormField
+          autoCapitalize="characters"
+          label="Referral code (optional)"
+          onChangeText={(value) => setReferralCode(normalizeFriendCode(value))}
+          placeholder="Friend's code"
+          value={referralCode}
+        />
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <ActionButton label={busy ? 'Creating…' : 'Create account'} onPress={handleSignUp} disabled={busy} />
       </View>

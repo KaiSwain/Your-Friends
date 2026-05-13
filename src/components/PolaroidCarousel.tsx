@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   FlatList,
@@ -64,6 +64,8 @@ const AnimatedFlatList = Animated.createAnimatedComponent(
 export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressItem, onLongPressItem, getUnreadCount, loop = true }: PolaroidCarouselProps) {
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
+  const [readyImages, setReadyImages] = useState<Record<string, true>>({});
+  const [failedImages, setFailedImages] = useState<Record<string, true>>({});
   const { width } = useWindowDimensions();
   const flatListRef = useRef<FlatList<PeopleListItem>>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
@@ -190,6 +192,9 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
         )}
         scrollEventThrottle={16}
         renderItem={({ item, index }: { item: PeopleListItem; index: number }) => {
+          const imageKey = `${item.id}:${item.imageUri ?? 'none'}`;
+          const imageReady = !item.imageUri || !!readyImages[imageKey] || !!failedImages[imageKey];
+          const showImage = !!item.imageUri && !failedImages[imageKey];
           const inputRange = [
             (index - 1) * snapInterval,
             index * snapInterval,
@@ -223,10 +228,10 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
                 width: snapInterval,
                 alignItems: 'center' as const,
                 transform: [{ scale }],
-                opacity: cardOpacity,
+                opacity: imageReady ? cardOpacity : 0,
               }}
             >
-              <View style={styles.ambientShadow}>
+              <View style={[styles.ambientShadow, item.isPremium && styles.premiumGlow]}>
                 <View style={styles.tape} />
                 <Pressable
                   onPress={() => onPressItem(item)}
@@ -248,9 +253,15 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
                     </View>
                   ) : null}
                   <View style={[styles.photoFrame, { width: photoSize, height: photoSize, transform: [{ rotate: `${photoTilt}deg` }] }]}>
-                    {item.imageUri ? (
+                    {showImage ? (
                       <>
-                        <Image source={{ uri: item.imageUri }} style={styles.photoImage} fadeDuration={0} />
+                        <Image
+                          source={{ uri: item.imageUri! }}
+                          style={styles.photoImage}
+                          fadeDuration={0}
+                          onLoad={() => setReadyImages((prev) => (prev[imageKey] ? prev : { ...prev, [imageKey]: true }))}
+                          onError={() => setFailedImages((prev) => (prev[imageKey] ? prev : { ...prev, [imageKey]: true }))}
+                        />
                         <View style={styles.warmBaseTint} />
                         <LinearGradient
                           colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
@@ -287,6 +298,12 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
                 <View style={styles.statusRow}>
                   <View style={[styles.statusDot, styles.statusDotOn]} />
                   <Text style={styles.statusLabel}>Connected</Text>
+                </View>
+              ) : null}
+              {item.isPremium ? (
+                <View style={styles.premiumBadge}>
+                  <Ionicons name="star" size={10} color="#7A5A1A" />
+                  <Text style={styles.premiumBadgeText}>PREMIUM</Text>
                 </View>
               ) : null}
               {!item.note && item.caption ? (
@@ -375,6 +392,36 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       shadowOffset: { width: 0, height: 8 },
       shadowOpacity: 0.1,
       shadowRadius: 20,
+    },
+    premiumGlow: {
+      shadowColor: '#F5C242',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.95,
+      shadowRadius: 22,
+      elevation: 12,
+    },
+    premiumBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      alignSelf: 'center',
+      marginTop: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 3,
+      borderRadius: 999,
+      backgroundColor: '#F8DA7A',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: '#C99A2A',
+      shadowColor: '#F5C242',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.6,
+      shadowRadius: 6,
+    },
+    premiumBadgeText: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 10,
+      letterSpacing: 1.4,
+      color: '#7A5A1A',
     },
     pinBadge: { position: 'absolute', top: 6, right: 6, zIndex: 1 },
     notifBadge: {
@@ -501,32 +548,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: '100%',
       paddingHorizontal: 8,
       overflow: 'visible' as const,
-    },
-    tagRow: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      justifyContent: 'center',
-      gap: 4,
-      marginTop: 2,
-    },
-    tag: {
-      backgroundColor: colors.accent + '1A',
-      paddingHorizontal: 8,
-      paddingVertical: 2,
-      borderRadius: 999,
-    },
-    tagText: {
-      fontFamily: fonts.bodyBold,
-      fontSize: 10,
-      color: colors.accent,
-      textTransform: 'uppercase',
-      letterSpacing: 0.3,
-    },
-    tagMore: {
-      fontFamily: fonts.bodyBold,
-      fontSize: 10,
-      color: colors.inkMuted,
-      alignSelf: 'center',
     },
     statusRow: {
       flexDirection: 'row',

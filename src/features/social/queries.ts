@@ -1,12 +1,14 @@
 import { supabase } from '../../lib/supabase';
-import { AppUser, Contact, FriendFact, Friendship, Notification, WallPost } from '../../types/domain';
-import { rowToContact, rowToFriendFact, rowToFriendship, rowToNotification, rowToUser, rowToWallPost } from './mappers';
+import { AppUser, Contact, ContactPrivateNote, ContactPrivateNoteBlock, FriendFact, Friendship, Notification, WallPost } from '../../types/domain';
+import { rowToContact, rowToContactPrivateNote, rowToContactPrivateNoteBlock, rowToFriendFact, rowToFriendship, rowToNotification, rowToUser, rowToWallPost } from './mappers';
 
 export const socialQueryKeys = {
   users: ['social', 'users'] as const,
   contacts: ['social', 'contacts'] as const,
   friendships: ['social', 'friendships'] as const,
   wallPosts: ['social', 'wallPosts'] as const,
+  privateNotes: ['social', 'privateNotes'] as const,
+  privateNoteBlocks: ['social', 'privateNoteBlocks'] as const,
   friendFacts: ['social', 'friendFacts'] as const,
   notifications: ['social', 'notifications'] as const,
   all: ['social'] as const,
@@ -34,6 +36,18 @@ export async function fetchWallPosts(): Promise<WallPost[]> {
   const { data, error } = await supabase.from('wall_posts').select('*');
   if (error) throw error;
   return (data ?? []).map(rowToWallPost);
+}
+
+export async function fetchPrivateNotes(): Promise<ContactPrivateNote[]> {
+  const { data, error } = await supabase.from('contact_private_notes').select('*').order('updated_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map(rowToContactPrivateNote);
+}
+
+export async function fetchPrivateNoteBlocks(): Promise<ContactPrivateNoteBlock[]> {
+  const { data, error } = await supabase.from('contact_private_note_blocks').select('*').order('sort_order', { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(rowToContactPrivateNoteBlock);
 }
 
 export async function fetchFriendFacts(): Promise<FriendFact[]> {

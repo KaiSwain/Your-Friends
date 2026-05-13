@@ -17,6 +17,7 @@ describe('rowToUser', () => {
       avatar_color: '#FF0000',
       avatar_path: 'https://img.test/a.jpg',
       profile_facts: ['Loves cats'],
+      premium_until: '2026-05-14T12:00:00Z',
       created_at: '2024-01-01T00:00:00Z',
     };
     const user = rowToUser(row);
@@ -28,6 +29,7 @@ describe('rowToUser', () => {
       avatarColor: '#FF0000',
       avatarPath: 'https://img.test/a.jpg',
       profileFacts: ['Loves cats'],
+      premiumUntil: '2026-05-14T12:00:00Z',
       createdAt: '2024-01-01T00:00:00Z',
     });
   });
@@ -36,6 +38,7 @@ describe('rowToUser', () => {
     const user = rowToUser({ id: 'u2', email: '', display_name: '', friend_code: '', avatar_color: '', created_at: '' });
     expect(user.avatarPath).toBeNull();
     expect(user.profileFacts).toEqual([]);
+    expect(user.premiumUntil).toBeNull();
   });
 });
 
@@ -54,6 +57,7 @@ describe('rowToContact', () => {
       card_color: '#00FF00',
       profile_bg: 'ocean',
       pinned: true,
+      pinned_at: '2024-02-02T00:00:00Z',
       created_at: '2024-02-01T00:00:00Z',
     };
     const contact = rowToContact(row);
@@ -62,6 +66,7 @@ describe('rowToContact', () => {
     expect(contact.nickname).toBe('Bobby');
     expect(contact.tags).toEqual(['family']);
     expect(contact.pinned).toBe(true);
+    expect(contact.pinnedAt).toBe('2024-02-02T00:00:00Z');
     expect(contact.profileBg).toBe('ocean');
   });
 
@@ -75,6 +80,7 @@ describe('rowToContact', () => {
     expect(contact.cardColor).toBeNull();
     expect(contact.profileBg).toBeNull();
     expect(contact.pinned).toBe(false);
+    expect(contact.pinnedAt).toBeNull();
   });
 });
 

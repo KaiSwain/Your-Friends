@@ -64,6 +64,10 @@ export function DrawerMenu({ visible, onClose }: DrawerMenuProps) {
             <ThemedGlyph name="profile" size={20} color={colors.accent} />
             <Text style={styles.linkLabel}>Your Profile</Text>
           </Pressable>
+          <Pressable onPress={() => navigate('/(app)/calendar')} style={styles.linkRow}>
+            <ThemedGlyph name="calendar" size={20} color={colors.accent} />
+            <Text style={styles.linkLabel}>Calendar</Text>
+          </Pressable>
           <Pressable onPress={() => navigate('/(app)/settings')} style={styles.linkRow}>
             <ThemedGlyph name="settings" size={20} color={colors.accent} />
             <Text style={styles.linkLabel}>Settings</Text>

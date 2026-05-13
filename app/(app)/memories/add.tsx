@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
@@ -14,6 +15,9 @@ import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
 import { isCardColorUnlocked, getCardColorLockMessage } from '../../../src/features/theme/cardColorUnlocks';
 import { useAddMemory } from '../../../src/hooks/useAddMemory';
+import { AI_CAPTION_TONES, AiCaptionContext, AiCaptionTone, generateAiCaptions } from '../../../src/lib/aiCaptions';
+import { showAiCaptionPaywall, showGalleryPaywall } from '../../../src/lib/premiumGates';
+import { showPhotoSourceSheet } from '../../../src/lib/photoSourceSheet';
 import {
   defaultWallPostTextColor,
   defaultWallPostTextEffect,
@@ -25,15 +29,15 @@ import {
 import { polaroidFilters } from '../../../src/lib/polaroidFilters';
 import type { FontSet } from '../../../src/theme/typography';
 import { accentPalette, radius, spacing } from '../../../src/theme/tokens';
-import { WallPostTextColor, WallPostTextEffect, WallPostTextFont, WallPostTextSize, WallPostVisibility } from '../../../src/types/domain';
+import { WallPost, WallPostTextColor, WallPostTextEffect, WallPostTextFont, WallPostTextSize, WallPostVisibility } from '../../../src/types/domain';
 
 export default function AddMemoryScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ subjectId: string | string[]; subjectType: string | string[]; capturedUri: string | string[]; returnTo: string | string[]; backTo: string | string[] }>();
   const { currentUser } = useAuth();
-  const { getUserById, getContactById } = useSocialGraph();
+  const { contacts, getUserById, getContactById, getWallPostsForSubject, getPrivateNotesForContact, getPrivateNoteBlocks, getFriendFactsFor } = useSocialGraph();
   const { colors, fonts, themeName } = useTheme();
-  const { purchasedThemes } = usePremium();
+  const { isPremium, purchasedThemes } = usePremium();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
   const addMemory = useAddMemory();
 
@@ -50,6 +54,9 @@ export default function AddMemoryScreen() {
   const [textSize, setTextSize] = useState<WallPostTextSize>(defaultWallPostTextSize);
   const [textEffect, setTextEffect] = useState<WallPostTextEffect>(defaultWallPostTextEffect);
   const [textColor, setTextColor] = useState<WallPostTextColor>(defaultWallPostTextColor);
+  const [captionTone, setCaptionTone] = useState<AiCaptionTone>('witty');
+  const [captionSuggestions, setCaptionSuggestions] = useState<string[]>([]);
+  const [isGeneratingCaption, setIsGeneratingCaption] = useState(false);
 
   const onFlip = useCallback((back: boolean) => setShowingBack(back), []);
   const textInputTypography = useMemo(
@@ -57,6 +64,9 @@ export default function AddMemoryScreen() {
     [fonts, imageUri, textFont, textSize],
   );
   const selectedTextColor = useMemo(() => resolveWallPostTextColor(textColor, colors), [colors, textColor]);
+  const subjectId = Array.isArray(params.subjectId) ? params.subjectId[0] : params.subjectId;
+  const subjectType = (Array.isArray(params.subjectType) ? params.subjectType[0] : params.subjectType) as 'user' | 'contact';
+  const backTo = Array.isArray(params.backTo) ? params.backTo[0] : params.backTo;
 
   // Pick up photo from Polaroid camera screen
   const capturedUri = Array.isArray(params.capturedUri) ? params.capturedUri[0] : params.capturedUri;
@@ -64,12 +74,13 @@ export default function AddMemoryScreen() {
     if (capturedUri) setImageUri(capturedUri);
   }, [capturedUri]);
 
+  useEffect(() => {
+    setCaptionSuggestions([]);
+  }, [imageUri, subjectId, subjectType]);
+
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   const authenticatedUser = currentUser;
 
-  const subjectId = Array.isArray(params.subjectId) ? params.subjectId[0] : params.subjectId;
-  const subjectType = (Array.isArray(params.subjectType) ? params.subjectType[0] : params.subjectType) as 'user' | 'contact';
-  const backTo = Array.isArray(params.backTo) ? params.backTo[0] : params.backTo;
   const subjectName = subjectType === 'user'
     ? getUserById(subjectId ?? '')?.displayName
     : getContactById(subjectId ?? '')?.displayName;
@@ -92,6 +103,101 @@ export default function AddMemoryScreen() {
         backTo: backTo ?? '',
       },
     });
+  }
+
+  async function pickGalleryPhoto() {
+    if (!isPremium) {
+      showGalleryPaywall(() => router.push('/(app)/store'));
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.9,
+    });
+    if (!result.canceled && result.assets[0]?.uri) {
+      setImageUri(result.assets[0].uri);
+      setShowingBack(false);
+    }
+  }
+
+  function openPhotoSourcePicker() {
+    showPhotoSourceSheet({
+      galleryLocked: !isPremium,
+      onCamera: openCamera,
+      onGallery: pickGalleryPhoto,
+      title: imageUri ? 'Change Photo' : 'Add Photo',
+    });
+  }
+
+  function buildCaptionContext(): AiCaptionContext {
+    const linkedContact = subjectType === 'user' && subjectId
+      ? contacts.find((contact) => contact.ownerUserId === authenticatedUser.id && contact.linkedUserId === subjectId)
+      : null;
+    const contact = subjectType === 'contact' && subjectId ? getContactById(subjectId) : linkedContact;
+    const user = subjectType === 'user' && subjectId
+      ? getUserById(subjectId)
+      : contact?.linkedUserId
+        ? getUserById(contact.linkedUserId)
+        : null;
+
+    const contactPosts = contact ? getWallPostsForSubject(contact.id, 'contact') : [];
+    const userPosts = user ? getWallPostsForSubject(user.id, 'user') : [];
+    const previousPosts = dedupePosts([...contactPosts, ...userPosts]);
+    const privateNotes = contact ? getPrivateNotesForContact(contact.id) : [];
+    const privateNoteText = privateNotes.flatMap((note) =>
+      getPrivateNoteBlocks(note.id)
+        .filter((block) => block.type === 'text' && block.content)
+        .map((block) => block.content ?? ''),
+    );
+    const friendFacts = user ? getFriendFactsFor(authenticatedUser.id, user.id).map((fact) => fact.body) : [];
+
+    return {
+      authorName: authenticatedUser.displayName,
+      subjectName: contact?.nickname || contact?.displayName || user?.displayName || subjectName || 'someone',
+      subjectType,
+      memoryDate: new Date().toISOString(),
+      draftCaption: body.trim() || null,
+      relationshipTags: contact?.tags ?? [],
+      facts: [...(contact?.facts ?? []), ...(user?.profileFacts ?? []), ...friendFacts],
+      notes: [contact?.note ?? '', ...privateNoteText],
+      previousCaptions: previousPosts.map((post) => post.body),
+      previousBackText: previousPosts.map((post) => post.backText ?? ''),
+    };
+  }
+
+  async function handleGenerateCaption() {
+    if (!imageUri) {
+      Alert.alert('Add a photo first', 'AI captions need a photo to look at.');
+      return;
+    }
+    if (!isPremium) {
+      showAiCaptionPaywall(() => router.push('/(app)/store'));
+      return;
+    }
+    if (!subjectId) {
+      setError('Missing subject.');
+      return;
+    }
+
+    setError('');
+    setShowingBack(false);
+    setIsGeneratingCaption(true);
+    try {
+      const captions = await generateAiCaptions({
+        context: buildCaptionContext(),
+        imageUri,
+        tone: captionTone,
+      });
+      setCaptionSuggestions(captions);
+      if (!body.trim() && captions[0]) setBody(captions[0]);
+    } catch (err) {
+      Alert.alert('Could not write captions', err instanceof Error ? err.message : 'Try again in a moment.');
+    } finally {
+      setIsGeneratingCaption(false);
+    }
   }
 
   const header = (
@@ -202,7 +308,27 @@ export default function AddMemoryScreen() {
       )}
 
       <View style={styles.inputSection}>
-        <Text style={styles.inputLabel}>{showingBack ? 'Back of Card' : 'Front Caption'}</Text>
+        <View style={styles.inputHeaderRow}>
+          <Text style={styles.inputLabel}>{showingBack ? 'Back of Card' : 'Front Caption'}</Text>
+          {imageUri && !showingBack ? (
+            <Pressable onPress={handleGenerateCaption} disabled={isGeneratingCaption} style={[styles.aiButton, isGeneratingCaption && styles.aiButtonDisabled]}>
+              <Ionicons name="sparkles-outline" size={16} color={colors.accent} />
+              <Text style={styles.aiButtonText}>{isGeneratingCaption ? 'Writing…' : 'AI Caption'}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {imageUri && !showingBack ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.toneScroll}>
+            {AI_CAPTION_TONES.map((tone) => {
+              const active = captionTone === tone.id;
+              return (
+                <Pressable key={tone.id} onPress={() => setCaptionTone(tone.id)} style={[styles.toneChip, active && styles.toneChipActive]}>
+                  <Text style={[styles.toneChipText, active && styles.toneChipTextActive]}>{tone.label}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
         <TextInput
           multiline
           onChangeText={showingBack ? setBackText : setBody}
@@ -211,6 +337,15 @@ export default function AddMemoryScreen() {
           style={[styles.textInput, !imageUri && !showingBack && textInputTypography, !imageUri && !showingBack && { color: selectedTextColor }]}
           value={showingBack ? backText : body}
         />
+        {imageUri && !showingBack && captionSuggestions.length > 0 ? (
+          <View style={styles.captionSuggestionList}>
+            {captionSuggestions.map((caption) => (
+              <Pressable key={caption} onPress={() => setBody(caption)} style={[styles.captionSuggestion, body.trim() === caption && styles.captionSuggestionActive]}>
+                <Text style={styles.captionSuggestionText}>{caption}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </View>
 
       {!imageUri ? (
@@ -230,7 +365,13 @@ export default function AddMemoryScreen() {
         {!imageUri && (
           <Pressable onPress={openCamera} style={styles.photoOption}>
             <Ionicons name="camera-outline" size={28} color={colors.ink} />
-            <Text style={styles.photoOptionLabel}>Take Photo</Text>
+            <Text style={styles.photoOptionLabel}>Camera</Text>
+          </Pressable>
+        )}
+        {!imageUri && (
+          <Pressable onPress={pickGalleryPhoto} style={[styles.photoOption, !isPremium && styles.photoOptionLocked]}>
+            <Ionicons name={isPremium ? 'images-outline' : 'lock-closed-outline'} size={28} color={colors.ink} />
+            <Text style={styles.photoOptionLabel}>Gallery</Text>
           </Pressable>
         )}
         {imageUri && (
@@ -239,8 +380,8 @@ export default function AddMemoryScreen() {
           </Pressable>
         )}
         {imageUri && (
-          <Pressable onPress={openCamera} style={styles.changePhotoButton}>
-            <Text style={styles.changePhotoLabel}>Retake Photo</Text>
+          <Pressable onPress={openPhotoSourcePicker} style={styles.changePhotoButton}>
+            <Text style={styles.changePhotoLabel}>Change Photo</Text>
           </Pressable>
         )}
       </View>
@@ -319,6 +460,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: 100, height: 100, borderRadius: radius.md, backgroundColor: colors.paper,
       borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
     },
+    photoOptionLocked: { opacity: 0.72 },
     photoOptionIcon: { fontSize: 28 },
     photoOptionLabel: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
     changePhotoButton: {
@@ -345,7 +487,44 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     previewLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
     previewHint: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted, textAlign: 'center' as const },
     inputSection: { gap: spacing.xs },
+    inputHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
     inputLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+    aiButton: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 5,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 7,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.accent + '66',
+      backgroundColor: colors.accent + '12',
+    },
+    aiButtonDisabled: { opacity: 0.6 },
+    aiButtonText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent },
+    toneScroll: { gap: spacing.xs, paddingVertical: 2 },
+    toneChip: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: 7,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+    },
+    toneChipActive: { borderColor: colors.accent, backgroundColor: colors.accent + '14' },
+    toneChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    toneChipTextActive: { fontFamily: fonts.bodyBold, color: colors.accent },
+    captionSuggestionList: { gap: spacing.xs },
+    captionSuggestion: {
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    captionSuggestionActive: { borderColor: colors.accent, backgroundColor: colors.accent + '10' },
+    captionSuggestionText: { fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 19, color: colors.ink },
     filterSection: { gap: spacing.xs },
     filterLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
     filterScroll: { gap: spacing.sm },
@@ -366,3 +545,14 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     dateStampLabel: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.inkMuted },
     dateStampLabelActive: { color: colors.ink },
   });
+
+function dedupePosts(posts: WallPost[]) {
+  const seen = new Set<string>();
+  const result: WallPost[] = [];
+  for (const post of posts) {
+    if (seen.has(post.id)) continue;
+    seen.add(post.id);
+    result.push(post);
+  }
+  return result.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10);
+}

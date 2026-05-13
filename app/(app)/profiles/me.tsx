@@ -1,23 +1,30 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { useMemo, useState } from 'react';
-import { Alert, Image, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
-import QRCode from 'react-native-qrcode-svg';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
+import { MonthMemoryWallContent, type DayGroup } from '../../../src/components/MonthScrollableMemoryWall';
+import { WallPostCard } from '../../../src/components/WallPostCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
+import { usePremium } from '../../../src/features/premium/PremiumContext';
+import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
 import { contrastText, contrastTextSoft } from '../../../src/lib/contrastText';
-import { createFriendInviteLink } from '../../../src/lib/friendCode';
+import { onCapturedUri } from '../../../src/lib/cameraHandoff';
+import { showGalleryPaywall } from '../../../src/lib/premiumGates';
 import type { FontSet } from '../../../src/theme/typography';
 import { radius, spacing } from '../../../src/theme/tokens';
+import type { WallPost } from '../../../src/types/domain';
 
 export default function MyProfileScreen() {
   const router = useRouter();
   const { currentUser, updateProfile } = useAuth();
+  const { isPremium } = usePremium();
+  const { getDirectFriends, getPeopleListForUser, getVisiblePostsByAuthor, getWallPostsForSubject, getUserById } = useSocialGraph();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
@@ -27,23 +34,86 @@ export default function MyProfileScreen() {
   const [newFact, setNewFact] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const directFriends = currentUser ? getDirectFriends(currentUser.id) : [];
+  const people = currentUser ? getPeopleListForUser(currentUser.id) : [];
+  const memoryWallPosts = useMemo<WallPost[]>(() => {
+    if (!currentUser) return [];
+
+    const subjectRefs = people.flatMap((person) => [
+      { id: person.id, entityType: person.entityType },
+      ...(person.linkedUserId ? [{ id: person.linkedUserId, entityType: 'user' as const }] : []),
+    ]);
+    const myPostsAboutPeople = subjectRefs
+      .filter((subject, index, subjects) =>
+        subjects.findIndex((candidate) => candidate.id === subject.id && candidate.entityType === subject.entityType) === index,
+      )
+      .flatMap((subject) =>
+        getWallPostsForSubject(subject.id, subject.entityType)
+          .filter((post) => post.authorUserId === currentUser.id),
+      );
+    const friendsPostsAboutMe = directFriends.flatMap((friend) =>
+      getVisiblePostsByAuthor(friend.id)
+        .filter((post) => post.subjectUserId === currentUser.id),
+    );
+
+    return [...myPostsAboutPeople, ...friendsPostsAboutMe]
+      .filter((post, index, posts) => posts.findIndex((candidate) => candidate.id === post.id) === index)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [currentUser?.id, directFriends, people, getVisiblePostsByAuthor, getWallPostsForSubject]);
+  const memoryWallDayGroups = useMemo<DayGroup[]>(() => {
+    const groups: DayGroup[] = [];
+    let currentLabel = '';
+    for (const post of memoryWallPosts) {
+      const date = new Date(post.createdAt);
+      const label = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      if (label !== currentLabel) {
+        currentLabel = label;
+        groups.push({ label, posts: [] });
+      }
+      groups[groups.length - 1].posts.push(post);
+    }
+    return groups;
+  }, [memoryWallPosts]);
+
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
 
   const displayImage = localImageUri ?? currentUser.avatarPath ?? null;
   const previewName = displayName.trim() || currentUser.displayName;
-  const inviteLink = createFriendInviteLink(currentUser.friendCode);
+  const savedFacts = currentUser.profileFacts ?? [];
+  const hasProfileChanges =
+    displayName.trim() !== currentUser.displayName ||
+    localImageUri !== null ||
+    facts.length !== savedFacts.length ||
+    facts.some((fact, index) => fact !== savedFacts[index]);
+  const topBar = (
+    <Pressable onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
+      <Text style={styles.backLabel}><Ionicons name="chevron-back" size={16} /> Back</Text>
+    </Pressable>
+  );
 
   async function pickPhoto() {
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+    if (!isPremium) {
+      showGalleryPaywall(() => router.push('/(app)/store'));
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
     if (!result.canceled && result.assets[0]) setLocalImageUri(result.assets[0].uri);
   }
 
   async function takePhoto() {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) { Alert.alert('Camera permission required'); return; }
-    const result = await ImagePicker.launchCameraAsync({ quality: 0.8 });
-    if (!result.canceled && result.assets[0]) setLocalImageUri(result.assets[0].uri);
+    // Open the in-app polaroid camera (with the polaroid frame overlay) and
+    // receive the captured URI via the handoff bus when it pops back.
+    router.push({ pathname: '/(app)/camera', params: { handoff: '1' } });
   }
+
+  // Subscribe once on mount so a captured photo flows back into local state
+  // without disturbing other unsaved profile edits.
+  useEffect(() => onCapturedUri((uri) => setLocalImageUri(uri)), []);
 
   function addFact() {
     const t = newFact.trim();
@@ -74,10 +144,11 @@ export default function MyProfileScreen() {
 
   return (
     <AppScreen
+      header={topBar}
       floatingHeaderOnScroll
-      footer={
+      footer={hasProfileChanges ? (
         <ActionButton label={saving ? 'Saving…' : 'Save Profile'} onPress={handleSave} disabled={saving} />
-      }
+      ) : undefined}
     >
       <Text style={styles.title}>Your Profile</Text>
       <Text style={styles.subtitle}>This is how friends see you when they add you.</Text>
@@ -120,29 +191,6 @@ export default function MyProfileScreen() {
         />
       </View>
 
-      {/* Friend Code QR */}
-      <View style={styles.fieldGroup}>
-        <Text style={styles.fieldLabel}>Friend Code</Text>
-        <View style={styles.qrCard}>
-          <View style={styles.qrWrapper}>
-            <QRCode
-              value={inviteLink}
-              size={160}
-              backgroundColor={colors.paper}
-              color={colors.ink}
-            />
-          </View>
-          <Text style={styles.codeValue}>{currentUser.friendCode}</Text>
-          <Text style={styles.codeHint}>Friends can scan this or open your shared link to add you</Text>
-          <Pressable
-            onPress={() => Share.share({ message: `Add me on Your Friends!\n${inviteLink}\nFriend code: ${currentUser.friendCode}` })}
-            style={styles.sharePill}
-          >
-            <Text style={styles.sharePillLabel}>Share Link</Text>
-          </Pressable>
-        </View>
-      </View>
-
       {/* Profile Facts */}
       <View style={styles.fieldGroup}>
         <Text style={styles.fieldLabel}>Profile Facts</Text>
@@ -173,6 +221,33 @@ export default function MyProfileScreen() {
             <Text style={styles.addFactButtonLabel}>+</Text>
           </Pressable>
         </View>
+      </View>
+
+      <View style={styles.memoryWallSection}>
+        <Text style={styles.memoryWallTitle}>Memory Wall</Text>
+        {memoryWallDayGroups.length === 0 ? (
+          <Text style={styles.emptyHint}>No memories yet.</Text>
+        ) : (
+          <MonthMemoryWallContent
+            dayGroups={memoryWallDayGroups}
+            themeColors={colors}
+            renderPost={(post) => {
+              const authorName = post.authorUserId === currentUser.id
+                ? currentUser.displayName
+                : getUserById(post.authorUserId)?.displayName ?? 'Friend';
+              return (
+                <WallPostCard
+                  key={post.id}
+                  authorName={authorName}
+                  post={post}
+                  cardColor={post.cardColor}
+                  themeColors={colors}
+                  shareable
+                />
+              );
+            }}
+          />
+        )}
       </View>
     </AppScreen>
   );
@@ -219,24 +294,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     },
 
-    qrCard: {
-      backgroundColor: colors.paper, borderRadius: radius.lg,
-      paddingHorizontal: spacing.lg, paddingVertical: spacing.lg,
-      alignItems: 'center', gap: spacing.sm,
-    },
-    qrWrapper: {
-      padding: spacing.md, backgroundColor: colors.paper,
-      borderRadius: radius.md,
-    },
-    codeValue: { fontFamily: fonts.heading, fontSize: 22, color: colors.accent, letterSpacing: 3 },
-    codeHint: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted },
-    sharePill: {
-      marginTop: spacing.xs,
-      paddingHorizontal: spacing.lg, paddingVertical: spacing.xs,
-      borderRadius: radius.pill, backgroundColor: colors.accent,
-    },
-    sharePillLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.white },
-
     factList: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.sm },
     factChip: {
       flexDirection: 'row', alignItems: 'center', gap: 6,
@@ -257,6 +314,10 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
     },
     addFactButtonLabel: { fontFamily: fonts.heading, fontSize: 20, color: colors.white },
+
+    memoryWallSection: { gap: spacing.sm, marginTop: spacing.sm, marginBottom: spacing.xl },
+    memoryWallTitle: { fontFamily: fonts.heading, fontSize: 22, color: colors.ink },
+    emptyHint: { fontFamily: fonts.body, fontSize: 14, color: colors.inkMuted },
 
     previewCard: {
       width: PREVIEW_WIDTH, borderRadius: radius.lg, overflow: 'hidden',

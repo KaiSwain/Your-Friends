@@ -30,6 +30,18 @@ describe('extractFriendCode', () => {
   it('returns empty string when no value is provided', () => {
     expect(extractFriendCode('')).toBe('');
   });
+
+  it('returns empty string for the bare add-friend deep link (no code)', () => {
+    expect(extractFriendCode('yourfriends://add-friend')).toBe('');
+  });
+
+  it('returns empty string for the Expo dev launch URL', () => {
+    expect(extractFriendCode('exp://192.168.1.50:8081')).toBe('');
+  });
+
+  it('returns empty string for notification deep links without a code', () => {
+    expect(extractFriendCode('yourfriends://notifications/10001848081')).toBe('');
+  });
 });
 
 describe('createFriendInviteLink', () => {

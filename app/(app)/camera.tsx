@@ -4,6 +4,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { postCapturedUri } from '../../src/lib/cameraHandoff';
+
 const POLAROID_FRAME = '#F5F2EA';
 
 const ULTRA_WIDE = 'Back Ultra Wide Camera';
@@ -14,7 +16,15 @@ type ZoomPreset = { label: string; lens: string; zoom: number };
 
 export default function PolaroidCameraScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ subjectId: string; subjectType: string; returnTo: string }>();
+  const params = useLocalSearchParams<{
+    subjectId: string;
+    subjectType: string;
+    returnTo: string;
+    handoff: string;
+  }>();
+  // Handoff mode: emit the captured URI on a side channel and pop, so callers
+  // can take a profile photo without losing their form state.
+  const isHandoff = params.handoff === '1';
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>('back');
   const [flash, setFlash] = useState<'off' | 'on' | 'auto'>('off');
@@ -82,22 +92,29 @@ export default function PolaroidCameraScreen() {
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
       if (photo?.uri) {
-        // Navigate back to the calling screen with the captured URI
-        const returnTo = params.returnTo || '/(app)/memories/add';
-        const { returnTo: _discard, ...forwardParams } = params;
-        router.replace({
-          pathname: returnTo as any,
-          params: {
-            ...forwardParams,
-            capturedUri: photo.uri,
-          },
-        });
+        if (isHandoff) {
+          // Emit the URI to the screen that opened the camera and pop back so
+          // its form state survives. The caller subscribes via onCapturedUri().
+          postCapturedUri(photo.uri);
+          router.back();
+        } else {
+          // Memory-creation flow: route forward to the add-memory composer.
+          const returnTo = params.returnTo || '/(app)/memories/add';
+          const { returnTo: _discard, handoff: _h, ...forwardParams } = params;
+          router.replace({
+            pathname: returnTo as any,
+            params: {
+              ...forwardParams,
+              capturedUri: photo.uri,
+            },
+          });
+        }
       }
     } catch {
       // Ignore capture errors
     }
     setCapturing(false);
-  }, [capturing, router]);
+  }, [capturing, router, isHandoff, params]);
 
   // Permissions loading
   if (!permission) {

@@ -8,19 +8,19 @@ import { AppScreen } from '../../../src/components/AppScreen';
 import { CardFlourish } from '../../../src/components/CardFlourish';
 import {
   MonthMemoryWallContent,
-  MonthMemoryWallPicker,
-  MonthMemoryWallStickyHeader,
-  useMonthScrollableMemoryWall,
+  type DayGroup,
 } from '../../../src/components/MonthScrollableMemoryWall';
 import { SectionCard } from '../../../src/components/SectionCard';
 import { ProfileSkeleton } from '../../../src/components/Skeleton';
 import { WallPostCard } from '../../../src/components/WallPostCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
+import { usePremium } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens, ThemeName } from '../../../src/features/theme/themes';
 import { themes, themeNames } from '../../../src/features/theme/themes';
 import { contrastText, contrastTextSoft, contrastAccent } from '../../../src/lib/contrastText';
+import { usePolaroidImageReady } from '../../../src/hooks/usePolaroidImageReady';
 import type { FontSet } from '../../../src/theme/typography';
 import { fontSets } from '../../../src/theme/typography';
 import { radius, spacing } from '../../../src/theme/tokens';
@@ -35,6 +35,7 @@ export default function ViewYourWallScreen() {
   const params = useLocalSearchParams<{ authorId: string | string[] }>();
   const { currentUser } = useAuth();
   const { loading, getUserById, isConnected, getVisiblePostsByAuthor, getContactAboutMe, notifications, markNotificationRead, refresh } = useSocialGraph();
+  const { isPremium } = usePremium();
   const { colors, fonts, resolvedMode } = useTheme();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -56,8 +57,36 @@ export default function ViewYourWallScreen() {
 
   // The contact card the author created about the current user.
   const theirContact = author && currentUser ? getContactAboutMe(author.id, currentUser.id) : undefined;
-  const visiblePosts = author ? getVisiblePostsByAuthor(author.id) : [];
-  const monthWall = useMonthScrollableMemoryWall(visiblePosts);
+
+  // ── Memory wall mode: shared wall (default) or their wall only.
+  // both connected users' visible posts chronologically. ──
+  const [wallMode, setWallMode] = useState<'theirs' | 'shared'>('shared');
+  const theirPosts = author && currentUser
+    ? getVisiblePostsByAuthor(author.id).filter((post) => post.subjectUserId === currentUser.id)
+    : [];
+  const myPosts = currentUser && author && wallMode === 'shared'
+    ? getVisiblePostsByAuthor(currentUser.id).filter((post) => post.subjectUserId === author.id)
+    : [];
+  const wallPosts = useMemo(() => {
+    if (wallMode === 'theirs') return theirPosts;
+    return [...theirPosts, ...myPosts]
+      .filter((post, index, posts) => posts.findIndex((candidate) => candidate.id === post.id) === index)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [wallMode, theirPosts, myPosts]);
+  const dayGroups = useMemo<DayGroup[]>(() => {
+    const out: DayGroup[] = [];
+    let lastLabel = '';
+    for (const post of wallPosts) {
+      const date = new Date(post.createdAt);
+      const dayLabel = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      if (dayLabel !== lastLabel) {
+        lastLabel = dayLabel;
+        out.push({ label: dayLabel, posts: [] });
+      }
+      out[out.length - 1].posts.push(post);
+    }
+    return out;
+  }, [wallPosts]);
 
   // Derive style values from the contact card color if present.
   const cardColor = theirContact?.cardColor ?? null;
@@ -71,6 +100,8 @@ export default function ViewYourWallScreen() {
   const tags = theirContact?.tags ?? [];
   const note = theirContact?.note ?? null;
   const facts = theirContact?.facts ?? [];
+  const heroImage = usePolaroidImageReady(avatarPath);
+  const showHeroCard = !avatarPath || heroImage.imageReady;
 
   // Unread notifications from this author — used to highlight fresh items.
   const authorNotifications = useMemo(() => {
@@ -164,20 +195,19 @@ export default function ViewYourWallScreen() {
   );
 
   const screenContent: ReactNode[] = [];
-  let stickyHeaderIndex: number | undefined;
 
   screenContent.push(
     <View key="hero" style={styles.heroSection}>
       <Pressable onPress={handleHeroFlip}>
-        <View style={styles.heroAmbientShadow} renderToHardwareTextureAndroid>
+        <View style={[styles.heroAmbientShadow, isPremium && styles.heroPremiumGlow, !showHeroCard && { opacity: 0 }]} renderToHardwareTextureAndroid>
           <View onLayout={(e) => { const h = e.nativeEvent.layout.height; if (h > 0) setHeroFrontHeight(h); }} style={styles.heroFaceHost}>
             <Animated.View pointerEvents={showHeroBack ? 'none' : 'auto'} style={[styles.heroFace, { transform: [{ perspective: 1000 }, { rotateY: heroFrontRotateY }] }]}>
               <View style={styles.heroTape} />
               <View style={[styles.heroCard, cardColor ? { backgroundColor: cardColor } : undefined, glowHero && styles.glowRow]}>
                 <View style={styles.heroPhotoFrame}>
-                  {avatarPath ? (
+                  {heroImage.showImage ? (
                     <>
-                      <Image source={{ uri: avatarPath }} style={styles.heroPhoto} fadeDuration={0} />
+                      <Image source={{ uri: avatarPath! }} style={styles.heroPhoto} fadeDuration={0} onLoad={heroImage.handleImageLoad} onError={heroImage.handleImageError} />
                       <View style={styles.heroWarmBaseTint} />
                       <LinearGradient
                         colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
@@ -220,6 +250,12 @@ export default function ViewYourWallScreen() {
           </View>
         </View>
       </Pressable>
+      {isPremium ? (
+        <View style={styles.heroPremiumBadge}>
+          <Ionicons name="star" size={11} color="#7A5A1A" />
+          <Text style={styles.heroPremiumBadgeText}>PREMIUM</Text>
+        </View>
+      ) : null}
       <Text style={styles.heroSubtitle}>{author.displayName}'s profile of you — tap to flip</Text>
     </View>,
   );
@@ -242,41 +278,59 @@ export default function ViewYourWallScreen() {
   screenContent.push(
     <View key="memory-wall-controls" style={styles.section}>
       <Text style={styles.sectionTitle}>Memory Wall</Text>
-      <MonthMemoryWallPicker
-        monthGroups={monthWall.monthGroups}
-        activeMonthKey={monthWall.activeMonth?.key ?? ''}
-        onSelectMonth={monthWall.setSelectedMonthKey}
-        themeColors={effectiveColors}
-      />
+      <View style={styles.wallModeToggle} accessibilityRole="tablist">
+        {([
+          { key: 'shared', label: 'Shared wall' },
+          { key: 'theirs', label: `${author.displayName}'s wall` },
+        ] as const).map((opt) => {
+          const active = wallMode === opt.key;
+          return (
+            <Pressable
+              key={opt.key}
+              onPress={() => setWallMode(opt.key)}
+              style={[styles.wallModeChip, active && styles.wallModeChipActive]}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={opt.label}
+            >
+              <Text style={[styles.wallModeLabel, active && styles.wallModeLabelActive]}>{opt.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>,
   );
 
-  if (!monthWall.activeMonth) {
+  if (dayGroups.length === 0) {
     screenContent.push(
-      <Text key="memory-wall-empty" style={styles.emptyHint}>{author.displayName} hasn't shared any memories about you yet.</Text>,
+      <Text key="memory-wall-empty" style={styles.emptyHint}>
+        {wallMode === 'theirs'
+          ? `${author.displayName} hasn't shared any memories yet.`
+          : `No shared memories yet between you and ${author.displayName}.`}
+      </Text>,
     );
   } else {
-    stickyHeaderIndex = screenContent.length;
-    screenContent.push(
-      <MonthMemoryWallStickyHeader key="memory-wall-month" label={monthWall.activeMonth.label} themeColors={effectiveColors} />,
-    );
     screenContent.push(
       <View key="memory-wall-posts" style={styles.monthWallPostsBlock}>
         <MonthMemoryWallContent
-          dayGroups={monthWall.activeMonth.dayGroups}
+          dayGroups={dayGroups}
           themeColors={effectiveColors}
-          renderPost={(post) => (
-            <View key={post.id} style={glowPostIds.has(post.id) ? styles.glowRow : undefined}>
-              <WallPostCard authorName={author.displayName} post={post} cardColor={post.cardColor} themeColors={effectiveColors} shareable />
-            </View>
-          )}
+          renderPost={(post) => {
+            const isMine = currentUser ? post.authorUserId === currentUser.id : false;
+            const postAuthorName = isMine ? (currentUser?.displayName ?? 'You') : author.displayName;
+            return (
+              <View key={post.id} style={glowPostIds.has(post.id) ? styles.glowRow : undefined}>
+                <WallPostCard authorName={postAuthorName} post={post} cardColor={post.cardColor} themeColors={effectiveColors} shareable />
+              </View>
+            );
+          }}
         />
       </View>,
     );
   }
 
   return (
-    <AppScreen header={topBar} floatingHeaderOnScroll gradientColors={themedColors ? [themedColors.canvas, themedColors.canvasAlt, themedColors.canvas] : undefined} onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }} refreshing={refreshing} stickyHeaderIndices={stickyHeaderIndex !== undefined ? [stickyHeaderIndex] : undefined}>
+    <AppScreen header={topBar} floatingHeaderOnScroll gradientColors={themedColors ? [themedColors.canvas, themedColors.canvasAlt, themedColors.canvas] : undefined} onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }} refreshing={refreshing}>
       {screenContent}
     </AppScreen>
   );
@@ -307,6 +361,35 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       shadowOpacity: 0.18,
       shadowRadius: 14,
       elevation: 8,
+    },
+    heroPremiumGlow: {
+      shadowColor: '#F5C242',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.95,
+      shadowRadius: 24,
+      elevation: 14,
+    },
+    heroPremiumBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      alignSelf: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 4,
+      borderRadius: 999,
+      backgroundColor: '#F8DA7A',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: '#C99A2A',
+      shadowColor: '#F5C242',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.6,
+      shadowRadius: 6,
+    },
+    heroPremiumBadgeText: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 11,
+      letterSpacing: 1.6,
+      color: '#7A5A1A',
     },
     heroTape: {
       position: 'absolute',
@@ -394,13 +477,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: 10,
       overflow: 'visible' as const,
     },
-    heroTagRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 4 },
-    heroTag: {
-      backgroundColor: colors.accent + '1A',
-      paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999,
-    },
-    heroTagText: { fontFamily: fonts.bodyBold, fontSize: 10, color: colors.accent, textTransform: 'uppercase', letterSpacing: 0.5 },
-    heroTagMore: { fontFamily: fonts.bodyMedium, fontSize: 10, color: FRAME_INK_SOFT },
     heroNote: {
       fontFamily: fonts.handwritten,
       fontSize: 15,
@@ -459,4 +535,29 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     emptyHint: { fontFamily: fonts.body, fontSize: 14, color: colors.inkMuted },
     monthWallPostsBlock: { marginTop: -spacing.md },
+    wallModeToggle: {
+      flexDirection: 'row',
+      alignSelf: 'flex-start',
+      backgroundColor: colors.canvasAlt,
+      borderRadius: radius.pill,
+      padding: 4,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.inkMuted + '33',
+    },
+    wallModeChip: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      borderRadius: radius.pill,
+    },
+    wallModeChipActive: {
+      backgroundColor: colors.accent,
+    },
+    wallModeLabel: {
+      fontFamily: fonts.bodyMedium,
+      fontSize: 13,
+      color: colors.inkSoft,
+    },
+    wallModeLabelActive: {
+      color: contrastText(colors.accent),
+    },
   });

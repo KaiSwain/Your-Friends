@@ -1,6 +1,8 @@
 import {
   AppUser,
   Contact,
+  ContactPrivateNote,
+  ContactPrivateNoteBlock,
   FriendFact,
   Friendship,
   Notification,
@@ -18,6 +20,7 @@ export function rowToUser(row: any): AppUser {
     avatarPath: row.avatar_path ?? null,
     profileFacts: row.profile_facts ?? [],
     createdAt: row.created_at,
+    premiumUntil: row.premium_until ?? null,
   };
 }
 
@@ -36,6 +39,7 @@ export function rowToContact(row: any): Contact {
     backText: row.back_text ?? null,
     profileBg: row.profile_bg ?? null,
     pinned: row.pinned ?? false,
+    pinnedAt: row.pinned_at ?? null,
     createdAt: row.created_at,
   };
 }
@@ -92,5 +96,31 @@ export function rowToNotification(row: any): Notification {
     message: row.message,
     read: row.read,
     createdAt: row.created_at,
+  };
+}
+
+export function rowToContactPrivateNote(row: any): ContactPrivateNote {
+  return {
+    id: row.id,
+    ownerUserId: row.owner_user_id,
+    contactId: row.contact_id,
+    title: row.title ?? '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
+  };
+}
+
+export function rowToContactPrivateNoteBlock(row: any): ContactPrivateNoteBlock {
+  return {
+    id: row.id,
+    noteId: row.note_id,
+    ownerUserId: row.owner_user_id,
+    type: row.type,
+    content: row.content ?? null,
+    url: row.url ?? null,
+    imagePath: row.image_path ?? null,
+    sortOrder: row.sort_order ?? 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
   };
 }

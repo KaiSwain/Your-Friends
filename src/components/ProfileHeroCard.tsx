@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
+import { usePolaroidImageReady } from '../hooks/usePolaroidImageReady';
 import type { FontSet } from '../theme/typography';
 import { spacing } from '../theme/tokens';
 import { CardFlourish } from './CardFlourish';
@@ -20,10 +21,12 @@ interface ProfileHeroCardProps {
 export function ProfileHeroCard({ accentColor, name, subtitle, imageUri, tags, onPressPhoto }: ProfileHeroCardProps) {
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
+  const photoState = usePolaroidImageReady(imageUri);
+  const showPolaroid = !imageUri || photoState.imageReady;
 
-  const photoContent = imageUri ? (
+  const photoContent = photoState.showImage ? (
     <>
-      <Image source={{ uri: imageUri }} style={styles.photoImage} fadeDuration={0} />
+      <Image source={{ uri: imageUri! }} style={styles.photoImage} fadeDuration={0} onLoad={photoState.handleImageLoad} onError={photoState.handleImageError} />
       <View style={styles.warmBaseTint} />
       <LinearGradient
         colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
@@ -42,7 +45,7 @@ export function ProfileHeroCard({ accentColor, name, subtitle, imageUri, tags, o
 
   return (
     <View style={styles.container}>
-      <View style={styles.stack}>
+      <View style={[styles.stack, !showPolaroid && { opacity: 0 }]}>
         <View style={[styles.sheet, styles.sheetBack]} />
         <View style={styles.ambientShadow}>
           <View style={styles.tape} />

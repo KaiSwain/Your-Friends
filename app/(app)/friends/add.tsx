@@ -10,7 +10,7 @@ import { AppScreen } from '../../../src/components/AppScreen';
 import { FormField } from '../../../src/components/FormField';
 import { SectionCard } from '../../../src/components/SectionCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
-import { FREE_FRIEND_LIMIT, FRIENDS_UNLOCK_PRICE, usePremium } from '../../../src/features/premium/PremiumContext';
+import { FREE_FRIEND_LIMIT, PREMIUM_SUBSCRIPTION_PRICE, usePremium } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
@@ -22,7 +22,7 @@ export default function AddFriendScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ code?: string }>();
   const { currentUser } = useAuth();
-  const { friendsUnlocked, unlockFriends } = usePremium();
+  const { isPremium, purchase } = usePremium();
   const { addFriendByCode, addManualContact, contacts } = useSocialGraph();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
@@ -43,18 +43,24 @@ export default function AddFriendScreen() {
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   const authenticatedUser = currentUser;
   const inviteLink = createFriendInviteLink(authenticatedUser.friendCode);
+  const topBar = (
+    <Pressable onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
+      <Text style={styles.backLabel}><Ionicons name="chevron-back" size={16} /> Back</Text>
+    </Pressable>
+  );
 
   const friendCount = contacts.filter((c) => c.ownerUserId === authenticatedUser.id).length;
-  const atLimit = !friendsUnlocked && friendCount >= FREE_FRIEND_LIMIT;
+  const atLimit = !isPremium && friendCount >= FREE_FRIEND_LIMIT;
 
   function guardLimit(): boolean {
     if (!atLimit) return false;
     Alert.alert(
       'Friend Limit Reached',
-      `You've got ${FREE_FRIEND_LIMIT} friends! Unlock unlimited friends for ${FRIENDS_UNLOCK_PRICE}.`,
+      `You've got ${FREE_FRIEND_LIMIT} friends! Premium unlocks unlimited friends. ${PREMIUM_SUBSCRIPTION_PRICE}.`,
       [
         { text: 'Not now', style: 'cancel' },
-        { text: `Unlock ${FRIENDS_UNLOCK_PRICE}`, onPress: () => unlockFriends() },
+        { text: 'Subscribe', onPress: () => purchase() },
+        { text: 'Browse store', onPress: () => router.push('/(app)/store') },
       ],
     );
     return true;
@@ -81,10 +87,15 @@ export default function AddFriendScreen() {
     setFriendError('');
     const result = await addFriendByCode(authenticatedUser.id, friendCode);
     if (!result.ok) { setFriendError(result.error); setFriendBusy(false); return; }
-    router.replace(result.contactId
-      ? `/(app)/profiles/contact/${result.contactId}`
-      : `/(app)/profiles/user/${result.friend.id}`,
-    );
+    if (result.contactId) {
+      router.replace(`/(app)/profiles/contact/${result.contactId}`);
+    } else if (result.candidateContactIds.length > 0) {
+      // Ambiguous: the user already has manual contacts that look like this
+      // person. Send them to the chooser so they can merge or create new.
+      router.replace(`/(app)/friends/link?friendId=${result.friend.id}`);
+    } else {
+      router.replace(`/(app)/profiles/user/${result.friend.id}`);
+    }
   }
 
   async function openScanner() {
@@ -101,14 +112,16 @@ export default function AddFriendScreen() {
     scannedRef.current = true;
     setScanning(false);
     const code = extractFriendCode(data);
-    if (code) {
+    if (code && /^[A-Z0-9]{6,12}$/.test(code)) {
       setFriendCode(code);
       setFriendError('');
+    } else {
+      setFriendError("That QR code doesn't look like a friend invite.");
     }
   }, []);
 
   return (
-    <AppScreen>
+    <AppScreen header={topBar} floatingHeaderOnScroll>
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>Add friend</Text>
         <Text style={styles.title}>Start with the person, then choose the connection type.</Text>
@@ -117,14 +130,14 @@ export default function AddFriendScreen() {
 
       {atLimit && (
         <Pressable
-          onPress={() => unlockFriends()}
+          onPress={() => router.push('/(app)/store')}
           style={[styles.limitBanner, { backgroundColor: colors.accent + '18', borderColor: colors.accent + '40' }]}
         >
           <Ionicons name="lock-closed" size={16} color={colors.accent} />
           <View style={{ flex: 1 }}>
             <Text style={[styles.limitBannerTitle, { color: colors.ink }]}>Friend limit reached</Text>
             <Text style={[styles.limitBannerSub, { color: colors.inkSoft }]}>
-              Unlock unlimited friends for {FRIENDS_UNLOCK_PRICE}
+              Premium unlocks unlimited friends — {PREMIUM_SUBSCRIPTION_PRICE}
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={16} color={colors.accent} />
@@ -200,6 +213,8 @@ export default function AddFriendScreen() {
 
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
+    backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
+    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
     hero: { gap: spacing.sm },
     eyebrow: {
       fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent,

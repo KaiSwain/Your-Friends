@@ -89,6 +89,20 @@ export const seedContacts: Contact[] = [
     nickname: 'Aunt Rosa',
     // Store example facts tied to this private contact.
     facts: ['Prefers handwritten thank-you notes.', 'Always brings apricot jam in summer.'],
+    // Start with no relationship tags in the seed data.
+    tags: [],
+    // Leave the optional note empty.
+    note: null,
+    // Leave the optional card color empty.
+    cardColor: null,
+    // Leave the optional back text empty.
+    backText: null,
+    // Leave the optional profile background empty.
+    profileBg: null,
+    // Keep the contact unpinned by default.
+    pinned: false,
+    // No pin timestamp until the contact is pinned.
+    pinnedAt: null,
     // Store the contact creation timestamp.
     createdAt: '2026-03-14T10:30:00.000Z',
   },
@@ -106,6 +120,20 @@ export const seedContacts: Contact[] = [
     nickname: 'Lin',
     // Store example facts for the linked contact.
     facts: ['Met through design school.', 'Still sends screenshots of moonlit train rides.'],
+    // Start with no relationship tags in the seed data.
+    tags: [],
+    // Leave the optional note empty.
+    note: null,
+    // Leave the optional card color empty.
+    cardColor: null,
+    // Leave the optional back text empty.
+    backText: null,
+    // Leave the optional profile background empty.
+    profileBg: null,
+    // Keep the contact unpinned by default.
+    pinned: false,
+    // No pin timestamp until the contact is pinned.
+    pinnedAt: null,
     // Store the contact creation timestamp.
     createdAt: '2026-03-19T08:10:00.000Z',
   },
@@ -159,6 +187,11 @@ export const seedWallPosts: WallPost[] = [
     body: 'She mentioned she likes the beach more than the mountains.',
     // Leave the image empty because this seed memory has no photo.
     imageUri: null,
+    // Leave the optional styling metadata empty.
+    cardColor: null,
+    backText: null,
+    filter: null,
+    dateStamp: false,
     // Store the creation timestamp.
     createdAt: '2025-11-01T14:20:00.000Z',
   },
@@ -178,6 +211,11 @@ export const seedWallPosts: WallPost[] = [
     body: 'Brought homemade lemon cake to the housewarming. Still the best one I ever had.',
     // Leave the image empty because this seed memory has no photo.
     imageUri: null,
+    // Leave the optional styling metadata empty.
+    cardColor: null,
+    backText: null,
+    filter: null,
+    dateStamp: false,
     // Store the creation timestamp.
     createdAt: '2025-11-28T09:00:00.000Z',
   },
@@ -197,6 +235,11 @@ export const seedWallPosts: WallPost[] = [
     body: 'Always picks the window seat on trains and takes photos of passing stations.',
     // Leave the image empty because this seed memory has no photo.
     imageUri: null,
+    // Leave the optional styling metadata empty.
+    cardColor: null,
+    backText: null,
+    filter: null,
+    dateStamp: false,
     // Store the creation timestamp.
     createdAt: '2026-01-15T17:45:00.000Z',
   },
@@ -216,6 +259,11 @@ export const seedWallPosts: WallPost[] = [
     body: 'Remembers everyone\'s coffee order. Even mine from three years ago.',
     // Leave the image empty because this seed memory has no photo.
     imageUri: null,
+    // Leave the optional styling metadata empty.
+    cardColor: null,
+    backText: null,
+    filter: null,
+    dateStamp: false,
     // Store the creation timestamp.
     createdAt: '2026-02-10T08:30:00.000Z',
   },
@@ -235,6 +283,11 @@ export const seedWallPosts: WallPost[] = [
     body: 'Called right after I had the worst week at work. Didn\'t even have to ask.',
     // Leave the image empty because this seed memory has no photo.
     imageUri: null,
+    // Leave the optional styling metadata empty.
+    cardColor: null,
+    backText: null,
+    filter: null,
+    dateStamp: false,
     // Store the creation timestamp.
     createdAt: '2026-03-05T21:00:00.000Z',
   },
@@ -254,6 +307,11 @@ export const seedWallPosts: WallPost[] = [
     body: 'She always smells like lavender and old paper. Brings apricot jam every July without fail.',
     // Leave the image empty because this seed memory has no photo.
     imageUri: null,
+    // Leave the optional styling metadata empty.
+    cardColor: null,
+    backText: null,
+    filter: null,
+    dateStamp: false,
     // Store the creation timestamp.
     createdAt: '2026-03-18T10:00:00.000Z',
   },

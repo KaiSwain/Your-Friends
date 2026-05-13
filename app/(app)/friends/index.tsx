@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import { Redirect, useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, NativeScrollEvent, NativeSyntheticEvent, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -14,9 +16,12 @@ import { ThemedIcon } from '../../../src/components/ThemedIcon';
 import { FriendsListSkeleton } from '../../../src/components/Skeleton';
 import { WallPostCard } from '../../../src/components/WallPostCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
+import { usePremium } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
+import { showGalleryPaywall } from '../../../src/lib/premiumGates';
+import { showPhotoSourceSheet } from '../../../src/lib/photoSourceSheet';
 import { getCureProgress, CURE_DURATION_MS } from '../../../src/lib/polaroidCure';
 import { supabase } from '../../../src/lib/supabase';
 import type { FontSet } from '../../../src/theme/typography';
@@ -26,9 +31,10 @@ export default function FriendsListScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { currentUser } = useAuth();
-  const { loading, wallPosts, getPeopleListForUser, getUserById, unreadCount, togglePin, notifications, refresh } = useSocialGraph();
+  const { loading, wallPosts, getPeopleListForUser, getUserById, unreadCount, togglePin, notifications, refresh, getPendingFriendLinks } = useSocialGraph();
+  const { isPremium, isUserPremium } = usePremium();
   const [refreshing, setRefreshing] = useState(false);
-  const { colors, fonts } = useTheme();
+  const { colors, fonts, resolvedMode } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -133,10 +139,24 @@ export default function FriendsListScreen() {
 
   const allPeople = currentUser ? getPeopleListForUser(currentUser.id) : [];
 
+  const allPeopleWithPremium = useMemo(
+    () =>
+      allPeople.map((p) => ({
+        ...p,
+        isPremium:
+          p.entityType === 'user'
+            ? isUserPremium(p.id)
+            : p.linkedUserId
+              ? isUserPremium(p.linkedUserId)
+              : false,
+      })),
+    [allPeople, isUserPremium],
+  );
+
   const query = searchQuery.trim().toLowerCase();
   const people = query
-    ? allPeople.filter((p) => p.title.toLowerCase().includes(query))
-    : allPeople;
+    ? allPeopleWithPremium.filter((p) => p.title.toLowerCase().includes(query))
+    : allPeopleWithPremium;
   const activePerson = people[activeIndex] ?? people[0];
 
   const openNoteShortcut = useCallback(() => {
@@ -147,7 +167,7 @@ export default function FriendsListScreen() {
     });
   }, [activePerson, router]);
 
-  const openPolaroidShortcut = useCallback(() => {
+  const openCameraShortcut = useCallback(() => {
     if (!activePerson) return;
     router.push({
       pathname: '/(app)/camera',
@@ -159,6 +179,41 @@ export default function FriendsListScreen() {
       },
     });
   }, [activePerson, router]);
+
+  const openGalleryShortcut = useCallback(async () => {
+    if (!activePerson) return;
+    if (!isPremium) {
+      showGalleryPaywall(() => router.push('/(app)/store'));
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.9,
+    });
+    if (!result.canceled && result.assets[0]?.uri) {
+      router.push({
+        pathname: '/(app)/memories/add',
+        params: {
+          subjectId: activePerson.id,
+          subjectType: activePerson.entityType,
+          capturedUri: result.assets[0].uri,
+          backTo: '/(app)/friends',
+        },
+      });
+    }
+  }, [activePerson, isPremium, router]);
+
+  const openPhotoShortcut = useCallback(() => {
+    if (!activePerson) return;
+    showPhotoSourceSheet({
+      galleryLocked: !isPremium,
+      onCamera: openCameraShortcut,
+      onGallery: openGalleryShortcut,
+    });
+  }, [activePerson, isPremium, openCameraShortcut, openGalleryShortcut]);
 
   const setFloatingTopVisible = useCallback((visible: boolean) => {
     if (floatingTopVisibleRef.current === visible) return;
@@ -223,10 +278,13 @@ export default function FriendsListScreen() {
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
 
+  const pendingLinks = getPendingFriendLinks(currentUser.id);
+
   return (
     <>
     <AppScreen
       contentContainerStyle={styles.screenContent}
+      safeAreaEdges={['left', 'right']}
       onScroll={handleScroll}
       onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }}
       refreshing={refreshing}
@@ -237,6 +295,31 @@ export default function FriendsListScreen() {
         <Text style={styles.title}>Your Friends</Text>
         <Text style={styles.subtitle}>Swipe through the people you keep close.</Text>
       </View>
+
+      {pendingLinks.length > 0 && (
+        <View style={styles.pendingLinksBlock}>
+          {pendingLinks.map(({ friend, candidates }) => (
+            <Pressable
+              key={friend.id}
+              onPress={() => router.push(`/(app)/friends/link?friendId=${friend.id}`)}
+              style={[styles.pendingLinkBanner, { backgroundColor: colors.accent + '18', borderColor: colors.accent + '40' }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Decide how to save ${friend.displayName}`}
+            >
+              <Ionicons name="git-merge-outline" size={18} color={colors.accent} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.pendingLinkTitle, { color: colors.ink }]}>
+                  {friend.displayName} added you
+                </Text>
+                <Text style={[styles.pendingLinkSub, { color: colors.inkSoft }]}>
+                  Match with {candidates.length === 1 ? `your saved ${candidates[0].displayName}` : `one of your ${candidates.length} saved profiles`} or create a new one.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.accent} />
+            </Pressable>
+          ))}
+        </View>
+      )}
 
       <View style={styles.searchBar}>
         <ThemedIcon name="search" size={18} color={colors.inkMuted} />
@@ -275,8 +358,8 @@ export default function FriendsListScreen() {
             onLongPressItem={(item) => {
               if (item.entityType === 'contact') {
                 Alert.alert(
-                  item.pinned ? 'Unpin from #1?' : 'Pin to #1?',
-                  item.pinned ? `${item.title} will no longer be first.` : `${item.title} will appear first in your carousel.`,
+                  item.pinned ? 'Unpin?' : 'Pin to carousel?',
+                  item.pinned ? `${item.title} will leave your pinned group.` : `${item.title} will be added after your other pinned people.`,
                   [
                     { text: 'Cancel', style: 'cancel' },
                     { text: item.pinned ? 'Unpin' : 'Pin', onPress: () => togglePin(item.id) },
@@ -293,7 +376,7 @@ export default function FriendsListScreen() {
 
           <View style={styles.activeMeta}>
             <Text style={styles.activeName} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.6}>{activePerson?.title}</Text>
-            <Text style={styles.activeDescription}>{activePerson?.subtitle}</Text>
+            {activePerson?.subtitle ? <Text style={styles.activeDescription}>{activePerson.subtitle}</Text> : null}
           </View>
 
           <View style={styles.shortcutRow}>
@@ -307,7 +390,7 @@ export default function FriendsListScreen() {
             </Pressable>
 
             <Pressable
-              onPress={openPolaroidShortcut}
+              onPress={openPhotoShortcut}
               style={[styles.shortcutButton, styles.shortcutButtonPrimary]}
               accessibilityRole="button"
               accessibilityLabel={activePerson ? `Add polaroid about ${activePerson.title}` : 'Add polaroid'}
@@ -404,9 +487,24 @@ export default function FriendsListScreen() {
         pointerEvents={showFloatingAddFriend ? 'auto' : 'none'}
         style={[styles.floatingBottomRow, { bottom: Math.max(insets.bottom, spacing.sm) + spacing.sm }, floatingBottomStyle]}
       >
-        <Pressable onPress={() => router.push('/(app)/friends/add')} style={[styles.addButton, styles.floatingAddButton]} accessibilityRole="button" accessibilityLabel="Add friend">
-          <Text style={styles.addButtonLabel}>+ Add Friend</Text>
-        </Pressable>
+        <BlurView intensity={44} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={styles.floatingTabBar}>
+          <View style={styles.floatingTabTint} />
+          <View style={styles.floatingActionRow}>
+            <Pressable onPress={() => router.push('/(app)/calendar')} style={[styles.floatingActionButton, styles.floatingSecondaryButton]} accessibilityRole="button" accessibilityLabel="Open calendar">
+              <Ionicons name="calendar-outline" size={17} color={colors.inkSoft} />
+              <Text style={styles.floatingSecondaryLabel}>Calendar</Text>
+            </Pressable>
+
+            <Pressable onPress={() => router.push('/(app)/friends/add')} style={[styles.addButton, styles.floatingAddButton]} accessibilityRole="button" accessibilityLabel="Add friend">
+              <Text style={styles.addButtonLabel}>+ Add Friend</Text>
+            </Pressable>
+
+            <Pressable onPress={() => router.push('/(app)/profiles/me')} style={[styles.floatingActionButton, styles.floatingSecondaryButton]} accessibilityRole="button" accessibilityLabel="Open my profile">
+              <Ionicons name="person-circle-outline" size={18} color={colors.inkSoft} />
+              <Text style={styles.floatingSecondaryLabel}>Profile</Text>
+            </Pressable>
+          </View>
+        </BlurView>
       </Animated.View>
     </View>
 
@@ -432,6 +530,18 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     heroCopy: { alignItems: 'center', gap: spacing.sm, paddingTop: spacing.md },
     title: { fontFamily: fonts.heading, fontSize: 34, color: colors.ink, textAlign: 'center' },
     subtitle: { fontFamily: fonts.body, fontSize: 14, lineHeight: 20, color: colors.inkSoft, textAlign: 'center' },
+    pendingLinksBlock: { gap: spacing.sm, paddingHorizontal: spacing.md },
+    pendingLinkBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+    },
+    pendingLinkTitle: { fontFamily: fonts.bodyBold, fontSize: 14 },
+    pendingLinkSub: { fontFamily: fonts.body, fontSize: 12, lineHeight: 16 },
     carouselBlock: { alignItems: 'center', gap: spacing.md },
     emptyState: { alignItems: 'center', justifyContent: 'center', gap: spacing.sm, paddingHorizontal: spacing.xl, paddingVertical: spacing.xxl },
     emptyEmoji: { fontSize: 48 },
@@ -514,7 +624,54 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       right: 0,
       alignItems: 'center',
     },
+    floatingTabBar: {
+      borderRadius: 36,
+      overflow: 'hidden',
+      padding: 6,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.line + '88',
+      backgroundColor: colors.paper + '99',
+    },
+    floatingTabTint: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.paper + '88',
+    },
+    floatingActionRow: {
+      position: 'relative',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xs,
+    },
+    floatingActionButton: {
+      height: 46,
+      minWidth: 78,
+      paddingHorizontal: spacing.sm,
+      borderRadius: radius.pill,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 5,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.12,
+      shadowRadius: 16,
+      elevation: 8,
+    },
+    floatingSecondaryButton: {
+      maxWidth: 96,
+    },
+    floatingSecondaryLabel: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 12,
+      color: colors.inkSoft,
+    },
     floatingAddButton: {
+      minHeight: 48,
+      justifyContent: 'center',
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 10 },
       shadowOpacity: 0.16,

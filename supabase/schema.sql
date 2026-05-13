@@ -15,6 +15,7 @@ create table public.profiles ( -- Create the profiles table in the public schema
   avatar_path text, -- Optionally store a path to an uploaded avatar image.
   push_token text, -- Store the Expo push notification token for server-side sends.
   profile_facts text[] not null default '{}', -- Store profile facts as a text array.
+  premium_until timestamptz, -- Store when Premium access expires, including referral rewards.
   created_at timestamptz not null default now() -- Store when the profile row was created.
 ); -- End the profiles table definition.
 
@@ -28,6 +29,117 @@ create policy "Users can insert own profile" -- Name the policy that controls pr
 
 create policy "Users can update own profile" -- Name the policy that controls profile updates.
   on public.profiles for update using (auth.uid() = id); -- Only allow a user to update their own profile row.
+
+-- Referral rewards — one row per referred account.
+create table public.referrals (
+  id uuid primary key default uuid_generate_v4(),
+  referrer_user_id uuid not null references public.profiles(id) on delete cascade,
+  referee_user_id uuid not null references public.profiles(id) on delete cascade,
+  referrer_code_at_signup text not null,
+  reward_days integer not null default 7 check (reward_days > 0),
+  reward_granted_at timestamptz,
+  created_at timestamptz not null default now(),
+  constraint referrals_no_self check (referrer_user_id <> referee_user_id),
+  constraint referrals_unique_referee unique (referee_user_id)
+);
+
+alter table public.referrals enable row level security;
+
+create policy "Users can read own referrals"
+  on public.referrals for select
+  using (auth.uid() = referrer_user_id or auth.uid() = referee_user_id);
+
+create index idx_referrals_referrer on public.referrals(referrer_user_id);
+create index idx_referrals_referee on public.referrals(referee_user_id);
+
+create or replace function public.apply_referral_reward(referee_id uuid, referral_code text)
+returns table (
+  referrer_user_id uuid,
+  referee_premium_until timestamptz,
+  referrer_premium_until timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  normalized_code text := upper(regexp_replace(coalesce(referral_code, ''), '[^a-zA-Z0-9]', '', 'g'));
+  reward_days integer := 7;
+  matched_referrer_id uuid;
+  existing_referral public.referrals%rowtype;
+begin
+  if auth.uid() is null or auth.uid() <> referee_id then
+    raise exception 'Referral reward can only be applied by the referred user.';
+  end if;
+
+  if normalized_code = '' then
+    raise exception 'Referral code is required.';
+  end if;
+
+  select p.id into matched_referrer_id
+  from public.profiles p
+  where p.friend_code = normalized_code;
+
+  if matched_referrer_id is null then
+    raise exception 'Referral code not found.';
+  end if;
+
+  if matched_referrer_id = referee_id then
+    raise exception 'Self-referrals are not allowed.';
+  end if;
+
+  select * into existing_referral
+  from public.referrals r
+  where r.referee_user_id = referee_id;
+
+  if existing_referral.id is not null then
+    if existing_referral.referrer_user_id <> matched_referrer_id then
+      raise exception 'This account already has a referral.';
+    end if;
+
+    select p.premium_until into referee_premium_until
+    from public.profiles p
+    where p.id = referee_id;
+
+    select p.premium_until into referrer_premium_until
+    from public.profiles p
+    where p.id = matched_referrer_id;
+
+    referrer_user_id := matched_referrer_id;
+    return next;
+    return;
+  end if;
+
+  insert into public.referrals (
+    referrer_user_id,
+    referee_user_id,
+    referrer_code_at_signup,
+    reward_days,
+    reward_granted_at
+  ) values (
+    matched_referrer_id,
+    referee_id,
+    normalized_code,
+    reward_days,
+    now()
+  );
+
+  update public.profiles
+  set premium_until = greatest(coalesce(premium_until, now()), now()) + make_interval(days => reward_days)
+  where id = referee_id
+  returning premium_until into referee_premium_until;
+
+  update public.profiles
+  set premium_until = greatest(coalesce(premium_until, now()), now()) + make_interval(days => reward_days)
+  where id = matched_referrer_id
+  returning premium_until into referrer_premium_until;
+
+  referrer_user_id := matched_referrer_id;
+  return next;
+end;
+$$;
+
+grant execute on function public.apply_referral_reward(uuid, text) to authenticated;
 
 -- Mark the start of the private contacts section.
 -- Explain that contacts are private records owned by a single user.
@@ -55,6 +167,85 @@ create policy "Users can manage own contacts" -- Name the policy that controls a
 
 create policy "Linked users can read their contact" -- Let users see the contact card someone else created about them.
   on public.contacts for select using (auth.uid() = linked_user_id);
+
+alter table public.contacts add column if not exists pinned boolean not null default false;
+alter table public.contacts add column if not exists pinned_at timestamptz;
+update public.contacts set pinned_at = created_at where pinned = true and pinned_at is null;
+
+-- Private contact notes — iOS Notes-style private notes owned by one user.
+create table public.contact_private_notes (
+  id uuid primary key default uuid_generate_v4(),
+  owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  contact_id uuid not null references public.contacts(id) on delete cascade,
+  title text not null default 'Untitled note',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.contact_private_notes enable row level security;
+
+create policy "Users can manage own private notes"
+  on public.contact_private_notes for all
+  using (auth.uid() = owner_user_id)
+  with check (auth.uid() = owner_user_id);
+
+create table public.contact_private_note_blocks (
+  id uuid primary key default uuid_generate_v4(),
+  note_id uuid not null references public.contact_private_notes(id) on delete cascade,
+  owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  type text not null check (type in ('text', 'link', 'image')),
+  content text,
+  url text,
+  image_path text,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.contact_private_note_blocks enable row level security;
+
+create policy "Users can manage own private note blocks"
+  on public.contact_private_note_blocks for all
+  using (auth.uid() = owner_user_id)
+  with check (auth.uid() = owner_user_id);
+
+create index idx_private_notes_owner_contact on public.contact_private_notes(owner_user_id, contact_id);
+create index idx_private_notes_updated on public.contact_private_notes(updated_at desc);
+create index idx_private_note_blocks_note_order on public.contact_private_note_blocks(note_id, sort_order);
+
+-- Private note media bucket. Object paths start with the owner's user id:
+-- <owner_user_id>/<note_id>/<filename>.jpg
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'private_notes',
+  'private_notes',
+  false,
+  10485760,
+  array['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
+)
+on conflict (id) do update set public = false;
+
+drop policy if exists "Users can read own private note media" on storage.objects;
+drop policy if exists "Users can upload own private note media" on storage.objects;
+drop policy if exists "Users can update own private note media" on storage.objects;
+drop policy if exists "Users can delete own private note media" on storage.objects;
+
+create policy "Users can read own private note media"
+  on storage.objects for select to authenticated
+  using (bucket_id = 'private_notes' and (storage.foldername(name))[1] = auth.uid()::text);
+
+create policy "Users can upload own private note media"
+  on storage.objects for insert to authenticated
+  with check (bucket_id = 'private_notes' and (storage.foldername(name))[1] = auth.uid()::text);
+
+create policy "Users can update own private note media"
+  on storage.objects for update to authenticated
+  using (bucket_id = 'private_notes' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'private_notes' and (storage.foldername(name))[1] = auth.uid()::text);
+
+create policy "Users can delete own private note media"
+  on storage.objects for delete to authenticated
+  using (bucket_id = 'private_notes' and (storage.foldername(name))[1] = auth.uid()::text);
 
 -- Mark the start of the friendships section.
 -- Explain that friendships are stored in canonical user-ID order.
@@ -123,6 +314,38 @@ create policy "Subjects can read posts about linked contacts" -- Let users see p
     )
   );
 
+-- Calendar events — Premium-created dates owned by one user.
+create table public.calendar_events (
+  id uuid primary key default uuid_generate_v4(),
+  owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  subject_user_id uuid references public.profiles(id) on delete cascade,
+  subject_contact_id uuid references public.contacts(id) on delete cascade,
+  event_type text not null check (event_type in ('birthday', 'anniversary', 'custom')),
+  title text not null,
+  event_date date not null,
+  event_time time,
+  all_day boolean not null default true,
+  recurrence text not null default 'none' check (recurrence in ('none', 'yearly', 'monthly')),
+  reminder_offsets integer[] not null default '{}',
+  completed_occurrence_keys text[] not null default '{}',
+  note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint calendar_events_subject_exclusive check (
+    subject_user_id is null or subject_contact_id is null
+  ),
+  constraint calendar_events_reminders_supported check (
+    reminder_offsets <@ array[0, 1, 7]
+  )
+);
+
+alter table public.calendar_events enable row level security;
+
+create policy "Users can manage own calendar events"
+  on public.calendar_events for all
+  using (auth.uid() = owner_user_id)
+  with check (auth.uid() = owner_user_id);
+
 -- Mark the storage section for memory images.
 -- Tell the reader to create the bucket manually in the dashboard.
 
@@ -135,6 +358,9 @@ create index idx_wall_posts_subject_user on public.wall_posts(subject_user_id); 
 create index idx_wall_posts_subject_contact on public.wall_posts(subject_contact_id); -- Speed up wall-post lookups by subject contact.
 create index idx_wall_posts_author on public.wall_posts(author_user_id); -- Speed up wall-post lookups by author.
 create index idx_profiles_friend_code on public.profiles(friend_code); -- Speed up friend-code lookup queries.
+create index idx_calendar_events_owner_date on public.calendar_events(owner_user_id, event_date);
+create index idx_calendar_events_subject_user on public.calendar_events(subject_user_id);
+create index idx_calendar_events_subject_contact on public.calendar_events(subject_contact_id);
 
 -- Mark the start of the friend_facts section.
 -- Explain that friend_facts stores per-viewer notes about a friend (not the friend's own profile facts).
@@ -184,6 +410,7 @@ create policy "Authenticated users can insert notifications"
 create index idx_notifications_recipient on public.notifications(recipient_user_id);
 
 -- Migrations: add columns that were added after initial table creation.
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS premium_until timestamptz;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS date_stamp boolean not null default false;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS filter text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS back_text text;
@@ -191,4 +418,7 @@ ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS back_text text;
 -- Enable realtime on wall_posts and contacts so clients receive live updates.
 alter publication supabase_realtime add table public.wall_posts;
 alter publication supabase_realtime add table public.contacts;
+alter publication supabase_realtime add table public.contact_private_notes;
+alter publication supabase_realtime add table public.contact_private_note_blocks;
 alter publication supabase_realtime add table public.notifications;
+alter publication supabase_realtime add table public.calendar_events;

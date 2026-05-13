@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import { Animated, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent, Platform, RefreshControl, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets, type Edge } from 'react-native-safe-area-context';
 
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
@@ -19,13 +19,20 @@ interface AppScreenProps {
   stickyHeaderIndices?: number[];
   onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   floatingHeaderOnScroll?: boolean;
+  safeAreaEdges?: Edge[];
 }
 
-export function AppScreen({ children, contentContainerStyle, footer, gradientColors, header, scroll = true, onRefresh, refreshing = false, stickyHeaderIndices, onScroll, floatingHeaderOnScroll = false }: AppScreenProps) {
+const EDGE_TO_EDGE_SAFE_AREA_EDGES: Edge[] = ['left', 'right'];
+
+export function AppScreen({ children, contentContainerStyle, footer, gradientColors, header, scroll = true, onRefresh, refreshing = false, stickyHeaderIndices, onScroll, floatingHeaderOnScroll = false, safeAreaEdges = EDGE_TO_EDGE_SAFE_AREA_EDGES }: AppScreenProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const resolvedGradientColors = (gradientColors ?? [colors.canvas, colors.canvasAlt, colors.canvas]) as readonly [string, string, ...string[]];
+  const hasTopSafeArea = safeAreaEdges.includes('top');
+  const hasBottomSafeArea = safeAreaEdges.includes('bottom');
+  const topInset = hasTopSafeArea ? 0 : insets.top;
+  const bottomInset = hasBottomSafeArea ? 0 : insets.bottom;
   const headerAnim = useRef(new Animated.Value(1)).current;
   const headerVisibleRef = useRef(true);
   const lastScrollOffsetRef = useRef(0);
@@ -76,8 +83,10 @@ export function AppScreen({ children, contentContainerStyle, footer, gradientCol
   );
 
   const floatingHeaderPaddingTop = floatingHeaderOnScroll && header
-    ? (headerHeight > 0 ? headerHeight + spacing.sm : 72)
+    ? topInset + (headerHeight > 0 ? headerHeight + spacing.sm : 72)
     : undefined;
+  const contentPaddingTop = !header ? topInset + spacing.md : undefined;
+  const contentPaddingBottom = bottomInset + spacing.xxl;
 
   const body = scroll ? (
     <ScrollView
@@ -86,7 +95,7 @@ export function AppScreen({ children, contentContainerStyle, footer, gradientCol
       stickyHeaderIndices={stickyHeaderIndices}
       onScroll={handleScroll}
       scrollEventThrottle={16}
-      contentContainerStyle={[styles.scrollContent, floatingHeaderPaddingTop ? { paddingTop: floatingHeaderPaddingTop } : undefined, contentContainerStyle]}
+      contentContainerStyle={[styles.scrollContent, { paddingBottom: contentPaddingBottom }, contentPaddingTop ? { paddingTop: contentPaddingTop } : undefined, floatingHeaderPaddingTop ? { paddingTop: floatingHeaderPaddingTop } : undefined, contentContainerStyle]}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       automaticallyAdjustKeyboardInsets
@@ -99,12 +108,12 @@ export function AppScreen({ children, contentContainerStyle, footer, gradientCol
       {children}
     </ScrollView>
   ) : (
-    <View style={[styles.body, styles.staticContent, floatingHeaderPaddingTop ? { paddingTop: floatingHeaderPaddingTop } : undefined, contentContainerStyle]}>{children}</View>
+    <View style={[styles.body, styles.staticContent, { paddingBottom: contentPaddingBottom }, contentPaddingTop ? { paddingTop: contentPaddingTop } : undefined, floatingHeaderPaddingTop ? { paddingTop: floatingHeaderPaddingTop } : undefined, contentContainerStyle]}>{children}</View>
   );
 
   return (
     <LinearGradient colors={resolvedGradientColors} style={styles.gradient}>
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={styles.safeArea} edges={safeAreaEdges}>
         {header ? (
           floatingHeaderOnScroll ? (
             <Animated.View
@@ -113,12 +122,12 @@ export function AppScreen({ children, contentContainerStyle, footer, gradientCol
                 const nextHeight = event.nativeEvent.layout.height;
                 if (nextHeight > 0 && nextHeight !== headerHeight) setHeaderHeight(nextHeight);
               }}
-              style={[styles.floatingHeader, { top: insets.top }, floatingHeaderStyle]}
+              style={[styles.floatingHeader, { top: topInset }, floatingHeaderStyle]}
             >
               {header}
             </Animated.View>
           ) : (
-            <View style={styles.header}>{header}</View>
+            <View style={[styles.header, { paddingTop: topInset + spacing.md }]}>{header}</View>
           )
         ) : null}
         <KeyboardAvoidingView
@@ -127,7 +136,7 @@ export function AppScreen({ children, contentContainerStyle, footer, gradientCol
           keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
         >
           {body}
-          {footer ? <View style={styles.footer}>{footer}</View> : null}
+          {footer ? <View style={[styles.footer, { paddingBottom: bottomInset + spacing.lg }]}>{footer}</View> : null}
         </KeyboardAvoidingView>
       </SafeAreaView>
     </LinearGradient>

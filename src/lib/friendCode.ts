@@ -7,6 +7,21 @@ export function normalizeFriendCode(value: string) {
   return value.replace(/[^a-z0-9]/gi, '').toUpperCase();
 } // End normalizeFriendCode after returning the cleaned code.
 
+// Reserved route segments that must never be treated as a friend code if they
+// show up as the path of a deep link (e.g. `yourfriends://add-friend` on cold
+// start — without this guard `normalizeFriendCode` would happily return
+// "ADDFRIEND" and pop the add-friend modal with a bogus auto-filled code).
+const RESERVED_DEEP_LINK_PATHS = new Set([
+  'add-friend',
+  'addfriend',
+  'add',
+  'friend',
+  'friends',
+  'invite',
+  'notifications',
+  'home',
+]);
+
 // Extract a friend code from plain text, QR payloads, or shareable deep links.
 export function extractFriendCode(value: string) {
   const trimmed = value.trim();
@@ -17,12 +32,31 @@ export function extractFriendCode(value: string) {
     return normalizeFriendCode(decodeURIComponent(queryMatch[1]));
   }
 
-  const withoutScheme = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^\/+/, '');
-  const pathParts = withoutScheme.split(/[/?#]/).filter(Boolean);
-  if (pathParts.length === 1) {
-    return normalizeFriendCode(pathParts[0]);
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+  if (hasScheme) {
+    // For URLs we will only treat a single path segment as a friend code, and
+    // we ignore reserved route names. Anything else (Expo dev URLs, push
+    // notification deep links, malformed shares) returns empty so the deep
+    // link handler does nothing.
+    const withoutScheme = trimmed
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+      .replace(/^\/+/, '');
+    const pathParts = withoutScheme.split(/[/?#]/).filter(Boolean);
+    // A real friend-code segment is alphanumeric (with optional dashes for
+    // human-friendly formatting). Reject anything containing dots or colons,
+    // which are typical of host:port or IP addresses (e.g. the Expo dev
+    // launch URL `exp://192.168.1.50:8081`).
+    if (
+      pathParts.length === 1 &&
+      !RESERVED_DEEP_LINK_PATHS.has(pathParts[0].toLowerCase()) &&
+      /^[A-Za-z0-9-]+$/.test(pathParts[0])
+    ) {
+      return normalizeFriendCode(pathParts[0]);
+    }
+    return '';
   }
 
+  // Plain typed text or pasted code — strip non-alphanumerics and uppercase.
   return normalizeFriendCode(trimmed);
 } // End extractFriendCode after returning the best available code candidate.
 

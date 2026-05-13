@@ -39,7 +39,7 @@ export default function SignInScreen() {
       setError('');
       signInWithGoogle(idToken).then((result) => {
         if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
-        router.replace('/(app)/friends');
+        router.replace('/');
       });
     }
   }, [googleResponse]);
@@ -49,7 +49,7 @@ export default function SignInScreen() {
     setError('');
     const result = await signIn(email, password);
     if (!result.ok) { setError(result.error); setBusy(false); return; }
-    router.replace('/(app)/friends');
+    router.replace('/');
   }
 
   async function handleApple() {
@@ -57,7 +57,7 @@ export default function SignInScreen() {
     setError('');
     const result = await signInWithApple();
     if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
-    router.replace('/(app)/friends');
+    router.replace('/');
   }
 
   async function handleGoogle() {

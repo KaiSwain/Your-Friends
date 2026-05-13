@@ -1,162 +1,275 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
+import { useAuth } from '../auth/AuthContext';
 import { themeNames, type ThemeName } from '../theme/themes';
+import {
+  applyReferralRewardForUser,
+  clearIncomingReferralCode,
+  getPremiumDaysRemaining,
+  isPremiumUntilActive,
+  peekIncomingReferralCode,
+  premiumUntilKey,
+  readLocalPremiumUntil,
+  REFERRAL_REWARD_DAYS,
+  REFERRAL_REWARD_LABEL,
+  referralRewardCountKey,
+  referrerCodeKey,
+  setLocalPremiumUntil,
+  subscribedKey,
+} from '../../lib/referrals';
+import { supabase } from '../../lib/supabase';
 
-const STORAGE_KEY_THEMES = 'yourfriends:purchasedThemes';
-const STORAGE_KEY_FRIENDS = 'yourfriends:friendsUnlocked';
-// Legacy key — if present with value 'true', migrate to full unlock for back-compat.
-const STORAGE_KEY_LEGACY = 'yourfriends:premium';
+const friendBoostKey = (userId: string) => `yourfriends:premium:friendBoost:${userId}`;
+
+const LEGACY_GLOBAL_KEYS = [
+  'yourfriends:purchasedThemes',
+  'yourfriends:friendsUnlocked',
+  'yourfriends:premium',
+  'yourfriends:premium:giftedThemes',
+];
 
 export const FREE_FRIEND_LIMIT = 12;
+export const PREMIUM_SUBSCRIPTION_PRICE = '$14.99 / 3 months';
+export { REFERRAL_REWARD_DAYS, REFERRAL_REWARD_LABEL };
 
-// The 'default' theme is always free.
 const FREE_THEMES: ReadonlySet<ThemeName> = new Set<ThemeName>(['default']);
 
-/** Price per theme (display only — not a real IAP). */
-export const THEME_PRICE = '$0.99';
-/** Price for the unlimited-friends unlock. */
-export const FRIENDS_UNLOCK_PRICE = '$2.99';
-
 interface PremiumContextValue {
-  /** Set of theme keys the user has unlocked (always includes free themes). */
-  purchasedThemes: ThemeName[];
-  /** Whether the user has unlocked unlimited friends. */
-  friendsUnlocked: boolean;
-  /** True if the user owns every paid theme and the friends unlock. */
   isPremium: boolean;
-  /** Check if a specific theme is available to the user. */
+  premiumUntil: string | null;
+  premiumDaysRemaining: number;
+  premiumFriendIds: ReadonlySet<string>;
+  isUserPremium: (userId: string | null | undefined) => boolean;
+  purchasedThemes: ThemeName[];
+  friendsUnlocked: boolean;
   hasTheme: (name: ThemeName) => boolean;
-  /** Simulate buying a single theme. */
-  purchaseTheme: (name: ThemeName) => Promise<void>;
-  /** Simulate buying the unlimited-friends unlock. */
-  unlockFriends: () => Promise<void>;
-  /** Restore all purchases from storage. */
-  restore: () => Promise<void>;
-  /**
-   * Legacy "unlock everything" purchase kept so older code paths keep working.
-   * Grants every theme and the friends unlock.
-   */
   purchase: () => Promise<void>;
+  cancelSubscription: () => Promise<void>;
+  recheckPremiumFriends: (friendUserIds: readonly string[]) => Promise<void>;
+  restore: () => Promise<void>;
+  referralRewardCount: number;
+  referrerCode: string | null;
+  pendingReferralCode: string | null;
+  applyReferralCode: (code: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const PremiumContext = createContext<PremiumContextValue | undefined>(undefined);
 
-function normalizeThemes(list: string[] | null | undefined): ThemeName[] {
-  const valid = new Set<ThemeName>(themeNames);
-  const out = new Set<ThemeName>(FREE_THEMES);
-  for (const t of list ?? []) {
-    if (valid.has(t as ThemeName)) out.add(t as ThemeName);
-  }
-  return Array.from(out);
-}
-
 export function PremiumProvider({ children }: { children: React.ReactNode }) {
-  // For local testing every unlock is granted by default. Storage values override this
-  // after mount when present, but startup should not block on reading or writing storage.
-  const [purchasedThemes, setPurchasedThemes] = useState<ThemeName[]>(() => [...themeNames]);
-  const [friendsUnlocked, setFriendsUnlocked] = useState(true);
+  const { currentUser } = useAuth();
+  const userId = currentUser?.id ?? null;
+  const ownFriendCode = currentUser?.friendCode ?? null;
+  const profilePremiumUntil = currentUser?.premiumUntil ?? null;
+
+  const [premiumUntil, setPremiumUntil] = useState<string | null>(null);
+  const [premiumFriendIds, setPremiumFriendIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [referralRewardCount, setReferralRewardCount] = useState(0);
+  const [referrerCode, setReferrerCode] = useState<string | null>(null);
+  const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const [rawThemes, rawFriends] = await Promise.all([
-          AsyncStorage.getItem(STORAGE_KEY_THEMES),
-          AsyncStorage.getItem(STORAGE_KEY_FRIENDS),
-        ]);
+    AsyncStorage.multiRemove(LEGACY_GLOBAL_KEYS).catch(() => {});
+  }, []);
 
-        if (rawThemes) {
-          try {
-            const parsed = JSON.parse(rawThemes);
-            if (Array.isArray(parsed)) setPurchasedThemes(normalizeThemes(parsed));
-          } catch {
-            // Ignore malformed storage value.
-          }
+  const refreshIncomingReferralCode = useCallback(async () => {
+    try {
+      const code = await peekIncomingReferralCode();
+      setPendingReferralCode(code);
+      return code;
+    } catch {
+      setPendingReferralCode(null);
+      return null;
+    }
+  }, []);
+
+  const loadPremiumState = useCallback(async () => {
+    if (!userId) return;
+    try {
+      AsyncStorage.removeItem(friendBoostKey(userId)).catch(() => {});
+      const [rawSub, rawUntil, rawRewardCount, rawReferrer] = await Promise.all([
+        AsyncStorage.getItem(subscribedKey(userId)),
+        readLocalPremiumUntil(userId),
+        AsyncStorage.getItem(referralRewardCountKey(userId)),
+        AsyncStorage.getItem(referrerCodeKey(userId)),
+      ]);
+      const activeUntil = isPremiumUntilActive(profilePremiumUntil)
+        ? profilePremiumUntil
+        : isPremiumUntilActive(rawUntil)
+          ? rawUntil
+          : rawSub === 'true'
+            ? '9999-12-31T23:59:59.999Z'
+            : null;
+      setPremiumUntil(activeUntil);
+      if (activeUntil) {
+        setLocalPremiumUntil(userId, activeUntil).catch(() => {});
+        if (!isPremiumUntilActive(profilePremiumUntil)) {
+          supabase.from('profiles').update({ premium_until: activeUntil }).eq('id', userId).then(() => undefined, () => undefined);
         }
-
-        if (rawFriends != null) setFriendsUnlocked(rawFriends === 'true');
-      } catch {
-        // Ignore storage errors and keep defaults.
       }
-    })();
-  }, []);
-
-  const persistThemes = useCallback(async (next: ThemeName[]) => {
-    setPurchasedThemes(next);
-    try {
-      await AsyncStorage.setItem(STORAGE_KEY_THEMES, JSON.stringify(next));
+      setReferralRewardCount(rawRewardCount ? Number(rawRewardCount) || 0 : 0);
+      setReferrerCode(rawReferrer ?? null);
+      await refreshIncomingReferralCode();
     } catch {
-      // Ignore storage errors.
+      // Ignore storage errors and keep defaults.
     }
-  }, []);
+  }, [userId, profilePremiumUntil, refreshIncomingReferralCode]);
 
-  const purchaseTheme = useCallback(async (name: ThemeName) => {
-    // TODO: Replace with real IAP via RevenueCat or expo-iap.
-    setPurchasedThemes((prev) => {
-      if (prev.includes(name)) return prev;
-      const next = normalizeThemes([...prev, name]);
-      AsyncStorage.setItem(STORAGE_KEY_THEMES, JSON.stringify(next)).catch(() => {});
-      return next;
-    });
-  }, []);
-
-  const unlockFriends = useCallback(async () => {
-    // TODO: Replace with real IAP via RevenueCat or expo-iap.
-    setFriendsUnlocked(true);
-    try {
-      await AsyncStorage.setItem(STORAGE_KEY_FRIENDS, 'true');
-    } catch {
-      // Ignore storage errors.
+  useEffect(() => {
+    setPremiumUntil(null);
+    setPremiumFriendIds(new Set());
+    setReferralRewardCount(0);
+    setReferrerCode(null);
+    setPendingReferralCode(null);
+    if (!userId) {
+      refreshIncomingReferralCode();
+      return;
     }
-  }, []);
+
+    loadPremiumState();
+  }, [userId, loadPremiumState, refreshIncomingReferralCode]);
 
   const purchase = useCallback(async () => {
-    await persistThemes([...themeNames]);
-    await unlockFriends();
-  }, [persistThemes, unlockFriends]);
-
-  const restore = useCallback(async () => {
+    if (!userId) return;
+    const until = '9999-12-31T23:59:59.999Z';
+    setPremiumUntil(until);
     try {
-      const [rawThemes, rawFriends] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEY_THEMES),
-        AsyncStorage.getItem(STORAGE_KEY_FRIENDS),
+      await Promise.all([
+        AsyncStorage.setItem(subscribedKey(userId), 'true'),
+        setLocalPremiumUntil(userId, until),
+        supabase.from('profiles').update({ premium_until: until }).eq('id', userId),
       ]);
-      if (rawThemes) {
-        try {
-          const parsed = JSON.parse(rawThemes);
-          if (Array.isArray(parsed)) setPurchasedThemes(normalizeThemes(parsed));
-        } catch {
-          // Ignore malformed storage value.
-        }
-      }
-      if (rawFriends != null) setFriendsUnlocked(rawFriends === 'true');
     } catch {
       // Ignore storage errors.
     }
-  }, []);
+  }, [userId]);
 
-  const hasTheme = useCallback(
-    (name: ThemeName) => FREE_THEMES.has(name) || purchasedThemes.includes(name),
-    [purchasedThemes],
+  const cancelSubscription = useCallback(async () => {
+    setPremiumUntil(null);
+    if (!userId) return;
+    try {
+      await Promise.all([
+        AsyncStorage.removeItem(subscribedKey(userId)),
+        AsyncStorage.removeItem(premiumUntilKey(userId)),
+        supabase.from('profiles').update({ premium_until: null }).eq('id', userId),
+      ]);
+    } catch {
+      // Ignore storage errors.
+    }
+  }, [userId]);
+
+  const restore = useCallback(async () => {
+    await loadPremiumState();
+  }, [loadPremiumState]);
+
+  const recheckPremiumFriends = useCallback<PremiumContextValue['recheckPremiumFriends']>(
+    async (friendUserIds) => {
+      if (!userId) return;
+      const premiumIds = new Set<string>();
+      try {
+        if (friendUserIds.length > 0) {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('id, premium_until')
+            .in('id', [...friendUserIds]);
+          if (!error && data) {
+            for (const row of data) {
+              if (isPremiumUntilActive(row.premium_until)) premiumIds.add(row.id);
+            }
+          }
+        }
+        for (const friendUserId of friendUserIds) {
+          if (!friendUserId) continue;
+          const [rawSub, rawUntil] = await Promise.all([
+            AsyncStorage.getItem(subscribedKey(friendUserId)),
+            readLocalPremiumUntil(friendUserId),
+          ]);
+          if (rawSub === 'true' || isPremiumUntilActive(rawUntil)) premiumIds.add(friendUserId);
+        }
+      } catch {
+        // Treat read failures as "no premium friends" rather than crashing.
+      }
+      setPremiumFriendIds(premiumIds);
+    },
+    [userId],
   );
 
-  const isPremium = useMemo(
-    () => friendsUnlocked && themeNames.every((n) => FREE_THEMES.has(n) || purchasedThemes.includes(n)),
-    [purchasedThemes, friendsUnlocked],
+  const applyReferralCode = useCallback<PremiumContextValue['applyReferralCode']>(
+    async (rawCode) => {
+      if (!userId || !ownFriendCode) return { ok: false, error: 'Sign in first.' };
+      const result = await applyReferralRewardForUser({
+        refereeUserId: userId,
+        refereeFriendCode: ownFriendCode,
+        referrerCode: rawCode,
+      });
+      if (!result.ok) return result;
+      setPremiumUntil(result.refereePremiumUntil);
+      setReferrerCode(result.code);
+      setPendingReferralCode(null);
+      await clearIncomingReferralCode().catch(() => {});
+      return { ok: true };
+    },
+    [userId, ownFriendCode],
+  );
+
+  const isPremium = isPremiumUntilActive(premiumUntil);
+  const premiumDaysRemaining = getPremiumDaysRemaining(premiumUntil);
+
+  const purchasedThemes = useMemo<ThemeName[]>(() => {
+    if (isPremium) return [...themeNames];
+    return Array.from(FREE_THEMES);
+  }, [isPremium]);
+
+  const hasTheme = useCallback(
+    (name: ThemeName) => isPremium || FREE_THEMES.has(name),
+    [isPremium],
+  );
+
+  const isUserPremium = useCallback(
+    (id: string | null | undefined) => {
+      if (!id) return false;
+      if (id === userId) return isPremium;
+      return premiumFriendIds.has(id);
+    },
+    [userId, isPremium, premiumFriendIds],
   );
 
   const value = useMemo<PremiumContextValue>(
     () => ({
-      purchasedThemes,
-      friendsUnlocked,
       isPremium,
+      premiumUntil,
+      premiumDaysRemaining,
+      premiumFriendIds,
+      isUserPremium,
+      purchasedThemes,
+      friendsUnlocked: isPremium,
       hasTheme,
-      purchaseTheme,
-      unlockFriends,
-      restore,
       purchase,
+      cancelSubscription,
+      recheckPremiumFriends,
+      restore,
+      referralRewardCount,
+      referrerCode,
+      pendingReferralCode,
+      applyReferralCode,
     }),
-    [purchasedThemes, friendsUnlocked, isPremium, hasTheme, purchaseTheme, unlockFriends, restore, purchase],
+    [
+      isPremium,
+      premiumUntil,
+      premiumDaysRemaining,
+      premiumFriendIds,
+      isUserPremium,
+      purchasedThemes,
+      hasTheme,
+      purchase,
+      cancelSubscription,
+      recheckPremiumFriends,
+      restore,
+      referralRewardCount,
+      referrerCode,
+      pendingReferralCode,
+      applyReferralCode,
+    ],
   );
 
   return <PremiumContext.Provider value={value}>{children}</PremiumContext.Provider>;

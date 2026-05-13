@@ -7,13 +7,20 @@ import { PlayfairDisplay_600SemiBold } from '@expo-google-fonts/playfair-display
 import { SpaceGrotesk_500Medium } from '@expo-google-fonts/space-grotesk';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useFonts } from 'expo-font';
+import * as Linking from 'expo-linking';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AuthProvider } from '../src/features/auth/AuthContext';
+import { OnboardingProvider } from '../src/features/onboarding/OnboardingContext';
+import { PremiumProvider } from '../src/features/premium/PremiumContext';
 import { ThemeProvider, useTheme } from '../src/features/theme/ThemeContext';
+import { initializeMobileAds } from '../src/lib/initializeMobileAds';
 import { asyncStoragePersister, queryClient } from '../src/lib/queryClient';
+import { extractFriendCode } from '../src/lib/friendCode';
+import { storeIncomingReferralCode } from '../src/lib/referrals';
 import { colors as fallbackColors } from '../src/theme/tokens';
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
@@ -57,6 +64,10 @@ export default function RootLayout() {
     SpaceGrotesk_500Medium,
   });
 
+  useEffect(() => {
+    initializeMobileAds();
+  }, []);
+
   if (!fontsLoaded) {
     return (
       <View style={styles.loadingScreen}>
@@ -69,7 +80,11 @@ export default function RootLayout() {
     <PersistQueryClientProvider client={queryClient} persistOptions={{ persister: asyncStoragePersister }}>
       <ThemeProvider>
         <AuthProvider>
-          <ThemedStack />
+          <OnboardingProvider>
+            <PremiumProvider>
+              <ThemedStack />
+            </PremiumProvider>
+          </OnboardingProvider>
         </AuthProvider>
       </ThemeProvider>
     </PersistQueryClientProvider>
@@ -81,7 +96,8 @@ function ThemedStack() {
 
   return (
     <>
-      <StatusBar style={resolvedMode === 'dark' ? 'light' : 'dark'} />
+      <ReferralLinkCapture />
+      <StatusBar style={resolvedMode === 'dark' ? 'light' : 'dark'} translucent backgroundColor="transparent" />
       <Stack
         screenOptions={{
           headerShown: false,
@@ -91,10 +107,31 @@ function ThemedStack() {
       >
         <Stack.Screen name="index" />
         <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(onboarding)" />
         <Stack.Screen name="(app)" />
       </Stack>
     </>
   );
+}
+
+function ReferralLinkCapture() {
+  useEffect(() => {
+    function captureReferralCode(event: { url: string | null }) {
+      const url = event.url ?? '';
+      const looksLikeInvite = /[?&]code=/i.test(url) || /\/add-friend(?:[/?#]|$)/i.test(url);
+      if (!looksLikeInvite) return;
+      const code = extractFriendCode(url);
+      if (code && /^[A-Z0-9]{6,12}$/.test(code)) {
+        storeIncomingReferralCode(code).catch(() => {});
+      }
+    }
+
+    const sub = Linking.addEventListener('url', captureReferralCode);
+    Linking.getInitialURL().then((url) => captureReferralCode({ url }));
+    return () => sub.remove();
+  }, []);
+
+  return null;
 }
 
 const styles = StyleSheet.create({

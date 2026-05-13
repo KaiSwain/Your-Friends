@@ -6,7 +6,8 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 
 import { supabase } from '../../lib/supabase';
 import { AppUser } from '../../types/domain';
-import { createFriendCode } from '../../lib/friendCode';
+import { createFriendCode, normalizeFriendCode } from '../../lib/friendCode';
+import { applyReferralRewardForUser, clearIncomingReferralCode, consumeIncomingReferralCode } from '../../lib/referrals';
 import { accentPalette } from '../../theme/tokens';
 
 // Describe the full shape of the auth context that screens and components will consume.
@@ -29,10 +30,12 @@ interface AuthContextValue {
     email: string,
     // Accept the password entered by the user.
     password: string,
+    // Optionally accept a referral code collected from a share link or typed manually.
+    referralCode?: string,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   updateProfile: (updates: { displayName?: string; avatarLocalUri?: string | null; profileFacts?: string[] }) => Promise<void>;
-  signInWithApple: () => Promise<{ ok: true } | { ok: false; error: string }>;
-  signInWithGoogle: (idToken: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  signInWithApple: (referralCode?: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  signInWithGoogle: (idToken: string, referralCode?: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 } // End the AuthContextValue interface.
 
 // Create the auth context with a null default so missing providers fail fast.
@@ -117,6 +120,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         profileFacts: data.profile_facts ?? [],
         // Copy the creation timestamp as-is.
         createdAt: data.created_at,
+        // Copy Premium expiry when the backend schema includes referral rewards.
+        premiumUntil: data.premium_until ?? null,
       });
     } // End the profile mapping branch.
 
@@ -157,12 +162,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   } // End signIn after returning either success or failure.
 
   // Create a new auth account and a matching profile row.
-  async function signUp(displayName: string, email: string, password: string) {
+  async function signUp(displayName: string, email: string, password: string, referralCode?: string) {
     // Reject incomplete form input before sending anything to Supabase.
-    if (!displayName.trim() || !email.trim() || !password.trim()) {
+    if (!email.trim() || !password.trim()) {
       // Return a readable validation error that the sign-up screen can show.
-      return { ok: false as const, error: 'Fill in your name, email, and password.' };
+      return { ok: false as const, error: 'Fill in your email and password.' };
     }
+    // Display name is optional at sign-up time — the onboarding flow collects it.
+    // Fall back to the email local-part so the row is never empty.
+    const resolvedDisplayName = displayName.trim() || email.trim().toLowerCase().split('@')[0] || 'friend';
+
+    const referralCheck = await validateManualReferralCode(referralCode);
+    if (!referralCheck.ok) return referralCheck;
 
     // Ask Supabase Auth to create a new auth account for this email and password.
     const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -196,7 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Store the normalized email address on the profile row too.
       email: email.trim().toLowerCase(),
       // Store the trimmed display name.
-      display_name: displayName.trim(),
+      display_name: resolvedDisplayName,
       // Store the generated friend code.
       friend_code: friendCode,
       // Pick an accent color from the shared palette using the derived color index.
@@ -210,6 +221,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Return the database error in the same result shape used elsewhere.
       return { ok: false as const, error: profileError.message };
     }
+
+    const referralResult = await applyReferralForNewProfile(authData.user.id, friendCode, referralCode);
+    if (!referralResult.ok) return referralResult;
 
     // Load the newly created profile into context state so the app is ready immediately.
     await fetchProfile(authData.user.id);
@@ -257,7 +271,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  async function ensureProfile(userId: string, email: string, displayName?: string) {
+  async function validateManualReferralCode(referralCode?: string) {
+    const code = normalizeFriendCode(referralCode ?? '');
+    if (!code) return { ok: true as const };
+    const { data, error } = await supabase.from('profiles').select('id').eq('friend_code', code).maybeSingle();
+    if (error || !data?.id) return { ok: false as const, error: 'Referral code not found.' };
+    return { ok: true as const };
+  }
+
+  async function applyReferralForNewProfile(userId: string, friendCode: string, referralCode?: string) {
+    const manualCode = normalizeFriendCode(referralCode ?? '');
+    const code = manualCode || await consumeIncomingReferralCode();
+    if (!code) return { ok: true as const };
+
+    const result = await applyReferralRewardForUser({
+      refereeUserId: userId,
+      refereeFriendCode: friendCode,
+      referrerCode: code,
+    });
+    if (result.ok) {
+      await clearIncomingReferralCode().catch(() => {});
+      return { ok: true as const };
+    }
+    if (!manualCode) await clearIncomingReferralCode().catch(() => {});
+    return manualCode ? { ok: false as const, error: result.error ?? 'Could not apply referral code.' } : { ok: true as const };
+  }
+
+  async function ensureProfile(userId: string, email: string, displayName?: string, referralCode?: string) {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
     if (data) {
       await fetchProfile(userId);
@@ -273,11 +313,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       avatar_color: accentPalette[colorIndex % accentPalette.length],
       profile_facts: [],
     });
+    await applyReferralForNewProfile(userId, friendCode, referralCode);
     await fetchProfile(userId);
   }
 
-  async function signInWithApple(): Promise<{ ok: true } | { ok: false; error: string }> {
+  async function signInWithApple(referralCode?: string): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
+      const referralCheck = await validateManualReferralCode(referralCode);
+      if (!referralCheck.ok) return referralCheck;
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
           AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
@@ -297,7 +340,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const name = credential.fullName
         ? [credential.fullName.givenName, credential.fullName.familyName].filter(Boolean).join(' ')
         : undefined;
-      await ensureProfile(data.user.id, data.user.email ?? '', name);
+      await ensureProfile(data.user.id, data.user.email ?? '', name, referralCode);
       return { ok: true };
     } catch (e: any) {
       if (e.code === 'ERR_REQUEST_CANCELED') return { ok: false, error: '' };
@@ -305,8 +348,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function signInWithGoogle(idToken: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  async function signInWithGoogle(idToken: string, referralCode?: string): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
+      const referralCheck = await validateManualReferralCode(referralCode);
+      if (!referralCheck.ok) return referralCheck;
       const { data, error } = await supabase.auth.signInWithIdToken({
         provider: 'google',
         token: idToken,
@@ -316,7 +361,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const meta = data.user.user_metadata;
       const name = meta?.full_name || meta?.name || undefined;
-      await ensureProfile(data.user.id, data.user.email ?? '', name);
+      await ensureProfile(data.user.id, data.user.email ?? '', name, referralCode);
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: e.message ?? 'Google Sign In failed.' };

@@ -17,7 +17,58 @@ import { fontSets } from '../../../../src/theme/typography';
 import { accentPalette, radius, spacing } from '../../../../src/theme/tokens';
 import { themes, themeNames, type ThemeName } from '../../../../src/features/theme/themes';
 import { contrastText, contrastTextSoft, contrastAccent } from '../../../../src/lib/contrastText';
+import { showGalleryPaywall } from '../../../../src/lib/premiumGates';
 import { isCardColorUnlocked, getCardColorLockMessage } from '../../../../src/features/theme/cardColorUnlocks';
+import { usePolaroidImageReady } from '../../../../src/hooks/usePolaroidImageReady';
+
+const RELATIONSHIP_TAG_PRESETS = [
+  'Friend',
+  'New Friend',
+  'Best Friend',
+  'Close Friend',
+  'Old Friend',
+  'Childhood Friend',
+  'Online Friend',
+  'Long Distance Friend',
+  'Mutual Friend',
+  'Friend of Friend',
+  'Family Friend',
+  'Group Chat Friend',
+  'Chosen Family',
+  'Family',
+  'Close Family',
+  'Sibling',
+  'Cousin',
+  'Parent',
+  'Grandparent',
+  'Partner',
+  'Girlfriend',
+  'Boyfriend',
+  'Crush',
+  'Date',
+  'Spouse',
+  'Fiance',
+  'Soulmate',
+  'Ex',
+  'Acquaintance',
+  'Neighbor',
+  'Roommate',
+  'Coworker',
+  'Work Friend',
+  'Old Coworker',
+  'Mentor',
+  'Mentee',
+  'Classmate',
+  'School Friend',
+  'College Friend',
+  'Old Classmate',
+  'Teammate',
+  'Gym Friend',
+  'Study Friend',
+  'Travel Friend',
+  'Comfort Person',
+  'Support Person',
+];
 
 export default function EditContactProfileScreen() {
   const router = useRouter();
@@ -25,7 +76,7 @@ export default function EditContactProfileScreen() {
   const { currentUser } = useAuth();
   const { getContactById, getPeopleListForUser, updateContact } = useSocialGraph();
   const { colors, fonts, themeName, resolvedMode } = useTheme();
-  const { purchasedThemes } = usePremium();
+  const { purchasedThemes, isPremium } = usePremium();
   const unlockedThemeSet = useMemo(() => new Set<string>(['default', ...purchasedThemes]), [purchasedThemes]);
 
   const contactId = Array.isArray(params.contactId) ? params.contactId[0] : params.contactId;
@@ -34,6 +85,8 @@ export default function EditContactProfileScreen() {
   const [name, setName] = useState(contact?.displayName ?? '');
   const [localImageUri, setLocalImageUri] = useState<string | null>(null);
   const [note, setNote] = useState(contact?.note ?? '');
+  const [selectedTags, setSelectedTags] = useState<string[]>(contact?.tags ?? []);
+  const [customTag, setCustomTag] = useState('');
   const [cardColor, setCardColor] = useState<string | null>(contact?.cardColor ?? null);
   const [backText, setBackText] = useState(contact?.backText ?? '');
   const [profileBg, setProfileBg] = useState<string | null>(contact?.profileBg ?? null);
@@ -80,6 +133,9 @@ export default function EditContactProfileScreen() {
     });
   }, [flipAnim]);
   const [saving, setSaving] = useState(false);
+  const displayImage = localImageUri ?? contact?.avatarPath ?? null;
+  const previewImage = usePolaroidImageReady(displayImage);
+  const showPreviewCard = !displayImage || previewImage.imageReady;
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   if (!contact || contact.ownerUserId !== currentUser.id) {
@@ -101,11 +157,19 @@ export default function EditContactProfileScreen() {
     getPeopleListForUser(currentUser.id).find((item) => item.id === contact.id)?.avatarColor ?? colors.apricot;
 
   // The image to show: prefer locally picked image, then saved avatar, then nothing.
-  const displayImage = localImageUri ?? contact.avatarPath ?? null;
   const displayName = name.trim() || contact.displayName;
 
   async function pickPhoto() {
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+    if (!isPremium) {
+      showGalleryPaywall(() => router.push('/(app)/store'));
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
     if (!result.canceled && result.assets[0]) {
       setLocalImageUri(result.assets[0].uri);
     }
@@ -122,10 +186,31 @@ export default function EditContactProfileScreen() {
     setLocalImageUri(null);
   }
 
+  function addTag(rawTag: string) {
+    const tag = rawTag.trim();
+    if (!tag) return;
+    setSelectedTags((currentTags) => {
+      if (currentTags.some((existingTag) => existingTag.toLowerCase() === tag.toLowerCase())) return currentTags;
+      return [...currentTags, tag].slice(0, 6);
+    });
+    setCustomTag('');
+  }
+
+  function removeTag(tag: string) {
+    setSelectedTags((currentTags) => currentTags.filter((existingTag) => existingTag !== tag));
+  }
+
+  const savedTags = contact.tags ?? [];
+  const tagsChanged = selectedTags.length !== savedTags.length || selectedTags.some((tag, index) => tag !== savedTags[index]);
+  const availablePresetTags = RELATIONSHIP_TAG_PRESETS.filter(
+    (tag) => !selectedTags.some((selectedTag) => selectedTag.toLowerCase() === tag.toLowerCase()),
+  );
+
   const hasChanges =
     name.trim() !== contact.displayName ||
     localImageUri !== null ||
     note.trim() !== (contact.note ?? '') ||
+    tagsChanged ||
     cardColor !== (contact.cardColor ?? null) ||
     backText.trim() !== (contact.backText ?? '') ||
     profileBg !== (contact.profileBg ?? null);
@@ -134,10 +219,11 @@ export default function EditContactProfileScreen() {
     if (!hasChanges) { router.back(); return; }
     setSaving(true);
     try {
-      const updates: { displayName?: string; avatarLocalUri?: string | null; note?: string | null; cardColor?: string | null; backText?: string | null; profileBg?: string | null } = {};
+      const updates: { displayName?: string; avatarLocalUri?: string | null; tags?: string[]; note?: string | null; cardColor?: string | null; backText?: string | null; profileBg?: string | null } = {};
       if (name.trim() && name.trim() !== contact!.displayName) updates.displayName = name.trim();
       if (localImageUri !== null) updates.avatarLocalUri = localImageUri;
       if (note.trim() !== (contact!.note ?? '')) updates.note = note.trim() || null;
+      if (tagsChanged) updates.tags = selectedTags;
       if (cardColor !== (contact!.cardColor ?? null)) updates.cardColor = cardColor;
       if (backText.trim() !== (contact!.backText ?? '')) updates.backText = backText.trim() || null;
       if (profileBg !== (contact!.profileBg ?? null)) updates.profileBg = profileBg;
@@ -206,15 +292,15 @@ export default function EditContactProfileScreen() {
       <View style={styles.previewSection}>
         <Text style={styles.previewLabel}>Preview — tap to flip</Text>
         <Pressable onPress={handleFlipPreview}>
-          <Animated.View style={[styles.previewAmbientShadow, { transform: [{ perspective: 800 }, { rotateY }, { scaleX }] }]} renderToHardwareTextureAndroid shouldRasterizeIOS>
+          <Animated.View style={[styles.previewAmbientShadow, !showPreviewCard && { opacity: 0 }, { transform: [{ perspective: 800 }, { rotateY }, { scaleX }] }]} renderToHardwareTextureAndroid shouldRasterizeIOS>
             <View style={styles.previewTape} />
             <View onLayout={(e) => { const h = e.nativeEvent.layout.height; if (h > 0) setPreviewFrontHeight(h); }} style={styles.previewFaceHost}>
               <View pointerEvents={showBack ? 'none' : 'auto'} style={[showBack && styles.previewHiddenFace]}>
                 <View style={[styles.previewCard, { backgroundColor: previewBg }]}> 
                   <View style={styles.previewPhotoFrame}>
-                    {displayImage ? (
+                    {previewImage.showImage ? (
                       <>
-                        <Image source={{ uri: displayImage }} style={styles.previewPhoto} fadeDuration={0} />
+                        <Image source={{ uri: displayImage! }} style={styles.previewPhoto} fadeDuration={0} onLoad={previewImage.handleImageLoad} onError={previewImage.handleImageError} />
                         <View style={styles.previewWarmBaseTint} />
                         <LinearGradient
                           colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
@@ -285,8 +371,6 @@ export default function EditContactProfileScreen() {
         <Text style={styles.charCount}>{showBack ? backText.length : note.length}/{showBack ? 200 : 120}</Text>
       </View>
 
-      {/* Relationship tags removed — hidden from UI */}
-
       {/* Card color */}
       <View style={styles.fieldSection}>
         <Text style={styles.fieldLabel}>Card Color</Text>
@@ -338,6 +422,45 @@ export default function EditContactProfileScreen() {
               </Pressable>
             );
           })}
+        </View>
+      </View>
+
+      <View style={styles.fieldSection}>
+        <Text style={styles.fieldLabel}>Relationship Tags</Text>
+        <Text style={styles.fieldHint}>Add a few labels for how you know this person.</Text>
+        {selectedTags.length > 0 ? (
+          <View style={styles.selectedTags}>
+            {selectedTags.map((tag) => (
+              <View key={tag} style={styles.selectedTag}>
+                <Text style={styles.selectedTagText}>{tag}</Text>
+                <Pressable onPress={() => removeTag(tag)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Remove tag ${tag}`}>
+                  <Ionicons name="close" size={13} color={colors.white} />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.presetScroll} contentContainerStyle={styles.presetScrollContent}>
+          {availablePresetTags.map((tag) => (
+            <Pressable key={tag} onPress={() => addTag(tag)} style={styles.presetTag} accessibilityRole="button" accessibilityLabel={`Add tag ${tag}`}>
+              <Text style={styles.presetTagText}>{tag}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+        <View style={styles.customTagRow}>
+          <TextInput
+            value={customTag}
+            onChangeText={setCustomTag}
+            placeholder="Custom tag"
+            placeholderTextColor={colors.inkMuted}
+            style={styles.customTagInput}
+            returnKeyType="done"
+            maxLength={24}
+            onSubmitEditing={() => addTag(customTag)}
+          />
+          <Pressable onPress={() => addTag(customTag)} style={styles.customTagButton} accessibilityRole="button" accessibilityLabel="Add custom tag">
+            <Text style={styles.customTagButtonLabel}>+</Text>
+          </Pressable>
         </View>
       </View>
     </AppScreen>
@@ -447,7 +570,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       gap: 4,
     },
     selectedTagText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.white },
-    selectedTagRemove: { fontFamily: fonts.heading, fontSize: 16, color: colors.white, lineHeight: 16 },
     presetScroll: { marginHorizontal: -spacing.lg },
     presetScrollContent: { paddingHorizontal: spacing.lg, gap: spacing.xs },
     presetTag: {
@@ -606,15 +728,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: 10,
       overflow: 'visible' as const,
     },
-    previewTagRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 4 },
-    previewTag: {
-      backgroundColor: colors.accent + '1A',
-      paddingHorizontal: 8,
-      paddingVertical: 2,
-      borderRadius: 999,
-    },
-    previewTagText: { fontFamily: fonts.bodyBold, fontSize: 10, color: colors.accent, textTransform: 'uppercase', letterSpacing: 0.5 },
-    previewTagMore: { fontFamily: fonts.bodyMedium, fontSize: 10, color: colors.inkMuted },
     previewNote: {
       fontFamily: fonts.handwritten,
       fontSize: 14,

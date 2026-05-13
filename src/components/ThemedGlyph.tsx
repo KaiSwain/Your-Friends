@@ -20,6 +20,7 @@ export type GlyphName =
   | 'profile'
   | 'settings'
   | 'store'
+  | 'calendar'
   | 'addFriend'
   | 'camera'
   | 'polaroid'
@@ -41,6 +42,7 @@ const phosphorMap: Record<GlyphName, keyof typeof Phosphor> = {
   profile: 'UserCircle',
   settings: 'GearSix',
   store: 'Storefront',
+  calendar: 'CalendarBlank',
   addFriend: 'UserPlus',
   camera: 'Camera',
   polaroid: 'ImageSquare',
@@ -62,6 +64,7 @@ const lucideMap: Record<GlyphName, keyof typeof Lucide> = {
   profile: 'UserCircle',
   settings: 'Settings',
   store: 'Store',
+  calendar: 'CalendarDays',
   addFriend: 'UserPlus',
   camera: 'Camera',
   polaroid: 'ImagePlus',
@@ -83,6 +86,7 @@ const featherMap: Record<GlyphName, React.ComponentProps<typeof Feather>['name']
   profile: 'user',
   settings: 'settings',
   store: 'shopping-bag',
+  calendar: 'calendar',
   addFriend: 'user-plus',
   camera: 'camera',
   polaroid: 'image',
@@ -104,6 +108,7 @@ const ionMap: Record<GlyphName, React.ComponentProps<typeof Ionicons>['name']> =
   profile: 'person-circle-outline',
   settings: 'settings-outline',
   store: 'storefront-outline',
+  calendar: 'calendar-outline',
   addFriend: 'person-add-outline',
   camera: 'camera-outline',
   polaroid: 'image-outline',

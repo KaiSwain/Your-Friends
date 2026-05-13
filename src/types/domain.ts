@@ -29,6 +29,8 @@ export interface AppUser {
   profileFacts: string[];
   // Store the ISO timestamp for when this profile was created.
   createdAt: string;
+  // Optionally store when Premium access expires, including referral rewards.
+  premiumUntil?: string | null;
 } // End the AppUser interface.
 
 // Describe the shape of a private contact saved by a signed-in user.
@@ -59,6 +61,8 @@ export interface Contact {
   profileBg: string | null;
   // Whether this contact is pinned to the front of the carousel.
   pinned: boolean;
+  // Store when this contact was pinned so pinned contacts keep insertion order.
+  pinnedAt: string | null;
   // Store the ISO timestamp for when the contact was created.
   createdAt: string;
 } // End the Contact interface.
@@ -105,6 +109,12 @@ export interface PeopleListItem {
   linkedUserId?: string | null;
   // Whether this item is pinned to the front.
   pinned?: boolean;
+  // Store when this item was pinned so pinned items sort oldest pin first.
+  pinnedAt?: string | null;
+  // Whether the underlying user has an active Premium subscription. Used to
+  // paint the golden glow + PREMIUM badge on the polaroid card. Always
+  // undefined for private contacts.
+  isPremium?: boolean;
 } // End the PeopleListItem interface.
 
 // Describe the minimum data needed to create a user-like record in app logic.
@@ -185,6 +195,103 @@ export interface CreateWallPostInput {
 export interface CreateContactInput {
   displayName: string;
   nickname?: string;
+}
+
+export type ContactPrivateNoteBlockType = 'text' | 'link' | 'image';
+
+export interface ContactPrivateNote {
+  id: string;
+  ownerUserId: string;
+  contactId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContactPrivateNoteBlock {
+  id: string;
+  noteId: string;
+  ownerUserId: string;
+  type: ContactPrivateNoteBlockType;
+  content: string | null;
+  url: string | null;
+  imagePath: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateContactPrivateNoteInput {
+  title?: string;
+}
+
+export interface UpdateContactPrivateNoteInput {
+  title?: string;
+}
+
+export interface CreateContactPrivateNoteBlockInput {
+  type: ContactPrivateNoteBlockType;
+  content?: string | null;
+  url?: string | null;
+  imagePath?: string | null;
+  sortOrder?: number;
+}
+
+export interface UpdateContactPrivateNoteBlockInput {
+  content?: string | null;
+  url?: string | null;
+  imagePath?: string | null;
+  sortOrder?: number;
+}
+
+export type CalendarEventType = 'birthday' | 'anniversary' | 'custom';
+export type CalendarRecurrence = 'none' | 'yearly' | 'monthly';
+export type CalendarReminderOffset = 0 | 1 | 7;
+
+export interface CalendarEvent {
+  id: string;
+  ownerUserId: string;
+  subjectUserId: string | null;
+  subjectContactId: string | null;
+  type: CalendarEventType;
+  title: string;
+  eventDate: string;
+  eventTime: string | null;
+  allDay: boolean;
+  recurrence: CalendarRecurrence;
+  reminderOffsets: CalendarReminderOffset[];
+  completedOccurrenceKeys: string[];
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CalendarEventInput {
+  subjectUserId?: string | null;
+  subjectContactId?: string | null;
+  type: CalendarEventType;
+  title: string;
+  eventDate: string;
+  eventTime?: string | null;
+  allDay?: boolean;
+  recurrence?: CalendarRecurrence;
+  reminderOffsets?: CalendarReminderOffset[];
+  completedOccurrenceKeys?: string[];
+  note?: string | null;
+}
+
+export interface UpdateCalendarEventInput {
+  subjectUserId?: string | null;
+  subjectContactId?: string | null;
+  type?: CalendarEventType;
+  title?: string;
+  eventDate?: string;
+  eventTime?: string | null;
+  allDay?: boolean;
+  recurrence?: CalendarRecurrence;
+  reminderOffsets?: CalendarReminderOffset[];
+  completedOccurrenceKeys?: string[];
+  note?: string | null;
 }
 
 export interface FriendFact {
