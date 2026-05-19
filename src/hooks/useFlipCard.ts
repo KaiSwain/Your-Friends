@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated } from 'react-native';
 
 type FlipCardMode = 'midpoint' | 'continuous';
@@ -22,6 +22,18 @@ export function useFlipCard({
   const animating = useRef(false);
   const continuousTarget = useRef(0);
   const animValue = useRef(new Animated.Value(0)).current;
+  const onFlipRef = useRef(onFlip);
+  const skipFlipNotifyRef = useRef(true);
+
+  onFlipRef.current = onFlip;
+
+  useEffect(() => {
+    if (skipFlipNotifyRef.current) {
+      skipFlipNotifyRef.current = false;
+      return;
+    }
+    onFlipRef.current?.(showBack);
+  }, [showBack]);
 
   const rotateY = animValue.interpolate({
     inputRange: [0, 0.5, 1],
@@ -51,7 +63,6 @@ export function useFlipCard({
       continuousTarget.current = nextTarget;
       const nextShowBack = nextTarget === 1;
       setShowBack(nextShowBack);
-      onFlip?.(nextShowBack);
       Animated.timing(animValue, {
         toValue: nextTarget,
         duration,
@@ -67,11 +78,7 @@ export function useFlipCard({
       duration,
       useNativeDriver: true,
     }).start(() => {
-      setShowBack((prev) => {
-        const next = !prev;
-        onFlip?.(next);
-        return next;
-      });
+      setShowBack((prev) => !prev);
       Animated.timing(animValue, {
         toValue: 1,
         duration,
@@ -81,7 +88,7 @@ export function useFlipCard({
         animating.current = false;
       });
     });
-  }, [animValue, disabled, duration, mode, onBeforeFlip, onFlip, showBack]);
+  }, [animValue, disabled, duration, mode, onBeforeFlip, showBack]);
 
   return {
     backRotateY,

@@ -24,6 +24,7 @@
         "NSPhotoLibraryUsageDescription": "YourFriends needs access to your photos to add memories.",
         "NSPhotoLibraryAddUsageDescription": "YourFriends needs permission to save photos to your library.",
         "NSMotionUsageDescription": "YourFriends uses motion to detect gentle shakes while a memory card develops.",
+        "NSLocationWhenInUseUsageDescription": "YourFriends uses your location to tag memories with a nearby place name.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -38,7 +39,9 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
@@ -64,6 +67,12 @@
           "cameraPermission": "YourFriends needs access to your camera to scan QR codes and capture memories.",
           "microphonePermission": "YourFriends needs access to your microphone to record sound for Live Memory Cards.",
           "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "YourFriends uses your location to tag memories with a nearby place name."
         }
       ],
       [

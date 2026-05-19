@@ -63,6 +63,14 @@ export interface AppUser {
   createdAt: string;
   // Optionally store when Premium access expires, including referral rewards.
   premiumUntil?: string | null;
+  // Store paid subscription expiry separately from free QR-granted Premium.
+  premiumPaidUntil?: string | null;
+  // Store free Premium expiry separately so the database can distinguish it from paid access.
+  premiumFreeUntil?: string | null;
+  // Track who granted the current free Premium window, when applicable.
+  premiumFreeGrantorUserId?: string | null;
+  // Track when the free Premium window was granted.
+  premiumFreeGrantedAt?: string | null;
 } // End the AppUser interface.
 
 // Describe the shape of a private contact saved by a signed-in user.
@@ -233,6 +241,8 @@ export interface WallPost {
   promptType?: MemoryPromptType | null;
   // Optionally store when the memory happened, separate from when it was posted.
   memoryDate?: string | null;
+  // Optionally store a user-entered place name for this memory.
+  locationName?: string | null;
   // Store the ISO timestamp for when the memory was created.
   createdAt: string;
   // UI-only local-first sync state for memories saved before the server write finishes.
@@ -338,6 +348,8 @@ export interface CreateWallPostInput {
   promptType?: MemoryPromptType | null;
   // Optionally store when the memory happened, separate from when it was posted.
   memoryDate?: string | null;
+  // Optionally store a user-entered place name for this memory.
+  locationName?: string | null;
 } // End the CreateWallPostInput interface.
 
 export type MovieReviewRequestStatus = 'pending' | 'completed' | 'cancelled';

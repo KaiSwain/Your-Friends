@@ -6,6 +6,7 @@ import { Alert, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInpu
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
+import { MemoryLocationPicker } from '../../../src/components/MemoryLocationPicker';
 import { MemoryPromptPicker } from '../../../src/components/MemoryPromptPicker';
 import { MemoryTextStylePicker } from '../../../src/components/MemoryTextStylePicker';
 import { SongSearchPicker } from '../../../src/components/SongSearchPicker';
@@ -19,6 +20,7 @@ import type { ColorTokens } from '../../../src/features/theme/themes';
 import { isCardColorUnlocked, getCardColorLockMessage } from '../../../src/features/theme/cardColorUnlocks';
 import { useAddMemory } from '../../../src/hooks/useAddMemory';
 import { AI_CAPTION_TONES, AiCaptionContext, AiCaptionTone, generateAiCaptions } from '../../../src/lib/aiCaptions';
+import { normalizeLocationName } from '../../../src/lib/memoryLocation';
 import { memoryImagePickerOptions } from '../../../src/lib/imagePickerPresets';
 import { backOnce, dismissToOnce, pushOnce, replaceOnce } from '../../../src/lib/navigationGuard';
 import { showAiCaptionPaywall, showGalleryPaywall } from '../../../src/lib/premiumGates';
@@ -70,6 +72,7 @@ export default function AddMemoryScreen() {
   const [selectedSong, setSelectedSong] = useState<SongAttachment | null>(null);
   const [songPreviewRequestKey, setSongPreviewRequestKey] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<WallPostVisibility>('visible_to_subject');
+  const [locationNameInput, setLocationNameInput] = useState('');
   const [cardColor, setCardColor] = useState<string | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
   const [dateStamp, setDateStamp] = useState(false);
@@ -86,6 +89,7 @@ export default function AddMemoryScreen() {
   const [selectedTargetKeys, setSelectedTargetKeys] = useState<string[]>(() => parseInitialTargetKeys(targetKeysParam, subjectId, subjectType));
 
   const onFlip = useCallback((back: boolean) => setShowingBack(back), []);
+
   const textInputTypography = useMemo(
     () => (memoryKind === 'note' && !imageUri ? resolveWallPostTextStyle(fonts, textFont, textSize) : null),
     [fonts, imageUri, memoryKind, textFont, textSize],
@@ -352,6 +356,7 @@ export default function AddMemoryScreen() {
     if (selectedMemoryDate && isFutureDateKey(selectedMemoryDate)) { setError('Memory dates cannot be in the future.'); return; }
     setError('');
     const postType = isSongMemory ? 'song' : imageUri ? 'polaroid' : 'note';
+    const locationName = normalizeLocationName(locationNameInput);
 
     const posts: CreateWallPostInput[] = selectedTargets.map((target) => {
       // When the subject is a contact linked to a real user, target the user directly
@@ -388,6 +393,7 @@ export default function AddMemoryScreen() {
         dateStamp: !!imageUri && dateStamp,
         song: selectedSong,
         memoryDate: selectedMemoryDate,
+        locationName,
       };
     });
 
@@ -484,6 +490,8 @@ export default function AddMemoryScreen() {
           thumbColor={colors.white}
         />
       </View>
+
+      <MemoryLocationPicker value={locationNameInput} onChange={setLocationNameInput} />
 
       {canChooseMemoryDate ? (
       <View style={styles.memoryDateSection}>
@@ -592,9 +600,18 @@ export default function AddMemoryScreen() {
               textColor: previewPostType === 'note' ? textColor : null,
               dateStamp: !!imageUri && dateStamp,
               song: selectedSong,
+              locationName: normalizeLocationName(locationNameInput),
             }}
           />
-          {imageUri ? <Text style={styles.previewHint}>{videoUri ? 'Preview the Live Memory Card, retake its cover, or add a photo filter below.' : 'Tap card to flip'}</Text> : null}
+          {imageUri ? (
+            <Text style={styles.previewHint}>
+              {normalizeLocationName(locationNameInput)
+                ? 'Tap the card to flip — location is on the back'
+                : videoUri
+                  ? 'Preview the Live Memory Card, retake its cover, or add a photo filter below.'
+                  : 'Tap card to flip'}
+            </Text>
+          ) : null}
         </View>
       )}
 

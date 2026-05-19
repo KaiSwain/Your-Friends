@@ -219,12 +219,17 @@ const POLAROID_REAL_WIDTH = 260;
 const ATTACHED_SONG_REAL_WIDTH = 360;
 
 function getRealCardHeight(post: WallPost) {
-  const promptExtra = post.promptText ? 68 : 0;
-  const referenceExtra = post.referencedWallPostId ? 315 : 0;
+  const promptExtra = post.promptText && !post.imageUri ? 68 : 0;
+  const referenceExtra = post.referencedWallPostId && post.promptType !== 'photo_reference' ? 315 : 0;
   if (post.song && post.postType !== 'song') return 780 + promptExtra + referenceExtra;
   if (post.postType === 'song') return 530 + promptExtra;
   if (post.postType === 'movie') return 390 + promptExtra;
-  if (post.postType === 'note') return 320 + promptExtra + referenceExtra;
+  if (post.postType === 'note') {
+    if (post.promptType === 'photo_reference' && post.referencedWallPostId) {
+      return 440 + promptExtra;
+    }
+    return 320 + promptExtra + referenceExtra;
+  }
   return 440 + promptExtra;
 }
 

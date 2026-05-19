@@ -25,6 +25,10 @@ describe('rowToUser', () => {
       profile_bg_image_public: true,
       profile_facts: ['Loves cats'],
       premium_until: '2026-05-14T12:00:00Z',
+      premium_paid_until: '2026-05-14T12:00:00Z',
+      premium_free_until: '2026-05-10T12:00:00Z',
+      premium_free_granted_by_user_id: 'grantor-1',
+      premium_free_granted_at: '2026-05-07T12:00:00Z',
       created_at: '2024-01-01T00:00:00Z',
     };
     const user = rowToUser(row);
@@ -40,6 +44,10 @@ describe('rowToUser', () => {
       profileBgImagePublic: true,
       profileFacts: ['Loves cats'],
       premiumUntil: '2026-05-14T12:00:00Z',
+      premiumPaidUntil: '2026-05-14T12:00:00Z',
+      premiumFreeUntil: '2026-05-10T12:00:00Z',
+      premiumFreeGrantorUserId: 'grantor-1',
+      premiumFreeGrantedAt: '2026-05-07T12:00:00Z',
       createdAt: '2024-01-01T00:00:00Z',
     });
   });
@@ -52,6 +60,10 @@ describe('rowToUser', () => {
     expect(user.profileBgImagePublic).toBe(false);
     expect(user.profileFacts).toEqual([]);
     expect(user.premiumUntil).toBeNull();
+    expect(user.premiumPaidUntil).toBeNull();
+    expect(user.premiumFreeUntil).toBeNull();
+    expect(user.premiumFreeGrantorUserId).toBeNull();
+    expect(user.premiumFreeGrantedAt).toBeNull();
   });
 });
 
@@ -139,6 +151,19 @@ describe('rowToMemoryReply', () => {
 });
 
 describe('rowToWallPost', () => {
+  it('maps location_name to locationName', () => {
+    const post = rowToWallPost({
+      id: 'p-location',
+      author_user_id: 'u1',
+      subject_user_id: 'u2',
+      visibility: 'private',
+      body: 'At the lake',
+      location_name: 'Echo Park Lake',
+      created_at: '2024-04-01',
+    });
+    expect(post.locationName).toBe('Echo Park Lake');
+  });
+
   it('maps image_path to imageUri', () => {
     const post = rowToWallPost({
       id: 'p1',
@@ -158,6 +183,7 @@ describe('rowToWallPost', () => {
     expect(post.videoUri).toBe('https://video.test/live.mp4');
     expect(post.videoMuted).toBe(true);
     expect(post.memoryDate).toBe('2024-03-28');
+    expect(post.locationName).toBeNull();
     expect(post.postType).toBe('polaroid');
     expect(post.backText).toBe('Back');
     expect(post.subjectContactId).toBeNull();

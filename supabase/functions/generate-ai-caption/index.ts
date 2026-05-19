@@ -123,7 +123,7 @@ function buildPrompt(context: Record<string, unknown>, tone: string) {
   const relationshipTags = Array.isArray(context.relationshipTags) ? context.relationshipTags : [];
   return [
     `Tone: ${tone}. ${toneInstructions[tone]}`,
-    'Write 5 distinct caption options for this polaroid.',
+    'Write 5 distinct caption options for this photo memory.',
     'First, look closely at the visible photo: people, faces, pose, setting, action, colors, mood, objects, and composition.',
     'Make the captions feel grounded in what is visibly happening in the photo.',
     'Make the captions sharper and more memorable than generic lines like "making memories" or "good times".',

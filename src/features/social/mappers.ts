@@ -36,6 +36,10 @@ export function rowToUser(row: any): AppUser {
     profileFacts: row.profile_facts ?? [],
     createdAt: row.created_at,
     premiumUntil: row.premium_until ?? null,
+    premiumPaidUntil: row.premium_paid_until ?? null,
+    premiumFreeUntil: row.premium_free_until ?? null,
+    premiumFreeGrantorUserId: row.premium_free_granted_by_user_id ?? null,
+    premiumFreeGrantedAt: row.premium_free_granted_at ?? null,
   };
 }
 
@@ -114,6 +118,7 @@ export function rowToWallPost(row: any): WallPost {
     promptText: row.prompt_text ?? null,
     promptType: normalizeMemoryPromptType(row.prompt_type),
     memoryDate: row.memory_date ?? null,
+    locationName: row.location_name ?? null,
     createdAt: row.created_at,
   };
 }

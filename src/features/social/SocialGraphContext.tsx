@@ -130,6 +130,7 @@ interface SocialGraphContextValue {
   createLinkedContactForFriend: (currentUserId: string, friendUserId: string) => Promise<{ ok: true; contactId: string } | { ok: false; error: string }>;
   getManualContactCandidatesForFriend: (currentUserId: string, friendUserId: string) => Contact[];
   getPendingFriendLinks: (currentUserId: string) => PendingFriendLink[];
+  repairObviousFriendLinks: (currentUserId: string) => Promise<{ repaired: number; skipped: number }>;
   unlinkContactFromFriend: (contactId: string, currentUserId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   moveContactLink: (sourceContactId: string, targetContactId: string, currentUserId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   removeFriend: (currentUserId: string, friendUserId: string) => Promise<void>;
@@ -182,7 +183,7 @@ interface SocialGraphContextValue {
   deleteFriendFact: (factId: string) => Promise<void>;
   getFriendFactsFor: (authorUserId: string, subjectUserId: string) => FriendFact[];
   deleteWallPost: (postId: string) => Promise<void>;
-  updateWallPost: (postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean) => Promise<void>;
+  updateWallPost: (postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean, locationName?: string | null) => Promise<void>;
   updateContact: (contactId: string, updates: {
     displayName?: string;
     avatarLocalUri?: string | null;
@@ -235,6 +236,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   const socialEnabled = Boolean(currentUser?.id);
   const birthdaySyncSignatureRef = useRef<string | null>(null);
   const giftRevealSignatureRef = useRef<string | null>(null);
+  const didAutoRepairFriendLinksRef = useRef(false);
 
   // ── Queries ──────────────────────────────────────────────────────────
   const usersQuery = useQuery({ queryKey: socialQueryKeys.users, queryFn: fetchUsers, enabled: socialEnabled });
@@ -470,24 +472,14 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      const staleLinkedContacts = myContacts.filter(
-        (contact) => contact.linkedUserId && !myFriendIdSet.has(contact.linkedUserId),
-      );
-      if (staleLinkedContacts.length) {
-        const staleIds = staleLinkedContacts.map((contact) => contact.id);
-        const { error: unlinkErr } = await supabase
-          .from('contacts')
-          .update({ linked_user_id: null })
-          .eq('owner_user_id', myId)
-          .in('id', staleIds);
-        if (unlinkErr) {
-          console.warn('Failed to unlink stale contacts:', unlinkErr.message);
-        } else {
-          queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
-            (old ?? []).map((contact) =>
-              staleIds.includes(contact.id) ? { ...contact, linkedUserId: null } : contact,
-            ),
-          );
+      // Do not bulk-clear linked_user_id here. A transient empty friendships
+      // fetch can make every linked contact look "stale" and wipe all links.
+
+      if (!didAutoRepairFriendLinksRef.current && myFriendIds.length > 0) {
+        didAutoRepairFriendLinksRef.current = true;
+        const repaired = await repairObviousFriendLinks(myId);
+        if (repaired.repaired > 0) {
+          console.info(`[contacts] Restored ${repaired.repaired} obvious friend link(s).`);
         }
       }
     })();
@@ -1212,6 +1204,25 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     return result;
   }
 
+  async function repairObviousFriendLinks(currentUserId: string) {
+    const pending = getPendingFriendLinks(currentUserId);
+    let repaired = 0;
+    let skipped = 0;
+
+    for (const { friend, candidates } of pending) {
+      if (candidates.length !== 1) {
+        skipped += 1;
+        continue;
+      }
+
+      const result = await linkContactToFriend(candidates[0].id, currentUserId, friend.id);
+      if (result.ok) repaired += 1;
+      else skipped += 1;
+    }
+
+    return { repaired, skipped };
+  }
+
   async function notifyLinkedContactUpdate({
     contactId,
     linkedUserId,
@@ -1615,6 +1626,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
           : (input.filter ?? null),
         date_stamp: input.dateStamp ?? false,
         memory_date: input.memoryDate ?? null,
+        location_name: input.locationName ?? null,
         song_provider: input.song?.provider ?? null,
         song_provider_id: input.song?.providerTrackId ?? null,
         song_title: input.song?.title ?? null,
@@ -1868,7 +1880,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function updateWallPost(postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean) {
+  async function updateWallPost(postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean, locationName?: string | null) {
     const post = wallPosts.find((p) => p.id === postId);
     if (!currentUser || post?.authorUserId !== currentUser.id) throw new Error('You can only edit your own memories.');
 
@@ -1904,6 +1916,10 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       updateData.video_muted = videoMuted;
     }
 
+    if (locationName !== undefined) {
+      updateData.location_name = locationName;
+    }
+
     if (newLocalImageUri !== undefined) {
       if (newLocalImageUri) {
         updateData.image_path = await uploadMemoryImage(newLocalImageUri, { prefix: 'uploads' });
@@ -1933,6 +1949,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         if (visibility !== undefined) updated.visibility = visibility;
         if (song !== undefined) updated.song = song;
         if (videoMuted !== undefined) updated.videoMuted = videoMuted;
+        if (locationName !== undefined) updated.locationName = locationName;
         return updated;
       }),
     );
@@ -2120,6 +2137,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         createLinkedContactForFriend,
         getManualContactCandidatesForFriend,
         getPendingFriendLinks,
+        repairObviousFriendLinks,
         unlinkContactFromFriend,
         moveContactLink,
         removeFriend,

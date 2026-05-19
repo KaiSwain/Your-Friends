@@ -50,7 +50,7 @@ export function MemoryPromptRequestList({
     ? 'Movie ratings are the fastest way to turn a friend request into a memory card.'
     : hasIncomingPrompt
       ? 'Answer a prompt to add something new to your shared wall.'
-      : `Ask ${friendName} for a song, polaroid, note, or movie rating.`;
+      : `Ask ${friendName} for a song, photo memory, note, or movie rating.`;
 
   if (!hasPrompts) {
     return (

@@ -18,7 +18,11 @@ create table public.profiles ( -- Create the profiles table in the public schema
   profile_bg_image_public boolean not null default false, -- Let users explicitly choose whether their background appears on their public profile.
   push_token text, -- Store the Expo push notification token for server-side sends.
   profile_facts text[] not null default '{}', -- Store profile facts as a text array.
-  premium_until timestamptz, -- Store when Premium access expires, including referral rewards.
+  premium_until timestamptz, -- Store the active Premium expiry for compatibility with existing checks.
+  premium_paid_until timestamptz, -- Store paid subscription Premium expiry separately from free grants.
+  premium_free_until timestamptz, -- Store QR-granted free Premium expiry separately from paid access.
+  premium_free_granted_by_user_id uuid references public.profiles(id) on delete set null, -- Track who granted the current free Premium window.
+  premium_free_granted_at timestamptz, -- Track when the current free Premium window was granted.
   created_at timestamptz not null default now() -- Store when the profile row was created.
 ); -- End the profiles table definition.
 
@@ -27,6 +31,10 @@ alter table public.profiles enable row level security; -- Turn on row-level secu
 alter table public.profiles add column if not exists profile_bg_image_path text;
 alter table public.profiles add column if not exists profile_bg_image_public boolean not null default false;
 alter table public.profiles add column if not exists birthday date;
+alter table public.profiles add column if not exists premium_paid_until timestamptz;
+alter table public.profiles add column if not exists premium_free_until timestamptz;
+alter table public.profiles add column if not exists premium_free_granted_by_user_id uuid references public.profiles(id) on delete set null;
+alter table public.profiles add column if not exists premium_free_granted_at timestamptz;
 
 create policy "Users can read any profile" -- Name the policy that allows profile reads.
   on public.profiles for select using (true); -- Allow all authenticated users to select any profile.
@@ -58,6 +66,142 @@ create policy "Users can read own referrals"
 
 create index idx_referrals_referrer on public.referrals(referrer_user_id);
 create index idx_referrals_referee on public.referrals(referee_user_id);
+
+-- Premium QR grants — scanning any active Premium user's QR grants a free Premium trial.
+create table if not exists public.premium_qr_grants (
+  id uuid primary key default uuid_generate_v4(),
+  grantor_user_id uuid not null references public.profiles(id) on delete cascade,
+  recipient_user_id uuid not null references public.profiles(id) on delete cascade,
+  reward_days integer not null default 3 check (reward_days > 0),
+  recipient_premium_until timestamptz not null,
+  created_at timestamptz not null default now(),
+  constraint premium_qr_grants_no_self check (grantor_user_id <> recipient_user_id),
+  constraint premium_qr_grants_unique_pair unique (grantor_user_id, recipient_user_id)
+);
+
+alter table public.premium_qr_grants enable row level security;
+
+create policy "Users can read own premium QR grants"
+  on public.premium_qr_grants for select
+  using (auth.uid() = grantor_user_id or auth.uid() = recipient_user_id);
+
+create index if not exists idx_premium_qr_grants_grantor on public.premium_qr_grants(grantor_user_id);
+create index if not exists idx_premium_qr_grants_recipient on public.premium_qr_grants(recipient_user_id);
+
+create or replace function public.apply_premium_qr_grant(recipient_id uuid, grantor_code text)
+returns table (
+  grantor_user_id uuid,
+  recipient_premium_until timestamptz,
+  recipient_free_until timestamptz,
+  granted boolean
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  normalized_code text := upper(regexp_replace(coalesce(grantor_code, ''), '[^a-zA-Z0-9]', '', 'g'));
+  reward_days integer := 3;
+  matched_grantor_id uuid;
+  grantor_premium_until timestamptz;
+  existing_grant public.premium_qr_grants%rowtype;
+  current_recipient_premium_until timestamptz;
+  current_recipient_paid_until timestamptz;
+  current_recipient_free_until timestamptz;
+begin
+  if auth.uid() is null or auth.uid() <> recipient_id then
+    raise exception 'Premium QR grants can only be applied by the scanning user.';
+  end if;
+
+  if normalized_code = '' then
+    raise exception 'QR code is required.';
+  end if;
+
+  select
+    p.id,
+    greatest(
+      coalesce(p.premium_until, '-infinity'::timestamptz),
+      coalesce(p.premium_paid_until, '-infinity'::timestamptz),
+      coalesce(p.premium_free_until, '-infinity'::timestamptz)
+    )
+  into matched_grantor_id, grantor_premium_until
+  from public.profiles p
+  where p.friend_code = normalized_code;
+
+  if matched_grantor_id is null then
+    raise exception 'Friend QR code not found.';
+  end if;
+
+  if matched_grantor_id = recipient_id then
+    raise exception 'Self QR grants are not allowed.';
+  end if;
+
+  if grantor_premium_until is null or grantor_premium_until <= now() then
+    raise exception 'This QR code belongs to someone without active Premium.';
+  end if;
+
+  select * into existing_grant
+  from public.premium_qr_grants qr_grant
+  where qr_grant.grantor_user_id = matched_grantor_id
+    and qr_grant.recipient_user_id = recipient_id;
+
+  if existing_grant.id is not null then
+    select
+      greatest(
+        coalesce(p.premium_until, '-infinity'::timestamptz),
+        coalesce(p.premium_paid_until, '-infinity'::timestamptz),
+        coalesce(p.premium_free_until, '-infinity'::timestamptz)
+      ),
+      p.premium_free_until
+    into recipient_premium_until, recipient_free_until
+    from public.profiles p
+    where p.id = recipient_id;
+
+    grantor_user_id := matched_grantor_id;
+    granted := false;
+    return next;
+    return;
+  end if;
+
+  select p.premium_until, p.premium_paid_until, p.premium_free_until
+  into current_recipient_premium_until, current_recipient_paid_until, current_recipient_free_until
+  from public.profiles p
+  where p.id = recipient_id;
+
+  recipient_free_until := greatest(coalesce(current_recipient_free_until, now()), now()) + make_interval(days => reward_days);
+  recipient_premium_until := greatest(
+    coalesce(current_recipient_premium_until, '-infinity'::timestamptz),
+    coalesce(current_recipient_paid_until, '-infinity'::timestamptz),
+    recipient_free_until
+  );
+
+  update public.profiles
+  set
+    premium_free_until = recipient_free_until,
+    premium_until = recipient_premium_until,
+    premium_free_granted_by_user_id = matched_grantor_id,
+    premium_free_granted_at = now()
+  where id = recipient_id;
+
+  insert into public.premium_qr_grants (
+    grantor_user_id,
+    recipient_user_id,
+    reward_days,
+    recipient_premium_until
+  ) values (
+    matched_grantor_id,
+    recipient_id,
+    reward_days,
+    recipient_premium_until
+  );
+
+  grantor_user_id := matched_grantor_id;
+  granted := true;
+  return next;
+end;
+$$;
+
+grant execute on function public.apply_premium_qr_grant(uuid, text) to authenticated;
 
 create or replace function public.apply_referral_reward(referee_id uuid, referral_code text)
 returns table (
@@ -341,6 +485,7 @@ create table public.wall_posts ( -- Create the wall_posts table in the public sc
   filter text, -- Optionally store a photo filter key (e.g. vintage, warm, cool).
   date_stamp boolean not null default false, -- Optionally store whether to show a date stamp overlay on the photo.
   memory_date date, -- Optionally store when the memory happened, separate from when it was posted.
+  location_name text, -- Optionally store a user-entered place name for this memory.
   song_provider text check (song_provider in ('apple', 'spotify')), -- Optionally store the source provider for a song memory.
   song_provider_id text, -- Optionally store the provider's track ID.
   song_title text, -- Optionally store the song title shown on the wall.
@@ -1114,6 +1259,7 @@ ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS back_text text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS video_path text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS video_muted boolean not null default false;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS memory_date date;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS location_name text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_provider text check (song_provider in ('apple', 'spotify'));
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_provider_id text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_title text;

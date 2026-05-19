@@ -160,7 +160,7 @@ async function getDisplayName(userId: string) {
 function validateCompletion(promptType: MemoryPromptType, body: string | null, song: CompleteMemoryPromptRequestInput['song'], referencedWallPostId: string | null) {
   if (promptType === 'song' && !song) throw new Error('Choose a song before sending.');
   if (promptType === 'text' && !body) throw new Error('Write a response before sending.');
-  if (promptType === 'photo_reference' && !referencedWallPostId) throw new Error('Choose a polaroid before sending.');
+  if (promptType === 'photo_reference' && !referencedWallPostId) throw new Error('Choose a photo memory before sending.');
 }
 
 function cleanRequiredText(value: string | null | undefined, emptyMessage: string, maxLength: number) {

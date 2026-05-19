@@ -27,6 +27,7 @@ export default function LinkFriendChooserScreen() {
     getUserById,
     getManualContactCandidatesForFriend,
     getPendingFriendLinks,
+    repairObviousFriendLinks,
     linkContactToFriend,
     createLinkedContactForFriend,
     isConnected,
@@ -36,12 +37,38 @@ export default function LinkFriendChooserScreen() {
 
   const [busyContactId, setBusyContactId] = useState<string | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
+  const [repairingLinks, setRepairingLinks] = useState(false);
   const [error, setError] = useState('');
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   const me = currentUser;
   const pendingLinks = getPendingFriendLinks(me.id);
   const friend = friendId ? getUserById(friendId) : undefined;
+
+  async function handleRepairObviousLinks() {
+    setError('');
+    setRepairingLinks(true);
+    try {
+      const result = await repairObviousFriendLinks(me.id);
+      if (result.repaired === 0) {
+        Alert.alert(
+          'No automatic matches',
+          result.skipped > 0
+            ? 'The remaining friends need a manual review because more than one saved profile could match.'
+            : 'Everything already looks linked.',
+        );
+        return;
+      }
+      Alert.alert(
+        'Profiles reconnected',
+        `Restored ${result.repaired} obvious ${result.repaired === 1 ? 'match' : 'matches'}.${result.skipped > 0 ? ` ${result.skipped} still need review.` : ''}`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not restore links.');
+    } finally {
+      setRepairingLinks(false);
+    }
+  }
 
   if (!friendId) {
     return (
@@ -53,6 +80,19 @@ export default function LinkFriendChooserScreen() {
             Choose whether each new friend should connect to a saved profile, or create a fresh one.
           </Text>
         </View>
+
+        {pendingLinks.length > 0 ? (
+          <SectionCard title="Quick restore">
+            <Text style={styles.note}>
+              If your saved profiles were disconnected, we can reconnect the obvious first-name matches automatically.
+            </Text>
+            <ActionButton
+              label={repairingLinks ? 'Restoring…' : 'Restore obvious matches'}
+              onPress={handleRepairObviousLinks}
+              disabled={repairingLinks}
+            />
+          </SectionCard>
+        ) : null}
 
         {pendingLinks.length > 0 ? (
           <SectionCard title="Needs review">

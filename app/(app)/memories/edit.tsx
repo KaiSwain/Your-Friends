@@ -5,6 +5,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
+import { MemoryLocationPicker } from '../../../src/components/MemoryLocationPicker';
 import { MemoryTextStylePicker } from '../../../src/components/MemoryTextStylePicker';
 import { SongSearchPicker } from '../../../src/components/SongSearchPicker';
 import { WallPostCard } from '../../../src/components/WallPostCard';
@@ -15,6 +16,7 @@ import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
 import { AI_CAPTION_TONES, AiCaptionContext, AiCaptionTone, generateAiCaptions } from '../../../src/lib/aiCaptions';
 import { backOnce, pushOnce } from '../../../src/lib/navigationGuard';
+import { normalizeLocationName } from '../../../src/lib/memoryLocation';
 import { getCureProgress } from '../../../src/lib/polaroidCure';
 import { showAiCaptionPaywall } from '../../../src/lib/premiumGates';
 import {
@@ -66,6 +68,7 @@ export default function EditMemoryScreen() {
   const [selectedSong, setSelectedSong] = useState<SongAttachment | null>(post?.song ?? null);
   const [songPreviewRequestKey, setSongPreviewRequestKey] = useState<string | null>(null);
   const [videoMuted, setVideoMuted] = useState(post?.videoMuted ?? false);
+  const [locationNameInput, setLocationNameInput] = useState(post?.locationName ?? '');
   const [captionTone, setCaptionTone] = useState<AiCaptionTone>('witty');
   const [captionSuggestions, setCaptionSuggestions] = useState<string[]>([]);
   const [isGeneratingCaption, setIsGeneratingCaption] = useState(false);
@@ -91,7 +94,8 @@ export default function EditMemoryScreen() {
     setSelectedSong(post?.song ?? null);
     setSongPreviewRequestKey(null);
     setVideoMuted(post?.videoMuted ?? false);
-  }, [post?.id]);
+    setLocationNameInput(post?.locationName ?? '');
+  }, [post?.id, post?.locationName]);
 
   const onFlip = useCallback((back: boolean) => setShowingBack(back), []);
   const textInputTypography = useMemo(
@@ -193,6 +197,7 @@ export default function EditMemoryScreen() {
         visibility,
         canEditAttachedSong ? selectedSong : undefined,
         editablePost.videoUri ? videoMuted : undefined,
+        normalizeLocationName(locationNameInput),
       );
       backOnce(router);
     } catch (err: any) {
@@ -249,6 +254,8 @@ export default function EditMemoryScreen() {
         />
       </View>
 
+      <MemoryLocationPicker value={locationNameInput} onChange={setLocationNameInput} />
+
       {(body.trim() || backText.trim() || post.imageUri || (canEditAttachedSong ? selectedSong : post.song)) && (
         <View style={styles.previewSection}>
           <WallPostCard
@@ -257,7 +264,7 @@ export default function EditMemoryScreen() {
             onFlip={post.imageUri ? onFlip : undefined}
             autoPlaySongPreviewKey={songPreviewRequestKey}
             livePolaroidForcePlayback={!!post.videoUri}
-            post={{ ...post, body: body.trim(), backText: backText.trim() || null, textFont, textSize, textEffect, textColor, song: canEditAttachedSong ? selectedSong : post.song, videoMuted }}
+            post={{ ...post, body: body.trim(), backText: backText.trim() || null, textFont, textSize, textEffect, textColor, song: canEditAttachedSong ? selectedSong : post.song, videoMuted, locationName: normalizeLocationName(locationNameInput) }}
           />
           {developing && (
             <View style={styles.developingRow}>
@@ -265,7 +272,13 @@ export default function EditMemoryScreen() {
               <Text style={styles.developingHint}>Still developing… your photo will appear shortly</Text>
             </View>
           )}
-          {post.imageUri ? <Text style={styles.previewHint}>Tap card to flip</Text> : null}
+          {post.imageUri ? (
+            <Text style={styles.previewHint}>
+              {normalizeLocationName(locationNameInput)
+                ? 'Tap the card to flip — location is on the back'
+                : 'Tap card to flip'}
+            </Text>
+          ) : null}
         </View>
       )}
 

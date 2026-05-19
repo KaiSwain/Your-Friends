@@ -58,7 +58,7 @@ export default function MemoryPromptResponseScreen() {
       return;
     }
     if (request.promptType === 'photo_reference' && !selectedPostId) {
-      setError('Choose a polaroid first.');
+      setError('Choose a photo memory first.');
       return;
     }
     setBusy(true);
@@ -127,12 +127,12 @@ export default function MemoryPromptResponseScreen() {
 
       {request.promptType === 'photo_reference' ? (
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Choose a wall polaroid</Text>
+          <Text style={styles.sectionLabel}>Choose a photo memory</Text>
           <View style={styles.photoGrid}>
             {sharedPolaroids.length > 0 ? sharedPolaroids.map((post) => (
               <PhotoChoice key={post.id} post={post} selected={selectedPostId === post.id} onPress={() => setSelectedPostId(post.id)} />
             )) : (
-              <Text style={styles.helperText}>No shared polaroids yet. Try a song or text prompt instead.</Text>
+              <Text style={styles.helperText}>No shared photo memories yet. Try a song or text prompt instead.</Text>
             )}
           </View>
         </View>
@@ -144,7 +144,7 @@ export default function MemoryPromptResponseScreen() {
           multiline
           value={body}
           onChangeText={setBody}
-          placeholder={request.promptType === 'song' ? 'Why this song?' : request.promptType === 'photo_reference' ? 'Why this polaroid?' : 'Write your memory...'}
+          placeholder={request.promptType === 'song' ? 'Why this song?' : request.promptType === 'photo_reference' ? 'Why this photo memory?' : 'Write your memory...'}
           placeholderTextColor={colors.inkMuted}
           style={styles.responseInput}
         />

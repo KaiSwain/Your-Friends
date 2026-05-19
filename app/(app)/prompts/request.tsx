@@ -16,7 +16,7 @@ import type { MemoryPromptType, PeopleListItem } from '../../../src/types/domain
 const PROMPT_PRESETS: { type: MemoryPromptType; label: string; text: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { type: 'song', label: 'Song', text: 'What song reminds you of us?', icon: 'musical-notes-outline' },
   { type: 'text', label: 'Question', text: 'What memory should we never forget?', icon: 'chatbubble-ellipses-outline' },
-  { type: 'photo_reference', label: 'Polaroid', text: 'Pick a polaroid that reminds you of us.', icon: 'images-outline' },
+  { type: 'photo_reference', label: 'Photo memory', text: 'Pick a photo memory that reminds you of us.', icon: 'images-outline' },
 ];
 
 export default function MemoryPromptRequestScreen() {
@@ -103,7 +103,7 @@ export default function MemoryPromptRequestScreen() {
   return (
     <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={busy ? 'Sending...' : selectedRecipientIds.length > 1 ? `Send to ${selectedRecipientIds.length} friends` : 'Send prompt'} onPress={handleSend} disabled={busy || selectedRecipientIds.length === 0} />}>
       <Text style={styles.title}>Send a Memory Prompt</Text>
-      <Text style={styles.subtitle}>Ask friends to answer with a song, a note, or a polaroid from your shared wall.</Text>
+      <Text style={styles.subtitle}>Ask friends to answer with a song, a note, or a photo memory from your shared wall.</Text>
 
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Ask {selectedRecipientIds.length > 0 ? `(${selectedRecipientIds.length} selected)` : ''}</Text>
