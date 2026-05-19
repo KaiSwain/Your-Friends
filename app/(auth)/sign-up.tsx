@@ -12,9 +12,11 @@ import { AppScreen } from '../../src/components/AppScreen';
 import { FormField } from '../../src/components/FormField';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
-import { normalizeFriendCode } from '../../src/lib/friendCode';
+import { getGoogleAuthMissingMessage, googleAuthRequestConfig, isGoogleAuthConfigured } from '../../src/lib/googleAuthConfig';
+import { backOnce, replaceOnce } from '../../src/lib/navigationGuard';
 import { peekIncomingReferralCode } from '../../src/lib/referrals';
 import type { ColorTokens } from '../../src/features/theme/themes';
+import { protectTextFromFontClipping } from '../../src/theme/fontProtection';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
 
@@ -25,14 +27,13 @@ export default function SignUpScreen() {
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [referralCode, setReferralCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const [_googleRequest, googleResponse, googlePromptAsync] = Google.useIdTokenAuthRequest({
-    clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '',
-    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '',
-  });
+  const googleConfigured = isGoogleAuthConfigured();
+  const [_googleRequest, googleResponse, googlePromptAsync] = Google.useIdTokenAuthRequest(googleAuthRequestConfig);
 
   useEffect(() => {
     peekIncomingReferralCode().then((code) => {
@@ -47,7 +48,7 @@ export default function SignUpScreen() {
       setError('');
       signInWithGoogle(idToken, referralCode).then((result) => {
         if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
-        router.replace('/');
+        replaceOnce(router, '/');
       });
     }
   }, [googleResponse]);
@@ -55,10 +56,15 @@ export default function SignUpScreen() {
   async function handleSignUp() {
     setBusy(true);
     setError('');
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      setBusy(false);
+      return;
+    }
     // Display name is collected during onboarding; pass empty so signUp falls back to the email prefix.
     const result = await signUp('', email, password, referralCode);
     if (!result.ok) { setError(result.error); setBusy(false); return; }
-    router.replace('/');
+    replaceOnce(router, '/');
   }
 
   async function handleApple() {
@@ -66,10 +72,14 @@ export default function SignUpScreen() {
     setError('');
     const result = await signInWithApple(referralCode);
     if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
-    router.replace('/');
+    replaceOnce(router, '/');
   }
 
   async function handleGoogle() {
+    if (!googleConfigured) {
+      setError(getGoogleAuthMissingMessage());
+      return;
+    }
     googlePromptAsync();
   }
 
@@ -114,20 +124,14 @@ export default function SignUpScreen() {
       <View style={styles.emailSection}>
         <FormField autoCapitalize="none" keyboardType="email-address" label="Email" onChangeText={setEmail} placeholder="you@example.com" value={email} />
         <FormField autoCapitalize="none" label="Password" onChangeText={setPassword} placeholder="Choose a password" secureTextEntry value={password} />
-        <FormField
-          autoCapitalize="characters"
-          label="Referral code (optional)"
-          onChangeText={(value) => setReferralCode(normalizeFriendCode(value))}
-          placeholder="Friend's code"
-          value={referralCode}
-        />
+        <FormField autoCapitalize="none" label="Confirm password" onChangeText={setConfirmPassword} placeholder="Re-enter your password" secureTextEntry value={confirmPassword} />
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <ActionButton label={busy ? 'Creating…' : 'Create account'} onPress={handleSignUp} disabled={busy} />
       </View>
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>Already have an account?</Text>
-        <Pressable onPress={() => router.back()}>
+        <Pressable onPress={() => backOnce(router)}>
           <Text style={styles.link}>Sign in</Text>
         </Pressable>
       </View>
@@ -142,7 +146,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent,
       letterSpacing: 0.8, textTransform: 'uppercase',
     },
-    title: { fontFamily: fonts.heading, fontSize: 38, lineHeight: 42, color: colors.ink },
+    title: { fontFamily: fonts.heading, fontSize: 38, lineHeight: 42, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 38) },
     subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 23, color: colors.inkSoft },
     socialSection: { gap: spacing.sm, paddingTop: spacing.lg },
     socialButton: {

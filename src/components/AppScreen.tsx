@@ -1,11 +1,14 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { ReactNode, useCallback, useMemo, useRef, useState } from 'react';
-import { Animated, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent, Platform, RefreshControl, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Image, Keyboard, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent, Platform, RefreshControl, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets, type Edge } from 'react-native-safe-area-context';
 
+import { useAuth } from '../features/auth/AuthContext';
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
 import { spacing } from '../theme/tokens';
+
+const FLOATING_TAB_BAR_CLEARANCE = 64 + spacing.xxl + spacing.sm;
 
 interface AppScreenProps {
   children: ReactNode;
@@ -20,15 +23,19 @@ interface AppScreenProps {
   onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   floatingHeaderOnScroll?: boolean;
   safeAreaEdges?: Edge[];
+  scrollViewRef?: RefObject<ScrollView | null>;
 }
 
 const EDGE_TO_EDGE_SAFE_AREA_EDGES: Edge[] = ['left', 'right'];
 
-export function AppScreen({ children, contentContainerStyle, footer, gradientColors, header, scroll = true, onRefresh, refreshing = false, stickyHeaderIndices, onScroll, floatingHeaderOnScroll = false, safeAreaEdges = EDGE_TO_EDGE_SAFE_AREA_EDGES }: AppScreenProps) {
-  const { colors } = useTheme();
+export function AppScreen({ children, contentContainerStyle, footer, gradientColors, header, scroll = true, onRefresh, refreshing = false, stickyHeaderIndices, onScroll, floatingHeaderOnScroll = false, safeAreaEdges = EDGE_TO_EDGE_SAFE_AREA_EDGES, scrollViewRef }: AppScreenProps) {
+  const { backgroundBlur, colors } = useTheme();
+  const { currentUser } = useAuth();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const resolvedGradientColors = (gradientColors ?? [colors.canvas, colors.canvasAlt, colors.canvas]) as readonly [string, string, ...string[]];
+  const appBackgroundUri = gradientColors ? null : currentUser?.profileBgImagePath ?? null;
+  const resolvedGradientColors = (gradientColors ?? (appBackgroundUri ? ['transparent', 'transparent'] : [colors.canvas, colors.canvasAlt, colors.canvas])) as readonly [string, string, ...string[]];
+  const transparentGradient = Boolean(gradientColors?.every(isTransparentColor));
   const hasTopSafeArea = safeAreaEdges.includes('top');
   const hasBottomSafeArea = safeAreaEdges.includes('bottom');
   const topInset = hasTopSafeArea ? 0 : insets.top;
@@ -38,6 +45,21 @@ export function AppScreen({ children, contentContainerStyle, footer, gradientCol
   const lastScrollOffsetRef = useRef(0);
   const [headerInteractive, setHeaderInteractive] = useState(true);
   const [headerHeight, setHeaderHeight] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   const setFloatingHeaderVisible = useCallback((visible: boolean) => {
     if (headerVisibleRef.current === visible) return;
@@ -86,19 +108,22 @@ export function AppScreen({ children, contentContainerStyle, footer, gradientCol
     ? topInset + (headerHeight > 0 ? headerHeight + spacing.sm : 72)
     : undefined;
   const contentPaddingTop = !header ? topInset + spacing.md : undefined;
-  const contentPaddingBottom = bottomInset + spacing.xxl;
+  const screenPaddingBottom = getNumericPaddingBottom(contentContainerStyle);
+  const keyboardFallbackPadding = Platform.OS === 'ios' ? 0 : keyboardHeight;
+  const contentPaddingBottom = bottomInset + FLOATING_TAB_BAR_CLEARANCE + screenPaddingBottom + keyboardFallbackPadding;
 
   const body = scroll ? (
     <ScrollView
+      ref={scrollViewRef}
       style={styles.body}
       showsVerticalScrollIndicator={false}
       stickyHeaderIndices={stickyHeaderIndices}
       onScroll={handleScroll}
       scrollEventThrottle={16}
-      contentContainerStyle={[styles.scrollContent, { paddingBottom: contentPaddingBottom }, contentPaddingTop ? { paddingTop: contentPaddingTop } : undefined, floatingHeaderPaddingTop ? { paddingTop: floatingHeaderPaddingTop } : undefined, contentContainerStyle]}
-      keyboardDismissMode="on-drag"
+      contentContainerStyle={[styles.scrollContent, contentContainerStyle, { paddingBottom: contentPaddingBottom }, contentPaddingTop ? { paddingTop: contentPaddingTop } : undefined, floatingHeaderPaddingTop ? { paddingTop: floatingHeaderPaddingTop } : undefined]}
+      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
       keyboardShouldPersistTaps="handled"
-      automaticallyAdjustKeyboardInsets
+      automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
       refreshControl={
         onRefresh ? (
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.inkSoft} />
@@ -108,11 +133,17 @@ export function AppScreen({ children, contentContainerStyle, footer, gradientCol
       {children}
     </ScrollView>
   ) : (
-    <View style={[styles.body, styles.staticContent, { paddingBottom: contentPaddingBottom }, contentPaddingTop ? { paddingTop: contentPaddingTop } : undefined, floatingHeaderPaddingTop ? { paddingTop: floatingHeaderPaddingTop } : undefined, contentContainerStyle]}>{children}</View>
+    <View style={[styles.body, styles.staticContent, contentContainerStyle, { paddingBottom: contentPaddingBottom }, contentPaddingTop ? { paddingTop: contentPaddingTop } : undefined, floatingHeaderPaddingTop ? { paddingTop: floatingHeaderPaddingTop } : undefined]}>{children}</View>
   );
 
   return (
-    <LinearGradient colors={resolvedGradientColors} style={styles.gradient}>
+    <LinearGradient colors={resolvedGradientColors} style={[styles.gradient, transparentGradient && styles.transparentGradient]}>
+      {appBackgroundUri ? (
+        <View pointerEvents="none" style={styles.backgroundLayer}>
+          <Image source={{ uri: appBackgroundUri }} style={styles.backgroundImage} blurRadius={backgroundBlur} />
+          <View style={styles.backgroundScrim} />
+        </View>
+      ) : null}
       <SafeAreaView style={styles.safeArea} edges={safeAreaEdges}>
         {header ? (
           floatingHeaderOnScroll ? (
@@ -143,9 +174,35 @@ export function AppScreen({ children, contentContainerStyle, footer, gradientCol
   );
 }
 
-const makeStyles = (_colors: ColorTokens) =>
+function getNumericPaddingBottom(style: StyleProp<ViewStyle>) {
+  const flattened = StyleSheet.flatten(style);
+  return typeof flattened?.paddingBottom === 'number' ? flattened.paddingBottom : 0;
+}
+
+function isTransparentColor(color: string) {
+  return color === 'transparent' || /^rgba\([^)]*,\s*0(?:\.0+)?\)$/i.test(color.trim());
+}
+
+const makeStyles = (colors: ColorTokens) =>
   StyleSheet.create({
-    gradient: { flex: 1 },
+    gradient: { flex: 1, backgroundColor: colors.canvas },
+    transparentGradient: { backgroundColor: 'transparent' },
+    backgroundLayer: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 0,
+      backgroundColor: colors.canvas,
+    },
+    backgroundImage: {
+      ...StyleSheet.absoluteFillObject,
+      width: '100%',
+      height: '100%',
+      opacity: 0.68,
+      transform: [{ scale: 1.04 }],
+    },
+    backgroundScrim: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.canvas + '99',
+    },
     safeArea: { flex: 1 },
     body: { flex: 1 },
     scrollContent: {

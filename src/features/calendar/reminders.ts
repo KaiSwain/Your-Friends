@@ -3,12 +3,14 @@ import * as Notifications from 'expo-notifications';
 
 import type { CalendarEvent } from '../../types/domain';
 
-const reminderIdsKey = (userId: string, eventId: string) => `yourfriends:calendar:reminders:${userId}:${eventId}`;
+const eventReminderKey = (event: CalendarEvent) => event.shareId ? `share:${event.shareId}` : `event:${event.id}`;
+const reminderIdsKey = (userId: string, key: string) => `yourfriends:calendar:reminders:${userId}:${key}`;
 const reminderIndexKey = (userId: string) => `yourfriends:calendar:reminderIndex:${userId}`;
 const DEFAULT_ALL_DAY_HOUR = 9;
 
 export async function scheduleCalendarEventReminders(userId: string, event: CalendarEvent): Promise<string[]> {
-  await cancelCalendarEventReminders(userId, event.id);
+  const key = eventReminderKey(event);
+  await cancelCalendarEventReminders(userId, key);
   const reminderOffsets = event.reminderOffsets ?? [];
   if (reminderOffsets.length === 0) return [];
 
@@ -23,7 +25,12 @@ export async function scheduleCalendarEventReminders(userId: string, event: Cale
         title: getReminderTitle(event),
         body: getReminderBody(event, triggerDate.offsetDays),
         sound: true,
-        data: { eventId: event.id, type: 'calendar_event' },
+        data: {
+          eventId: event.id,
+          shareId: event.shareId ?? null,
+          type: 'calendar_event',
+          date: formatDateKey(triggerDate.date),
+        },
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
@@ -34,25 +41,30 @@ export async function scheduleCalendarEventReminders(userId: string, event: Cale
   }
 
   if (scheduledIds.length > 0) {
-    await AsyncStorage.setItem(reminderIdsKey(userId, event.id), JSON.stringify(scheduledIds));
-    await addEventToReminderIndex(userId, event.id);
+    await AsyncStorage.setItem(reminderIdsKey(userId, key), JSON.stringify(scheduledIds));
+    await addEventToReminderIndex(userId, key);
   }
   return scheduledIds;
 }
 
-export async function cancelCalendarEventReminders(userId: string, eventId: string): Promise<void> {
-  const key = reminderIdsKey(userId, eventId);
-  const raw = await AsyncStorage.getItem(key);
-  const ids = parseStoredIds(raw);
-  await Promise.all(ids.map((id) => Notifications.cancelScheduledNotificationAsync(id).catch(() => undefined)));
-  await AsyncStorage.removeItem(key);
-  await removeEventFromReminderIndex(userId, eventId);
+export async function cancelCalendarEventReminders(userId: string, eventKey: string): Promise<void> {
+  const keys = eventKey.includes(':') ? [eventKey] : [eventKey, `event:${eventKey}`];
+  for (const indexedKey of keys) {
+    const key = reminderIdsKey(userId, indexedKey);
+    const raw = await AsyncStorage.getItem(key);
+    const ids = parseStoredIds(raw);
+    await Promise.all(ids.map((id) => Notifications.cancelScheduledNotificationAsync(id).catch(() => undefined)));
+    await AsyncStorage.removeItem(key);
+    await removeEventFromReminderIndex(userId, indexedKey);
+  }
 }
 
 export async function resyncCalendarReminders(userId: string, events: readonly CalendarEvent[], isPremium: boolean): Promise<void> {
   await cancelAllCalendarReminders(userId);
-  if (!isPremium) return;
   for (const event of events) {
+    const isSharedEvent = !!event.shareId;
+    if (!isPremium && !isSharedEvent) continue;
+    if (isSharedEvent && event.sharedRemindersEnabled === false) continue;
     await scheduleCalendarEventReminders(userId, event).catch(() => undefined);
   }
 }

@@ -3,10 +3,13 @@ import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../src/components/ActionButton';
+import { BirthdaySliderPicker } from '../../src/components/BirthdaySliderPicker';
 import { FormField } from '../../src/components/FormField';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
 import { useTheme } from '../../src/features/theme/ThemeContext';
+import { getDefaultBirthdayIso } from '../../src/lib/birthday';
+import { pushOnce } from '../../src/lib/navigationGuard';
 
 export default function OnboardingWelcomeScreen() {
   const router = useRouter();
@@ -23,6 +26,7 @@ export default function OnboardingWelcomeScreen() {
   const [displayName, setDisplayName] = useState(
     isPlaceholderName ? '' : currentUser?.displayName ?? '',
   );
+  const [birthday, setBirthday] = useState(currentUser?.birthday ?? getDefaultBirthdayIso());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -35,10 +39,11 @@ export default function OnboardingWelcomeScreen() {
     setBusy(true);
     setError('');
     try {
-      if (currentUser && trimmed !== currentUser.displayName) {
-        await updateProfile({ displayName: trimmed });
+      if (currentUser && (trimmed !== currentUser.displayName || birthday !== currentUser.birthday)) {
+        await updateProfile({ displayName: trimmed, birthday });
       }
-      router.push('/(onboarding)/referral');
+      pushOnce(router, '/(onboarding)/referral');
+      setBusy(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not save your name.';
       setError(message);
@@ -49,11 +54,12 @@ export default function OnboardingWelcomeScreen() {
   return (
     <OnboardingFrame
       step={0}
-      totalSteps={7}
+      totalSteps={12}
       eyebrow="Welcome"
-      title="What should we call you?"
-      subtitle="This is the name your friends will see. You can change it later in settings."
+      title="What should your friends know first?"
+      subtitle="Your name and birthday help friends find you and remember your day automatically."
       hideBack
+      scrollable
       footer={
         <ActionButton
           label={busy ? 'Saving…' : 'Continue'}
@@ -69,12 +75,13 @@ export default function OnboardingWelcomeScreen() {
         placeholder="e.g. Kai"
         value={displayName}
       />
+      <BirthdaySliderPicker value={birthday} onChange={setBirthday} />
       {error ? (
         <Text style={[styles.error, { color: colors.error, fontFamily: fonts.body }]}>{error}</Text>
       ) : null}
       <View style={styles.spacer} />
       <Text style={[styles.tip, { color: colors.inkMuted, fontFamily: fonts.body }]}>
-        Tip: a first name or short nickname works best.
+        Your birthday is added to connected friends' calendars as a yearly reminder.
       </Text>
     </OnboardingFrame>
   );

@@ -7,7 +7,7 @@ import * as Sharing from 'expo-sharing';
  * Capture a React Native View ref as a PNG and open the native share sheet.
  * Works for sharing via Messages / SMS, AirDrop, social apps, etc.
  */
-export async function sharePolaroid(viewRef: RefObject<any>): Promise<void> {
+export async function sharePolaroid(viewRef: RefObject<any>, dialogTitle = 'Share this memory'): Promise<void> {
   try {
     if (!viewRef.current) return;
 
@@ -24,12 +24,12 @@ export async function sharePolaroid(viewRef: RefObject<any>): Promise<void> {
 
     await Sharing.shareAsync(uri, {
       mimeType: 'image/png',
-      dialogTitle: 'Share this polaroid',
+      dialogTitle,
       UTI: 'public.png',
     });
   } catch (error) {
     if (Platform.OS !== 'web') {
-      Alert.alert('Oops', 'Could not share this polaroid.');
+      Alert.alert('Oops', 'Could not share this memory.');
     }
   }
 }

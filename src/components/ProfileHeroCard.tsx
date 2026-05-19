@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
 import { usePolaroidImageReady } from '../hooks/usePolaroidImageReady';
+import { protectTextFromFontClipping } from '../theme/fontProtection';
 import type { FontSet } from '../theme/typography';
 import { spacing } from '../theme/tokens';
 import { CardFlourish } from './CardFlourish';
+import { AvatarInitials, MemoryCardFrame, MemoryPhotoEffects } from './memory-card';
 
 interface ProfileHeroCardProps {
   accentColor: string;
@@ -27,19 +28,11 @@ export function ProfileHeroCard({ accentColor, name, subtitle, imageUri, tags, o
   const photoContent = photoState.showImage ? (
     <>
       <Image source={{ uri: imageUri! }} style={styles.photoImage} fadeDuration={0} onLoad={photoState.handleImageLoad} onError={photoState.handleImageError} />
-      <View style={styles.warmBaseTint} />
-      <LinearGradient
-        colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.photoSheen}
-      />
-      <View style={styles.insetShadowTop} />
-      <View style={styles.insetShadowLeft} />
+      <MemoryPhotoEffects />
     </>
   ) : (
     <View style={[styles.photoSurface, { backgroundColor: accentColor }]}>
-      <Text style={styles.initials}>{getInitials(name)}</Text>
+      <AvatarInitials name={name} size={34} />
     </View>
   );
 
@@ -49,7 +42,7 @@ export function ProfileHeroCard({ accentColor, name, subtitle, imageUri, tags, o
         <View style={[styles.sheet, styles.sheetBack]} />
         <View style={styles.ambientShadow}>
           <View style={styles.tape} />
-          <View style={styles.card}>
+          <MemoryCardFrame style={styles.card}>
             {onPressPhoto ? (
               <Pressable onPress={onPressPhoto} style={styles.photoFrame}>
                 {photoContent}
@@ -66,17 +59,13 @@ export function ProfileHeroCard({ accentColor, name, subtitle, imageUri, tags, o
               <Text style={styles.cardName} numberOfLines={1}>{name}</Text>
             </View>
             <CardFlourish size={14} color={FRAME_INK} opacity={0.22} inset={10} />
-          </View>
+          </MemoryCardFrame>
         </View>
       </View>
       <Text style={styles.name}>{name}</Text>
       <Text style={styles.subtitle}>{subtitle}</Text>
     </View>
   );
-}
-
-function getInitials(value: string) {
-  return value.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('');
 }
 
 const PHOTO_SIZE = 120;
@@ -173,7 +162,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       alignItems: 'center',
     },
     photoOverlayText: { fontFamily: fonts.bodyBold, fontSize: 11, color: '#fff' },
-    initials: { fontFamily: fonts.heading, fontSize: 38, color: colors.white },
+    initials: { fontFamily: fonts.bodyBold, fontSize: 34, lineHeight: 38, color: colors.white, textAlign: 'center' },
     bottomStrip: {
       width: '100%',
       height: STRIP_HEIGHT,
@@ -189,6 +178,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: '100%',
       paddingHorizontal: 8,
       overflow: 'visible' as const,
+      ...protectTextFromFontClipping(fonts.handwrittenBold, 16),
     },
     warmBaseTint: {
       ...StyleSheet.absoluteFillObject,
@@ -237,6 +227,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: '100%',
       paddingHorizontal: 10,
       overflow: 'visible' as const,
+      ...protectTextFromFontClipping(fonts.handwrittenBold, 40),
     },
     subtitle: {
       fontFamily: fonts.body,

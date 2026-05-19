@@ -5,14 +5,17 @@ import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
+import { SavedProfileLinkChooser } from '../../../src/components/profile';
 import { SectionCard } from '../../../src/components/SectionCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
+import { backOnce, replaceOnce } from '../../../src/lib/navigationGuard';
 import type { Contact } from '../../../src/types/domain';
+import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import type { FontSet } from '../../../src/theme/typography';
-import { radius, shadow, spacing } from '../../../src/theme/tokens';
+import { radius, spacing } from '../../../src/theme/tokens';
 
 export default function LinkFriendChooserScreen() {
   const router = useRouter();
@@ -20,8 +23,10 @@ export default function LinkFriendChooserScreen() {
   const friendId = (params.friendId ?? '').toString();
   const { currentUser } = useAuth();
   const {
+    contacts,
     getUserById,
     getManualContactCandidatesForFriend,
+    getPendingFriendLinks,
     linkContactToFriend,
     createLinkedContactForFriend,
     isConnected,
@@ -35,7 +40,56 @@ export default function LinkFriendChooserScreen() {
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   const me = currentUser;
+  const pendingLinks = getPendingFriendLinks(me.id);
   const friend = friendId ? getUserById(friendId) : undefined;
+
+  if (!friendId) {
+    return (
+      <AppScreen>
+        <View style={styles.hero}>
+          <Text style={styles.eyebrow}>Friend matches</Text>
+          <Text style={styles.title}>Review saved profiles</Text>
+          <Text style={styles.subtitle}>
+            Choose whether each new friend should connect to a saved profile, or create a fresh one.
+          </Text>
+        </View>
+
+        {pendingLinks.length > 0 ? (
+          <SectionCard title="Needs review">
+            <View style={styles.list}>
+              {pendingLinks.map(({ friend: pendingFriend, candidates }) => (
+                <Pressable
+                  key={pendingFriend.id}
+                  onPress={() => replaceOnce(router, `/(app)/friends/link?friendId=${pendingFriend.id}`)}
+                  style={({ pressed }) => [styles.reviewRow, pressed && styles.pressed]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Review match for ${pendingFriend.displayName}`}
+                >
+                  <Ionicons name="git-merge-outline" size={18} color={colors.accent} />
+                  <View style={styles.body}>
+                    <Text style={styles.reviewTitle}>{pendingFriend.displayName}</Text>
+                    <Text style={styles.reviewEmail}>{pendingFriend.email}</Text>
+                    <Text style={styles.reviewSubtitle}>
+                      {candidates.length} saved {candidates.length === 1 ? 'profile may' : 'profiles may'} match.
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={colors.inkSoft} />
+                </Pressable>
+              ))}
+            </View>
+          </SectionCard>
+        ) : (
+          <SectionCard title="All caught up">
+            <Text style={styles.note}>There are no friend matches waiting for review.</Text>
+          </SectionCard>
+        )}
+
+        <Pressable style={styles.laterButton} onPress={() => backOnce(router)} accessibilityRole="button">
+          <Text style={styles.laterLabel}>Go back</Text>
+        </Pressable>
+      </AppScreen>
+    );
+  }
 
   if (!friend) {
     return (
@@ -44,7 +98,7 @@ export default function LinkFriendChooserScreen() {
           <Text style={styles.title}>We couldn't find that friend.</Text>
           <Text style={styles.subtitle}>They may have removed their account, or the link is out of date.</Text>
         </View>
-        <ActionButton label="Go back" onPress={() => router.back()} />
+        <ActionButton label="Go back" onPress={() => backOnce(router)} />
       </AppScreen>
     );
   }
@@ -56,18 +110,19 @@ export default function LinkFriendChooserScreen() {
           <Text style={styles.title}>You're not connected with {friend.displayName} yet.</Text>
           <Text style={styles.subtitle}>Add them by friend code first, then choose how to link them up.</Text>
         </View>
-        <ActionButton label="Go back" onPress={() => router.back()} />
+        <ActionButton label="Go back" onPress={() => backOnce(router)} />
       </AppScreen>
     );
   }
 
   const candidates = getManualContactCandidatesForFriend(me.id, friend.id);
+  const unlinkedContacts = contacts.filter((contact) => contact.ownerUserId === me.id && !contact.linkedUserId);
 
   const goToContact = (contactId: string) => {
-    router.replace(`/(app)/profiles/contact/${contactId}`);
+    replaceOnce(router, `/(app)/profiles/contact/${contactId}`);
   };
 
-  const handlePickCandidate = async (contact: Contact) => {
+  const linkContact = async (contact: Contact) => {
     setBusyContactId(contact.id);
     setError('');
     const result = await linkContactToFriend(contact.id, me.id, friend.id);
@@ -81,6 +136,17 @@ export default function LinkFriendChooserScreen() {
       `${contact.displayName} is now connected to ${friend.displayName}. Old memories you saved have moved over.`,
     );
     goToContact(contact.id);
+  };
+
+  const handlePickCandidate = (contact: Contact) => {
+    Alert.alert(
+      'Connect this profile?',
+      `Connect the ${friend.email} account to your saved ${contact.displayName} profile?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Connect', onPress: () => linkContact(contact) },
+      ],
+    );
   };
 
   const handleCreateNew = async () => {
@@ -100,33 +166,23 @@ export default function LinkFriendChooserScreen() {
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>New connection</Text>
         <Text style={styles.title}>{friend.displayName} is on Your Friends.</Text>
+        <Text style={styles.accountEmail}>Account email: {friend.email}</Text>
         <Text style={styles.subtitle}>
-          {candidates.length === 0
-            ? 'Pick how you want to save them.'
-            : `Do you already have a profile for ${shortFirstName(friend.displayName)}? Pick the right one, or start fresh.`}
+          Is this someone you already saved? Choose a saved profile to connect, or create a new one.
         </Text>
       </View>
 
-      {candidates.length > 0 && (
-        <SectionCard eyebrow="Existing profiles" title={`Your ${shortFirstName(friend.displayName)}s`}>
-          <Text style={styles.note}>
-            We won't merge anyone automatically. Tap the profile that matches {friend.displayName}, or create a new one below.
-          </Text>
-          <View style={styles.list}>
-            {candidates.map((candidate) => (
-              <CandidateRow
-                key={candidate.id}
-                contact={candidate}
-                colors={colors}
-                fonts={fonts}
-                disabled={busyContactId !== null || creatingNew}
-                busy={busyContactId === candidate.id}
-                onPress={() => handlePickCandidate(candidate)}
-              />
-            ))}
-          </View>
-        </SectionCard>
-      )}
+      {unlinkedContacts.length > 0 ? (
+        <SavedProfileLinkChooser
+          allContacts={unlinkedContacts}
+          busyContactId={busyContactId}
+          colors={colors}
+          disabled={creatingNew}
+          fonts={fonts}
+          onSelect={handlePickCandidate}
+          suggestedContacts={candidates}
+        />
+      ) : null}
 
       <SectionCard eyebrow="None of these" title={`Create a new profile for ${friend.displayName}`}>
         <Text style={styles.note}>
@@ -140,77 +196,16 @@ export default function LinkFriendChooserScreen() {
         />
       </SectionCard>
 
-      <Pressable style={styles.laterButton} onPress={() => router.back()} accessibilityRole="button">
+      <Pressable style={styles.laterButton} onPress={() => backOnce(router)} accessibilityRole="button">
         <Text style={styles.laterLabel}>Decide later</Text>
       </Pressable>
     </AppScreen>
   );
 }
 
-interface CandidateRowProps {
-  contact: Contact;
-  colors: ColorTokens;
-  fonts: FontSet;
-  disabled: boolean;
-  busy: boolean;
-  onPress: () => void;
-}
-
-function CandidateRow({ contact, colors, fonts, disabled, busy, onPress }: CandidateRowProps) {
-  const styles = useMemo(() => makeRowStyles(colors, fonts), [colors, fonts]);
-  const clueParts: string[] = [];
-  if (contact.nickname) clueParts.push(`"${contact.nickname}"`);
-  if (contact.tags.length > 0) clueParts.push(contact.tags.slice(0, 2).join(' · '));
-  if (contact.facts.length > 0) clueParts.push(contact.facts[0]);
-  const clue = clueParts.join(' · ');
-
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed, disabled && !busy && styles.dim]}
-    >
-      <View style={styles.avatar}>
-        <Text style={styles.avatarLabel}>{getInitials(contact.displayName)}</Text>
-      </View>
-      <View style={styles.body}>
-        <Text style={styles.title}>{contact.displayName}</Text>
-        {clue ? <Text style={styles.subtitle}>{clue}</Text> : null}
-        <Text style={styles.caption}>Saved {formatRelativeDate(contact.createdAt)}</Text>
-      </View>
-      <Ionicons
-        name={busy ? 'hourglass-outline' : 'chevron-forward'}
-        size={18}
-        color={colors.inkSoft}
-      />
-    </Pressable>
-  );
-}
-
 function shortFirstName(displayName: string): string {
   const first = displayName.trim().split(/\s+/)[0] ?? displayName;
   return first;
-}
-
-function getInitials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('') || '?';
-}
-
-function formatRelativeDate(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const diffDays = Math.floor((Date.now() - then) / (1000 * 60 * 60 * 24));
-  if (diffDays <= 0) return 'today';
-  if (diffDays === 1) return 'yesterday';
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
-  return `${Math.floor(diffDays / 365)} years ago`;
 }
 
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
@@ -223,23 +218,13 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       textTransform: 'uppercase',
       color: colors.accent,
     },
-    title: { fontFamily: fonts.heading, fontSize: 24, color: colors.ink },
+    title: { fontFamily: fonts.heading, fontSize: 24, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 24) },
+    accountEmail: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.accent },
     subtitle: { fontFamily: fonts.body, fontSize: 14, color: colors.inkSoft, lineHeight: 20 },
     note: { fontFamily: fonts.body, fontSize: 14, color: colors.inkSoft, lineHeight: 20 },
     list: { gap: spacing.sm, marginTop: spacing.sm },
-    error: { fontFamily: fonts.body, fontSize: 13, color: colors.error },
-    laterButton: { alignSelf: 'center', padding: spacing.md },
-    laterLabel: {
-      fontFamily: fonts.bodyBold,
-      fontSize: 14,
-      color: colors.inkSoft,
-      textDecorationLine: 'underline',
-    },
-  });
-
-const makeRowStyles = (colors: ColorTokens, fonts: FontSet) =>
-  StyleSheet.create({
-    row: {
+    body: { flex: 1, gap: 2 },
+    reviewRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.md,
@@ -248,21 +233,17 @@ const makeRowStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderWidth: 1,
       borderColor: colors.line,
       padding: spacing.md,
-      ...shadow.card,
     },
+    reviewTitle: { fontFamily: fonts.bodyBold, fontSize: 16, color: colors.ink },
+    reviewEmail: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.accent },
+    reviewSubtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.inkSoft },
     pressed: { transform: [{ scale: 0.99 }] },
-    dim: { opacity: 0.5 },
-    avatar: {
-      width: 48,
-      height: 48,
-      borderRadius: 16,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.accent,
+    error: { fontFamily: fonts.body, fontSize: 13, color: colors.error },
+    laterButton: { alignSelf: 'center', padding: spacing.md },
+    laterLabel: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 14,
+      color: colors.inkSoft,
+      textDecorationLine: 'underline',
     },
-    avatarLabel: { fontFamily: fonts.bodyBold, fontSize: 16, color: colors.white },
-    body: { flex: 1, gap: 2 },
-    title: { fontFamily: fonts.bodyBold, fontSize: 16, color: colors.ink },
-    subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.inkSoft },
-    caption: { fontFamily: fonts.body, fontSize: 11, color: colors.inkSoft, opacity: 0.7 },
   });

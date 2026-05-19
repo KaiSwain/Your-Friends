@@ -1,12 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../theme/ThemeContext';
 import type { ColorTokens } from '../theme/themes';
+import { protectTextFromFontClipping } from '../../theme/fontProtection';
 import type { FontSet } from '../../theme/typography';
 import { radius, spacing } from '../../theme/tokens';
+import { backOnce } from '../../lib/navigationGuard';
 
 interface OnboardingFrameProps {
   step: number;
@@ -20,6 +22,7 @@ interface OnboardingFrameProps {
   hideBack?: boolean;
   // When set, renders a top-right close (X) button that calls this handler.
   onClose?: () => void;
+  scrollable?: boolean;
 }
 
 export function OnboardingFrame({
@@ -32,6 +35,7 @@ export function OnboardingFrame({
   footer,
   hideBack,
   onClose,
+  scrollable,
 }: OnboardingFrameProps) {
   const router = useRouter();
   const { colors, fonts } = useTheme();
@@ -47,7 +51,7 @@ export function OnboardingFrame({
             name="chevron-back"
             size={24}
             color={colors.inkSoft}
-            onPress={() => router.back()}
+            onPress={() => backOnce(router)}
             suppressHighlighting
           />
         )}
@@ -77,12 +81,26 @@ export function OnboardingFrame({
         )}
       </View>
 
-      <View style={styles.body}>
-        <Text style={styles.eyebrow}>{eyebrow}</Text>
-        <Text style={styles.title}>{title}</Text>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-        {children ? <View style={styles.content}>{children}</View> : null}
-      </View>
+      {scrollable ? (
+        <ScrollView
+          style={styles.body}
+          contentContainerStyle={styles.bodyContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.eyebrow}>{eyebrow}</Text>
+          <Text style={styles.title}>{title}</Text>
+          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          {children ? <View style={styles.content}>{children}</View> : null}
+        </ScrollView>
+      ) : (
+        <View style={styles.body}>
+          <Text style={styles.eyebrow}>{eyebrow}</Text>
+          <Text style={styles.title}>{title}</Text>
+          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          {children ? <View style={styles.content}>{children}</View> : null}
+        </View>
+      )}
 
       <View style={styles.footer}>{footer}</View>
     </View>
@@ -108,7 +126,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     backPlaceholder: { width: 24, height: 24 },
     dots: { flexDirection: 'row', gap: 6 },
     dot: { width: 18, height: 4, borderRadius: radius.pill },
-    body: { flex: 1, gap: spacing.sm },
+    body: { flex: 1 },
+    bodyContent: { gap: spacing.sm, paddingBottom: spacing.md },
     eyebrow: {
       fontFamily: fonts.bodyBold,
       fontSize: 12,
@@ -116,8 +135,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       textTransform: 'uppercase',
       color: colors.accent,
     },
-    title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, lineHeight: 34 },
+    title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, lineHeight: 34, ...protectTextFromFontClipping(fonts.heading, 28) },
     subtitle: { fontFamily: fonts.body, fontSize: 15, color: colors.inkSoft, lineHeight: 22 },
-    content: { marginTop: spacing.lg, gap: spacing.md },
+    content: { flex: 1, marginTop: spacing.lg, gap: spacing.md },
     footer: { gap: spacing.sm },
   });

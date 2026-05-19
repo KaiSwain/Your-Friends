@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
+import { protectTextFromFontClipping } from '../theme/fontProtection';
 import type { FontSet } from '../theme/typography';
 import { radius, shadow, spacing } from '../theme/tokens';
 
@@ -47,5 +48,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontFamily: fonts.heading,
       fontSize: 24,
       color: colors.ink,
+      ...protectTextFromFontClipping(fonts.heading, 24),
     },
   });

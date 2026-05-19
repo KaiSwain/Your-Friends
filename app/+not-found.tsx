@@ -2,6 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { replaceOnce } from '../src/lib/navigationGuard';
+
 export default function NotFoundScreen() {
   const router = useRouter();
 
@@ -9,7 +11,7 @@ export default function NotFoundScreen() {
     <View style={styles.container}>
       <Ionicons name="compass-outline" size={48} color="#FAFAFA" style={{ marginBottom: 16 }} />
       <Text style={styles.title}>Page not found</Text>
-      <Pressable style={styles.button} onPress={() => router.replace('/')}>
+      <Pressable style={styles.button} onPress={() => replaceOnce(router, '/')}>
         <Text style={styles.buttonLabel}>Go Home</Text>
       </Pressable>
     </View>

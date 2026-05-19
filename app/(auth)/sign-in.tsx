@@ -12,7 +12,10 @@ import { AppScreen } from '../../src/components/AppScreen';
 import { FormField } from '../../src/components/FormField';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
+import { getGoogleAuthMissingMessage, googleAuthRequestConfig, isGoogleAuthConfigured } from '../../src/lib/googleAuthConfig';
+import { pushOnce, replaceOnce } from '../../src/lib/navigationGuard';
 import type { ColorTokens } from '../../src/features/theme/themes';
+import { protectTextFromFontClipping } from '../../src/theme/fontProtection';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
 
@@ -27,10 +30,8 @@ export default function SignInScreen() {
   const [busy, setBusy] = useState(false);
   const [showEmail, setShowEmail] = useState(false);
 
-  const [_googleRequest, googleResponse, googlePromptAsync] = Google.useIdTokenAuthRequest({
-    clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '',
-    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '',
-  });
+  const googleConfigured = isGoogleAuthConfigured();
+  const [_googleRequest, googleResponse, googlePromptAsync] = Google.useIdTokenAuthRequest(googleAuthRequestConfig);
 
   useEffect(() => {
     if (googleResponse?.type === 'success') {
@@ -39,7 +40,7 @@ export default function SignInScreen() {
       setError('');
       signInWithGoogle(idToken).then((result) => {
         if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
-        router.replace('/');
+        replaceOnce(router, '/');
       });
     }
   }, [googleResponse]);
@@ -49,7 +50,7 @@ export default function SignInScreen() {
     setError('');
     const result = await signIn(email, password);
     if (!result.ok) { setError(result.error); setBusy(false); return; }
-    router.replace('/');
+    replaceOnce(router, '/');
   }
 
   async function handleApple() {
@@ -57,10 +58,14 @@ export default function SignInScreen() {
     setError('');
     const result = await signInWithApple();
     if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
-    router.replace('/');
+    replaceOnce(router, '/');
   }
 
   async function handleGoogle() {
+    if (!googleConfigured) {
+      setError(getGoogleAuthMissingMessage());
+      return;
+    }
     googlePromptAsync();
   }
 
@@ -114,6 +119,9 @@ export default function SignInScreen() {
         <View style={styles.emailSection}>
           <FormField autoCapitalize="none" keyboardType="email-address" label="Email" onChangeText={setEmail} placeholder="avery@yourfriends.app" value={email} />
           <FormField autoCapitalize="none" label="Password" onChangeText={setPassword} placeholder="Your password" secureTextEntry value={password} />
+          <Pressable onPress={() => pushOnce(router, '/(auth)/reset-password')} style={styles.forgotButton}>
+            <Text style={styles.forgotLabel}>Forgot password?</Text>
+          </Pressable>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <ActionButton label={busy ? 'Signing in…' : 'Sign in'} onPress={handleSignIn} disabled={busy} />
         </View>
@@ -134,7 +142,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent,
       letterSpacing: 0.8, textTransform: 'uppercase',
     },
-    title: { fontFamily: fonts.heading, fontSize: 38, lineHeight: 42, color: colors.ink },
+    title: { fontFamily: fonts.heading, fontSize: 38, lineHeight: 42, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 38) },
     subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 23, color: colors.inkSoft },
     socialSection: { gap: spacing.sm, paddingTop: spacing.lg },
     socialButton: {
@@ -168,6 +176,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     dividerText: { fontFamily: fonts.body, fontSize: 13, color: colors.inkMuted },
     emailSection: { gap: spacing.sm },
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
+    forgotButton: { alignSelf: 'flex-end', paddingVertical: spacing.xs },
+    forgotLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.accent },
     footer: {
       flexDirection: 'row',
       alignItems: 'center',

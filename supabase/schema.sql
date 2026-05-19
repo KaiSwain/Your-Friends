@@ -13,6 +13,9 @@ create table public.profiles ( -- Create the profiles table in the public schema
   friend_code text unique not null, -- Store the unique friend code used to connect users.
   avatar_color text not null default '#7C5CFC', -- Store a fallback avatar color for the profile.
   avatar_path text, -- Optionally store a path to an uploaded avatar image.
+  birthday date, -- Optionally store the user's birthday for friend calendar sync.
+  profile_bg_image_path text, -- Optionally store an uploaded Premium profile background image URL.
+  profile_bg_image_public boolean not null default false, -- Let users explicitly choose whether their background appears on their public profile.
   push_token text, -- Store the Expo push notification token for server-side sends.
   profile_facts text[] not null default '{}', -- Store profile facts as a text array.
   premium_until timestamptz, -- Store when Premium access expires, including referral rewards.
@@ -20,6 +23,10 @@ create table public.profiles ( -- Create the profiles table in the public schema
 ); -- End the profiles table definition.
 
 alter table public.profiles enable row level security; -- Turn on row-level security for profiles.
+
+alter table public.profiles add column if not exists profile_bg_image_path text;
+alter table public.profiles add column if not exists profile_bg_image_public boolean not null default false;
+alter table public.profiles add column if not exists birthday date;
 
 create policy "Users can read any profile" -- Name the policy that allows profile reads.
   on public.profiles for select using (true); -- Allow all authenticated users to select any profile.
@@ -151,11 +158,15 @@ create table public.contacts ( -- Create the contacts table in the public schema
   nickname text, -- Optionally store a private nickname for the contact.
   facts text[] not null default '{}', -- Store contact facts as a text array.
   avatar_path text, -- Optionally store a path to an uploaded avatar image.
+  avatar_video_path text, -- Optionally store a hero card video URL.
+  avatar_video_muted boolean not null default false, -- Optionally force the hero card video to play without audio.
+  hero_wall_post_id uuid references public.wall_posts(id) on delete set null, -- Optionally use an existing memory as this local profile card.
   tags text[] not null default '{}', -- Store relationship tags as a text array.
   note text, -- Optionally store a short note about this contact.
   card_color text, -- Optionally store a card background color.
   back_text text, -- Optionally store text written on the back of the profile card.
   profile_bg text, -- Optionally store a profile background theme key.
+  profile_bg_image_path text, -- Optionally store an uploaded Premium profile background image URL.
   created_at timestamptz not null default now(), -- Store when the contact row was created.
   constraint contacts_unique_link unique (owner_user_id, linked_user_id) -- Prevent duplicate linked contacts per owner.
 ); -- End the contacts table definition.
@@ -163,13 +174,17 @@ create table public.contacts ( -- Create the contacts table in the public schema
 alter table public.contacts enable row level security; -- Turn on row-level security for contacts.
 
 create policy "Users can manage own contacts" -- Name the policy that controls all contact operations.
-  on public.contacts for all using (auth.uid() = owner_user_id); -- Only allow the owner to read, update, or delete their contacts.
+  on public.contacts for all using (auth.uid() = owner_user_id) with check (auth.uid() = owner_user_id); -- Only allow the owner to read, update, or delete their contacts.
 
 create policy "Linked users can read their contact" -- Let users see the contact card someone else created about them.
   on public.contacts for select using (auth.uid() = linked_user_id);
 
 alter table public.contacts add column if not exists pinned boolean not null default false;
 alter table public.contacts add column if not exists pinned_at timestamptz;
+alter table public.contacts add column if not exists profile_bg_image_path text;
+alter table public.contacts add column if not exists avatar_video_path text;
+alter table public.contacts add column if not exists avatar_video_muted boolean not null default false;
+alter table public.contacts add column if not exists hero_wall_post_id uuid references public.wall_posts(id) on delete set null;
 update public.contacts set pinned_at = created_at where pinned = true and pinned_at is null;
 
 -- Private contact notes — iOS Notes-style private notes owned by one user.
@@ -269,6 +284,45 @@ create policy "Users can create friendships involving themselves" -- Name the po
   on public.friendships for insert -- Apply the policy to INSERT queries.
   with check (auth.uid() = created_by_user_id); -- Only allow users to create friendships on their own behalf.
 
+create policy "Users can delete own friendships"
+  on public.friendships for delete
+  using (auth.uid() = user_low_id or auth.uid() = user_high_id);
+
+-- Friend requests section — stores pending requests before a friendship exists.
+create table public.friend_requests (
+  id uuid primary key default uuid_generate_v4(),
+  requester_user_id uuid not null references public.profiles(id) on delete cascade,
+  recipient_user_id uuid not null references public.profiles(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'declined')),
+  created_at timestamptz not null default now(),
+  responded_at timestamptz,
+  constraint friend_requests_not_self check (requester_user_id <> recipient_user_id),
+  constraint friend_requests_unique_pair unique (requester_user_id, recipient_user_id)
+);
+
+alter table public.friend_requests enable row level security;
+
+create policy "Users can read involved friend requests"
+  on public.friend_requests for select
+  using (auth.uid() = requester_user_id or auth.uid() = recipient_user_id);
+
+create policy "Users can send friend requests"
+  on public.friend_requests for insert
+  with check (auth.uid() = requester_user_id and status = 'pending');
+
+create policy "Recipients can respond to friend requests"
+  on public.friend_requests for update
+  using (auth.uid() = recipient_user_id)
+  with check (auth.uid() = recipient_user_id and status in ('accepted', 'declined'));
+
+create policy "Requesters can resend declined friend requests"
+  on public.friend_requests for update
+  using (auth.uid() = requester_user_id and status = 'declined')
+  with check (auth.uid() = requester_user_id and status = 'pending' and responded_at is null);
+
+create index idx_friend_requests_recipient on public.friend_requests(recipient_user_id, status);
+create index idx_friend_requests_requester on public.friend_requests(requester_user_id, status);
+
 -- Mark the start of the wall posts section.
 -- Explain that wall posts are memories written about either a user or a contact.
 create table public.wall_posts ( -- Create the wall_posts table in the public schema.
@@ -277,12 +331,36 @@ create table public.wall_posts ( -- Create the wall_posts table in the public sc
   subject_user_id uuid references public.profiles(id) on delete cascade, -- Optionally store the subject as a real user.
   subject_contact_id uuid references public.contacts(id) on delete cascade, -- Optionally store the subject as a private contact.
   visibility text not null default 'private' check (visibility in ('private', 'visible_to_subject')), -- Restrict visibility to the supported values.
+  post_type text not null default 'note' check (post_type in ('note', 'polaroid', 'song', 'movie')), -- Store which wall presentation this memory uses.
   body text not null, -- Store the main memory text.
   image_path text, -- Optionally store an uploaded image path or URL.
+  video_path text, -- Optionally store an uploaded Live Polaroid video URL.
+  video_muted boolean not null default false, -- Optionally force the Live Polaroid video to play without audio.
   card_color text, -- Optionally store a custom card color for the polaroid frame.
   back_text text, -- Optionally store text written on the back of the polaroid.
   filter text, -- Optionally store a photo filter key (e.g. vintage, warm, cool).
   date_stamp boolean not null default false, -- Optionally store whether to show a date stamp overlay on the photo.
+  memory_date date, -- Optionally store when the memory happened, separate from when it was posted.
+  song_provider text check (song_provider in ('apple', 'spotify')), -- Optionally store the source provider for a song memory.
+  song_provider_id text, -- Optionally store the provider's track ID.
+  song_title text, -- Optionally store the song title shown on the wall.
+  song_artist text, -- Optionally store the song artist shown on the wall.
+  song_artwork_url text, -- Optionally store album artwork for a song memory.
+  song_preview_url text, -- Optionally store a short playable preview URL.
+  song_external_url text, -- Optionally store the provider URL for the track.
+  movie_tmdb_id text, -- Optionally store the TMDb movie ID for a movie review memory.
+  movie_title text, -- Optionally store the movie title snapshot.
+  movie_year text, -- Optionally store the movie release year snapshot.
+  movie_poster_url text, -- Optionally store the movie poster URL snapshot.
+  movie_overview text, -- Optionally store the movie overview snapshot.
+  movie_release_date date, -- Optionally store the movie release date snapshot.
+  movie_vote_average numeric, -- Optionally store the public TMDb average rating snapshot.
+  movie_review_rating numeric check (movie_review_rating between 0.5 and 5 and movie_review_rating * 2 = floor(movie_review_rating * 2)), -- Optionally store the friend's half-step star rating.
+  movie_review_request_id uuid, -- Optionally link back to the request that produced this review.
+  memory_prompt_request_id uuid, -- Optionally link back to the generic prompt that produced this memory.
+  referenced_wall_post_id uuid references public.wall_posts(id) on delete set null, -- Optionally reference an existing polaroid selected for a prompt.
+  prompt_text text, -- Optionally store the prompt text that produced this memory.
+  prompt_type text check (prompt_type in ('song', 'text', 'photo_reference')), -- Optionally store the prompt category that produced this memory.
   created_at timestamptz not null default now(), -- Store when the wall post row was created.
   constraint wall_posts_has_subject check ( -- Enforce that exactly one kind of subject is set.
     (subject_user_id is not null and subject_contact_id is null) or -- Allow a real-user subject with no contact subject.
@@ -293,7 +371,7 @@ create table public.wall_posts ( -- Create the wall_posts table in the public sc
 alter table public.wall_posts enable row level security; -- Turn on row-level security for wall posts.
 
 create policy "Authors can manage own wall posts" -- Name the policy that gives authors full control of their own posts.
-  on public.wall_posts for all using (auth.uid() = author_user_id); -- Only allow the author to manage their own posts.
+  on public.wall_posts for all using (auth.uid() = author_user_id) with check (auth.uid() = author_user_id); -- Only allow the author to manage their own posts.
 
 create policy "Subjects can read visible posts about them" -- Name the policy that lets subjects read visible posts.
   on public.wall_posts for select -- Apply the policy to SELECT queries.
@@ -314,13 +392,420 @@ create policy "Subjects can read posts about linked contacts" -- Let users see p
     )
   );
 
+-- Memory replies — short comments attached to a visible memory.
+create table public.memory_replies (
+  id uuid primary key default uuid_generate_v4(),
+  wall_post_id uuid not null references public.wall_posts(id) on delete cascade,
+  author_user_id uuid not null references public.profiles(id) on delete cascade,
+  body text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.memory_replies enable row level security;
+
+create policy "Users can read replies on visible memories"
+  on public.memory_replies for select
+  using (
+    exists (
+      select 1 from public.wall_posts wp
+      where wp.id = memory_replies.wall_post_id
+        and (
+          wp.author_user_id = auth.uid()
+          or (wp.visibility = 'visible_to_subject' and wp.subject_user_id = auth.uid())
+          or (
+            wp.visibility = 'visible_to_subject'
+            and wp.subject_contact_id is not null
+            and exists (
+              select 1 from public.contacts c
+              where c.id = wp.subject_contact_id
+                and c.linked_user_id = auth.uid()
+            )
+          )
+        )
+    )
+  );
+
+create policy "Users can reply to visible memories"
+  on public.memory_replies for insert
+  with check (
+    auth.uid() = author_user_id
+    and exists (
+      select 1 from public.wall_posts wp
+      where wp.id = wall_post_id
+        and (
+          wp.author_user_id = auth.uid()
+          or (wp.visibility = 'visible_to_subject' and wp.subject_user_id = auth.uid())
+          or (
+            wp.visibility = 'visible_to_subject'
+            and wp.subject_contact_id is not null
+            and exists (
+              select 1 from public.contacts c
+              where c.id = wp.subject_contact_id
+                and c.linked_user_id = auth.uid()
+            )
+          )
+        )
+    )
+  );
+
+create policy "Reply authors can delete own replies"
+  on public.memory_replies for delete
+  using (auth.uid() = author_user_id);
+
+-- Curated profile wall items — existing memories the owner intentionally features on their own profile.
+create table public.profile_wall_items (
+  id uuid primary key default uuid_generate_v4(),
+  owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  wall_post_id uuid not null references public.wall_posts(id) on delete cascade,
+  replies_hidden boolean not null default false,
+  created_at timestamptz not null default now(),
+  constraint profile_wall_items_unique unique (owner_user_id, wall_post_id)
+);
+
+alter table public.profile_wall_items enable row level security;
+
+create policy "Users can read own profile wall items"
+  on public.profile_wall_items for select
+  using (auth.uid() = owner_user_id);
+
+create policy "Friends can read profile wall items"
+  on public.profile_wall_items for select
+  using (
+    exists (
+      select 1 from public.friendships f
+      where (f.user_low_id = auth.uid() and f.user_high_id = owner_user_id)
+         or (f.user_high_id = auth.uid() and f.user_low_id = owner_user_id)
+    )
+  );
+
+create policy "Users can insert own profile wall items"
+  on public.profile_wall_items for insert
+  with check (auth.uid() = owner_user_id);
+
+create policy "Users can delete own profile wall items"
+  on public.profile_wall_items for delete
+  using (auth.uid() = owner_user_id);
+
+-- Saved whiteboard layouts for memory wall pinboards.
+create table public.wall_post_layouts (
+  id uuid primary key default uuid_generate_v4(),
+  owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  wall_context text not null,
+  wall_context_id text not null,
+  wall_post_id uuid not null references public.wall_posts(id) on delete cascade,
+  x numeric not null default 0,
+  y numeric not null default 0,
+  scale numeric not null default 1,
+  rotation numeric not null default 0,
+  z_index integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint wall_post_layouts_unique unique (owner_user_id, wall_context, wall_context_id, wall_post_id),
+  constraint wall_post_layouts_context_check check (wall_context in ('contact_profile', 'shared_wall', 'my_profile', 'user_profile'))
+);
+
+alter table public.wall_post_layouts enable row level security;
+
+create policy "Users can read own wall post layouts"
+  on public.wall_post_layouts for select
+  using (auth.uid() = owner_user_id);
+
+create policy "Users can insert own wall post layouts"
+  on public.wall_post_layouts for insert
+  with check (auth.uid() = owner_user_id);
+
+create policy "Users can update own wall post layouts"
+  on public.wall_post_layouts for update
+  using (auth.uid() = owner_user_id)
+  with check (auth.uid() = owner_user_id);
+
+create policy "Users can delete own wall post layouts"
+  on public.wall_post_layouts for delete
+  using (auth.uid() = owner_user_id);
+
+create policy "Friends can read featured profile wall posts"
+  on public.wall_posts for select
+  using (
+    exists (
+      select 1
+      from public.profile_wall_items pwi
+      join public.friendships f
+        on (f.user_low_id = auth.uid() and f.user_high_id = pwi.owner_user_id)
+        or (f.user_high_id = auth.uid() and f.user_low_id = pwi.owner_user_id)
+      where pwi.wall_post_id = wall_posts.id
+    )
+  );
+
+-- Gift notes — locked surprise notes that reveal into wall memories.
+create table public.gift_notes (
+  id uuid primary key default uuid_generate_v4(),
+  author_user_id uuid not null references public.profiles(id) on delete cascade,
+  recipient_user_id uuid not null references public.profiles(id) on delete cascade,
+  subject_contact_id uuid references public.contacts(id) on delete set null,
+  unlock_date date not null,
+  unlock_time time not null default '09:00',
+  title text not null default 'A surprise note',
+  status text not null default 'locked' check (status in ('locked', 'revealed', 'cancelled')),
+  revealed_wall_post_id uuid references public.wall_posts(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint gift_notes_no_self check (author_user_id <> recipient_user_id)
+);
+
+alter table public.gift_notes add column if not exists unlock_time time not null default '09:00';
+
+create table public.gift_note_bodies (
+  gift_note_id uuid primary key references public.gift_notes(id) on delete cascade,
+  body text not null
+);
+
+alter table public.gift_notes enable row level security;
+alter table public.gift_note_bodies enable row level security;
+
+create policy "Authors and recipients can read gift note metadata"
+  on public.gift_notes for select
+  using (auth.uid() = author_user_id or auth.uid() = recipient_user_id);
+
+create policy "Authors can create gift notes"
+  on public.gift_notes for insert
+  with check (auth.uid() = author_user_id and author_user_id <> recipient_user_id);
+
+create policy "Authors can cancel locked gift notes"
+  on public.gift_notes for update
+  using (auth.uid() = author_user_id and status = 'locked')
+  with check (auth.uid() = author_user_id and status in ('locked', 'cancelled'));
+
+create policy "Authors can read gift note bodies"
+  on public.gift_note_bodies for select
+  using (
+    exists (
+      select 1 from public.gift_notes gn
+      where gn.id = gift_note_id
+        and gn.author_user_id = auth.uid()
+    )
+  );
+
+create policy "Authors can create gift note bodies"
+  on public.gift_note_bodies for insert
+  with check (
+    exists (
+      select 1 from public.gift_notes gn
+      where gn.id = gift_note_id
+        and gn.author_user_id = auth.uid()
+        and gn.status = 'locked'
+    )
+  );
+
+create or replace function public.reveal_due_gift_notes()
+returns table (
+  gift_note_id uuid,
+  wall_post_id uuid,
+  author_user_id uuid,
+  recipient_user_id uuid
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  gift record;
+  inserted_post public.wall_posts%rowtype;
+  author_name text;
+begin
+  if auth.uid() is null then
+    raise exception 'Sign in to reveal gift notes.';
+  end if;
+
+  for gift in
+    select gn.*, gnb.body
+    from public.gift_notes gn
+    join public.gift_note_bodies gnb on gnb.gift_note_id = gn.id
+    where gn.status = 'locked'
+      and (gn.unlock_date + coalesce(gn.unlock_time, '09:00'::time)) <= now()
+    for update of gn skip locked
+  loop
+    insert into public.wall_posts (
+      author_user_id,
+      subject_user_id,
+      subject_contact_id,
+      visibility,
+      post_type,
+      body,
+      memory_date
+    ) values (
+      gift.author_user_id,
+      gift.recipient_user_id,
+      null,
+      'visible_to_subject',
+      'note',
+      gift.body,
+      gift.unlock_date
+    )
+    returning * into inserted_post;
+
+    update public.gift_notes
+    set status = 'revealed',
+        revealed_wall_post_id = inserted_post.id,
+        updated_at = now()
+    where id = gift.id
+      and status = 'locked';
+
+    select coalesce(nullif(display_name, ''), 'Someone') into author_name
+    from public.profiles
+    where id = gift.author_user_id;
+
+    insert into public.notifications (
+      recipient_user_id,
+      actor_user_id,
+      type,
+      reference_id,
+      message,
+      metadata
+    ) values (
+      gift.recipient_user_id,
+      gift.author_user_id,
+      'wall_post',
+      inserted_post.id::text,
+      coalesce(author_name, 'Someone') || '''s gift note unlocked for you',
+      jsonb_build_object(
+        'wallPostId', inserted_post.id,
+        'giftNoteId', gift.id,
+        'source', 'gift_note'
+      )
+    );
+
+    gift_note_id := gift.id;
+    wall_post_id := inserted_post.id;
+    author_user_id := gift.author_user_id;
+    recipient_user_id := gift.recipient_user_id;
+    return next;
+  end loop;
+end;
+$$;
+
+grant execute on function public.reveal_due_gift_notes() to authenticated;
+
+-- Movie review requests — friend-to-friend prompts to rate a movie.
+create table public.movie_review_requests (
+  id uuid primary key default uuid_generate_v4(),
+  requester_user_id uuid not null references public.profiles(id) on delete cascade,
+  recipient_user_id uuid not null references public.profiles(id) on delete cascade,
+  movie_tmdb_id text not null,
+  movie_title text not null,
+  movie_year text,
+  movie_poster_url text,
+  movie_overview text,
+  movie_release_date date,
+  movie_vote_average numeric,
+  prompt text,
+  status text not null default 'pending' check (status in ('pending', 'completed', 'cancelled')),
+  review_rating numeric check (review_rating between 0.5 and 5 and review_rating * 2 = floor(review_rating * 2)),
+  review_body text,
+  completed_wall_post_id uuid references public.wall_posts(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  completed_at timestamptz,
+  constraint movie_review_requests_no_self check (requester_user_id <> recipient_user_id)
+);
+
+alter table public.movie_review_requests enable row level security;
+
+create policy "Users can read involved movie review requests"
+  on public.movie_review_requests for select
+  using (auth.uid() = requester_user_id or auth.uid() = recipient_user_id);
+
+create policy "Friends can create movie review requests"
+  on public.movie_review_requests for insert
+  with check (
+    auth.uid() = requester_user_id
+    and requester_user_id <> recipient_user_id
+    and status = 'pending'
+    and exists (
+      select 1 from public.friendships f
+      where (f.user_low_id = requester_user_id and f.user_high_id = recipient_user_id)
+         or (f.user_low_id = recipient_user_id and f.user_high_id = requester_user_id)
+    )
+  );
+
+create policy "Requesters can cancel pending movie review requests"
+  on public.movie_review_requests for update
+  using (auth.uid() = requester_user_id and status = 'pending')
+  with check (auth.uid() = requester_user_id and status in ('pending', 'cancelled'));
+
+create policy "Recipients can complete pending movie review requests"
+  on public.movie_review_requests for update
+  using (auth.uid() = recipient_user_id and status = 'pending')
+  with check (auth.uid() = recipient_user_id and status in ('pending', 'completed'));
+
+alter table public.wall_posts
+  add constraint wall_posts_movie_review_request_fk
+  foreign key (movie_review_request_id) references public.movie_review_requests(id) on delete set null;
+
+-- Memory prompt requests — generic friend-to-friend prompts that become wall memories.
+create table public.memory_prompt_requests (
+  id uuid primary key default uuid_generate_v4(),
+  requester_user_id uuid not null references public.profiles(id) on delete cascade,
+  recipient_user_id uuid not null references public.profiles(id) on delete cascade,
+  prompt_type text not null check (prompt_type in ('song', 'text', 'photo_reference')),
+  prompt_text text not null,
+  status text not null default 'pending' check (status in ('pending', 'completed', 'cancelled')),
+  response_body text,
+  response_song_provider text check (response_song_provider in ('apple', 'spotify')),
+  response_song_provider_id text,
+  response_song_title text,
+  response_song_artist text,
+  response_song_artwork_url text,
+  response_song_preview_url text,
+  response_song_external_url text,
+  referenced_wall_post_id uuid references public.wall_posts(id) on delete set null,
+  completed_wall_post_id uuid references public.wall_posts(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  completed_at timestamptz,
+  constraint memory_prompt_requests_no_self check (requester_user_id <> recipient_user_id)
+);
+
+alter table public.memory_prompt_requests enable row level security;
+
+create policy "Users can read involved memory prompt requests"
+  on public.memory_prompt_requests for select
+  using (auth.uid() = requester_user_id or auth.uid() = recipient_user_id);
+
+create policy "Friends can create memory prompt requests"
+  on public.memory_prompt_requests for insert
+  with check (
+    auth.uid() = requester_user_id
+    and requester_user_id <> recipient_user_id
+    and status = 'pending'
+    and exists (
+      select 1 from public.friendships f
+      where (f.user_low_id = requester_user_id and f.user_high_id = recipient_user_id)
+         or (f.user_low_id = recipient_user_id and f.user_high_id = requester_user_id)
+    )
+  );
+
+create policy "Requesters can cancel pending memory prompt requests"
+  on public.memory_prompt_requests for update
+  using (auth.uid() = requester_user_id and status = 'pending')
+  with check (auth.uid() = requester_user_id and status in ('pending', 'cancelled'));
+
+create policy "Recipients can complete pending memory prompt requests"
+  on public.memory_prompt_requests for update
+  using (auth.uid() = recipient_user_id and status = 'pending')
+  with check (auth.uid() = recipient_user_id and status in ('pending', 'completed'));
+
+alter table public.wall_posts
+  add constraint wall_posts_memory_prompt_request_fk
+  foreign key (memory_prompt_request_id) references public.memory_prompt_requests(id) on delete set null;
+
 -- Calendar events — Premium-created dates owned by one user.
 create table public.calendar_events (
   id uuid primary key default uuid_generate_v4(),
   owner_user_id uuid not null references public.profiles(id) on delete cascade,
   subject_user_id uuid references public.profiles(id) on delete cascade,
   subject_contact_id uuid references public.contacts(id) on delete cascade,
-  event_type text not null check (event_type in ('birthday', 'anniversary', 'custom')),
+  event_type text not null check (event_type in ('reminder', 'birthday', 'anniversary', 'custom')),
   title text not null,
   event_date date not null,
   event_time time,
@@ -346,21 +831,136 @@ create policy "Users can manage own calendar events"
   using (auth.uid() = owner_user_id)
   with check (auth.uid() = owner_user_id);
 
+-- Calendar event shares let a creator show one event on a connected friend's
+-- calendar while keeping recipient reminder preferences separate.
+create table public.calendar_event_shares (
+  id uuid primary key default uuid_generate_v4(),
+  event_id uuid not null references public.calendar_events(id) on delete cascade,
+  owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  recipient_user_id uuid not null references public.profiles(id) on delete cascade,
+  reminders_enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint calendar_event_shares_no_self check (owner_user_id <> recipient_user_id),
+  constraint calendar_event_shares_unique_recipient unique (event_id, recipient_user_id)
+);
+
+alter table public.calendar_event_shares enable row level security;
+
+create policy "Owners can read own calendar event shares"
+  on public.calendar_event_shares for select
+  using (auth.uid() = owner_user_id);
+
+create policy "Recipients can read own calendar event shares"
+  on public.calendar_event_shares for select
+  using (auth.uid() = recipient_user_id);
+
+create policy "Owners can create shares for own calendar events"
+  on public.calendar_event_shares for insert
+  with check (
+    auth.uid() = owner_user_id
+    and recipient_user_id <> auth.uid()
+    and exists (
+      select 1
+      from public.calendar_events ce
+      where ce.id = event_id
+        and ce.owner_user_id = auth.uid()
+    )
+  );
+
+create policy "Owners can delete own calendar event shares"
+  on public.calendar_event_shares for delete
+  using (
+    auth.uid() = owner_user_id
+    and exists (
+      select 1
+      from public.calendar_events ce
+      where ce.id = event_id
+        and ce.owner_user_id = auth.uid()
+    )
+  );
+
+create policy "Shared recipients can read shared calendar events"
+  on public.calendar_events for select
+  using (
+    exists (
+      select 1
+      from public.calendar_event_shares ces
+      where ces.event_id = calendar_events.id
+        and ces.recipient_user_id = auth.uid()
+    )
+  );
+
+create or replace function public.set_calendar_event_share_reminders(
+  p_share_id uuid,
+  p_reminders_enabled boolean
+)
+returns public.calendar_event_shares
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_share public.calendar_event_shares%rowtype;
+begin
+  if auth.uid() is null then
+    raise exception 'Sign in to update shared calendar reminders.';
+  end if;
+
+  update public.calendar_event_shares
+  set reminders_enabled = p_reminders_enabled,
+      updated_at = now()
+  where id = p_share_id
+    and recipient_user_id = auth.uid()
+  returning * into updated_share;
+
+  if updated_share.id is null then
+    raise exception 'Shared calendar event not found.';
+  end if;
+
+  return updated_share;
+end;
+$$;
+
+grant execute on function public.set_calendar_event_share_reminders(uuid, boolean) to authenticated;
+
 -- Mark the storage section for memory images.
 -- Tell the reader to create the bucket manually in the dashboard.
 
 -- Mark the start of the indexes section.
 -- Explain that these indexes speed up the most common lookup queries.
 create index idx_contacts_owner on public.contacts(owner_user_id); -- Speed up queries by contact owner.
+create index idx_contacts_hero_wall_post on public.contacts(hero_wall_post_id);
 create index idx_friendships_low on public.friendships(user_low_id); -- Speed up friendship lookups by low user ID.
 create index idx_friendships_high on public.friendships(user_high_id); -- Speed up friendship lookups by high user ID.
 create index idx_wall_posts_subject_user on public.wall_posts(subject_user_id); -- Speed up wall-post lookups by subject user.
 create index idx_wall_posts_subject_contact on public.wall_posts(subject_contact_id); -- Speed up wall-post lookups by subject contact.
 create index idx_wall_posts_author on public.wall_posts(author_user_id); -- Speed up wall-post lookups by author.
+create index idx_profile_wall_items_owner_created on public.profile_wall_items(owner_user_id, created_at desc);
+create index idx_profile_wall_items_wall_post on public.profile_wall_items(wall_post_id);
+create index idx_wall_post_layouts_context on public.wall_post_layouts(owner_user_id, wall_context, wall_context_id);
+create index idx_wall_post_layouts_wall_post on public.wall_post_layouts(wall_post_id);
+create index idx_gift_notes_author on public.gift_notes(author_user_id, status, unlock_date);
+create index idx_gift_notes_recipient on public.gift_notes(recipient_user_id, status, unlock_date);
+create index idx_gift_notes_unlock on public.gift_notes(status, unlock_date);
+create index idx_movie_review_requests_requester on public.movie_review_requests(requester_user_id, status, created_at desc);
+create index idx_movie_review_requests_recipient on public.movie_review_requests(recipient_user_id, status, created_at desc);
+create index idx_movie_review_requests_wall_post on public.movie_review_requests(completed_wall_post_id);
+create index idx_memory_prompt_requests_requester on public.memory_prompt_requests(requester_user_id, status, created_at desc);
+create index idx_memory_prompt_requests_recipient on public.memory_prompt_requests(recipient_user_id, status, created_at desc);
+create index idx_memory_prompt_requests_wall_post on public.memory_prompt_requests(completed_wall_post_id);
+create index idx_memory_prompt_requests_reference on public.memory_prompt_requests(referenced_wall_post_id);
+create index idx_wall_posts_memory_prompt_request on public.wall_posts(memory_prompt_request_id);
+create index idx_wall_posts_referenced_wall_post on public.wall_posts(referenced_wall_post_id);
+create index idx_memory_replies_wall_post on public.memory_replies(wall_post_id, created_at);
+create index idx_memory_replies_author on public.memory_replies(author_user_id, created_at desc);
 create index idx_profiles_friend_code on public.profiles(friend_code); -- Speed up friend-code lookup queries.
 create index idx_calendar_events_owner_date on public.calendar_events(owner_user_id, event_date);
 create index idx_calendar_events_subject_user on public.calendar_events(subject_user_id);
 create index idx_calendar_events_subject_contact on public.calendar_events(subject_contact_id);
+create index idx_calendar_event_shares_owner on public.calendar_event_shares(owner_user_id);
+create index idx_calendar_event_shares_recipient on public.calendar_event_shares(recipient_user_id);
+create index idx_calendar_event_shares_event on public.calendar_event_shares(event_id);
 
 -- Mark the start of the friend_facts section.
 -- Explain that friend_facts stores per-viewer notes about a friend (not the friend's own profile facts).
@@ -389,10 +989,11 @@ create table public.notifications (
   id uuid primary key default uuid_generate_v4(),
   recipient_user_id uuid not null references public.profiles(id) on delete cascade,
   actor_user_id uuid not null references public.profiles(id) on delete cascade,
-  type text not null, -- 'wall_post' | 'friend_request' | 'contact_update'
+  type text not null, -- 'wall_post' | 'friend_request' | 'contact_update' | 'calendar_event'
   reference_id text, -- ID of the related wall_post, friendship, etc.
   message text not null,
   read boolean not null default false,
+  metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -409,16 +1010,152 @@ create policy "Authenticated users can insert notifications"
 
 create index idx_notifications_recipient on public.notifications(recipient_user_id);
 
+-- Calendar event reactions — one thumbs up/down per tagged recipient per event.
+create table public.calendar_event_reactions (
+  id uuid primary key default uuid_generate_v4(),
+  event_id uuid not null references public.calendar_events(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  notification_id uuid references public.notifications(id) on delete set null,
+  value text not null check (value in ('up', 'down')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint calendar_event_reactions_unique_user unique (event_id, user_id)
+);
+
+alter table public.calendar_event_reactions enable row level security;
+
+create policy "Calendar event reaction participants can read"
+  on public.calendar_event_reactions for select
+  using (
+    auth.uid() = user_id
+    or exists (
+      select 1 from public.calendar_events ce
+      where ce.id = event_id and ce.owner_user_id = auth.uid()
+    )
+    or exists (
+      select 1 from public.calendar_event_shares ces
+      where ces.event_id = calendar_event_reactions.event_id
+        and ces.recipient_user_id = auth.uid()
+    )
+  );
+
+create policy "Shared recipients can create own calendar reactions"
+  on public.calendar_event_reactions for insert
+  with check (
+    auth.uid() = user_id
+    and exists (
+      select 1 from public.calendar_event_shares ces
+      where ces.event_id = calendar_event_reactions.event_id
+        and ces.recipient_user_id = auth.uid()
+    )
+    and (
+      notification_id is null
+      or exists (
+        select 1 from public.notifications n
+        where n.id = notification_id
+          and n.recipient_user_id = auth.uid()
+          and n.type = 'calendar_event'
+          and n.reference_id = calendar_event_reactions.event_id::text
+      )
+    )
+  );
+
+create policy "Shared recipients can update own calendar reactions"
+  on public.calendar_event_reactions for update
+  using (auth.uid() = user_id)
+  with check (
+    auth.uid() = user_id
+    and exists (
+      select 1 from public.calendar_event_shares ces
+      where ces.event_id = calendar_event_reactions.event_id
+        and ces.recipient_user_id = auth.uid()
+    )
+  );
+
+create policy "Shared recipients can delete own calendar reactions"
+  on public.calendar_event_reactions for delete
+  using (auth.uid() = user_id);
+
+create index idx_calendar_event_reactions_event on public.calendar_event_reactions(event_id);
+create index idx_calendar_event_reactions_user on public.calendar_event_reactions(user_id);
+
+-- Premium purchase events validated by the purchase Edge Function.
+create table if not exists public.premium_purchase_events (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  product_id text not null,
+  transaction_id text not null unique,
+  purchase_token text,
+  platform text not null default 'ios',
+  premium_until timestamptz not null,
+  raw_purchase jsonb not null default '{}'::jsonb,
+  validated_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+alter table public.premium_purchase_events enable row level security;
+
+drop policy if exists "Users can read own premium purchase events" on public.premium_purchase_events;
+create policy "Users can read own premium purchase events"
+  on public.premium_purchase_events for select
+  using (auth.uid() = user_id);
+
+create index if not exists idx_premium_purchase_events_user on public.premium_purchase_events(user_id);
+
 -- Migrations: add columns that were added after initial table creation.
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS premium_until timestamptz;
+ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS metadata jsonb not null default '{}'::jsonb;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS post_type text not null default 'note';
+ALTER TABLE public.wall_posts DROP CONSTRAINT IF EXISTS wall_posts_post_type_check;
+ALTER TABLE public.wall_posts ADD CONSTRAINT wall_posts_post_type_check CHECK (post_type in ('note', 'polaroid', 'song', 'movie'));
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS date_stamp boolean not null default false;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS filter text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS back_text text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS video_path text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS video_muted boolean not null default false;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS memory_date date;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_provider text check (song_provider in ('apple', 'spotify'));
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_provider_id text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_title text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_artist text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_artwork_url text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_preview_url text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_external_url text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_tmdb_id text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_title text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_year text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_poster_url text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_overview text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_release_date date;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_vote_average numeric;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_review_rating numeric;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_review_request_id uuid;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS memory_prompt_request_id uuid;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS referenced_wall_post_id uuid references public.wall_posts(id) on delete set null;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS prompt_text text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS prompt_type text;
+ALTER TABLE public.wall_posts DROP CONSTRAINT IF EXISTS wall_posts_prompt_type_check;
+ALTER TABLE public.wall_posts ADD CONSTRAINT wall_posts_prompt_type_check CHECK (prompt_type is null or prompt_type in ('song', 'text', 'photo_reference'));
+ALTER TABLE public.wall_posts DROP CONSTRAINT IF EXISTS wall_posts_movie_review_rating_check;
+ALTER TABLE public.wall_posts ADD CONSTRAINT wall_posts_movie_review_rating_check CHECK (
+  movie_review_rating is null
+  or (movie_review_rating between 0.5 and 5 and movie_review_rating * 2 = floor(movie_review_rating * 2))
+);
+UPDATE public.wall_posts SET post_type = 'polaroid' WHERE image_path IS NOT NULL AND post_type = 'note';
 
 -- Enable realtime on wall_posts and contacts so clients receive live updates.
 alter publication supabase_realtime add table public.wall_posts;
+alter publication supabase_realtime add table public.memory_replies;
+alter publication supabase_realtime add table public.profile_wall_items;
+alter publication supabase_realtime add table public.wall_post_layouts;
+alter publication supabase_realtime add table public.gift_notes;
+alter publication supabase_realtime add table public.movie_review_requests;
+alter publication supabase_realtime add table public.memory_prompt_requests;
 alter publication supabase_realtime add table public.contacts;
+alter publication supabase_realtime add table public.friend_requests;
 alter publication supabase_realtime add table public.contact_private_notes;
 alter publication supabase_realtime add table public.contact_private_note_blocks;
 alter publication supabase_realtime add table public.notifications;
 alter publication supabase_realtime add table public.calendar_events;
+alter publication supabase_realtime add table public.calendar_event_shares;
+alter publication supabase_realtime add table public.calendar_event_reactions;

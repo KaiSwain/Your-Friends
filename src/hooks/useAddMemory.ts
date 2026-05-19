@@ -1,103 +1,49 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { decode } from 'base64-arraybuffer';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Notifications from 'expo-notifications';
+import { AppState } from 'react-native';
 
-import { compressImage } from '../lib/compressImage';
 import { CURE_DURATION_MS } from '../lib/polaroidCure';
-import { supabase } from '../lib/supabase';
 import { socialQueryKeys } from '../features/social/SocialGraphContext';
+import { useInAppNotification } from '../features/notifications/InAppNotificationContext';
 import { CreateWallPostInput, WallPost } from '../types/domain';
-import { rowToWallPost } from '../features/social/mappers';
-import { encodeWallPostTextStyle } from '../lib/wallPostTextStyle';
+import { compareWallPostsByMemoryDateDesc } from '../lib/memoryDate';
+import { buildOptimisticWallPosts, createPendingMemory, type PendingMemoryRecord } from '../features/memories/pendingMemoryQueue';
+import { syncPendingMemoryToCache } from '../features/memories/pendingMemorySync';
 
 interface AddMemoryInput {
   authorUserId: string;
   imageUri: string | null;
-  post: CreateWallPostInput;
+  videoUri?: string | null;
+  videoMuted?: boolean;
+  memoryDate?: string | null;
+  post?: CreateWallPostInput;
+  posts?: CreateWallPostInput[];
 }
 
-async function uploadImageAndCreatePost({ authorUserId, imageUri, post }: AddMemoryInput): Promise<WallPost> {
-  let storedImagePath: string | null = null;
-
-  if (imageUri) {
-    const compressed = await compressImage(imageUri);
-    const ext = 'jpg';
-    const fileName = `${authorUserId}/${Date.now()}.${ext}`;
-    const base64 = await FileSystem.readAsStringAsync(compressed, { encoding: FileSystem.EncodingType.Base64 });
-    const { error: uploadErr } = await supabase.storage
-      .from('Memories')
-      .upload(fileName, decode(base64), { contentType: `image/${ext}`, upsert: false });
-    if (uploadErr) throw uploadErr;
-    const { data: urlData } = supabase.storage.from('Memories').getPublicUrl(fileName);
-    storedImagePath = urlData.publicUrl;
-  }
-
-  const { data, error } = await supabase
-    .from('wall_posts')
-    .insert({
-      author_user_id: authorUserId,
-      subject_user_id: post.subjectUserId,
-      subject_contact_id: post.subjectContactId,
-      visibility: post.visibility,
-      body: post.body,
-      image_path: storedImagePath,
-      card_color: post.cardColor ?? null,
-      back_text: post.backText ?? null,
-      filter: storedImagePath ? (post.filter ?? null) : encodeWallPostTextStyle(post.textFont, post.textSize, post.textEffect, post.textColor),
-      date_stamp: post.dateStamp ?? false,
-    })
-    .select()
-    .single();
-
-  if (error || !data) throw new Error(error?.message ?? 'Failed to create memory');
-  const wallPost = rowToWallPost(data);
-
-  // Schedule a local notification when the photo finishes curing.
-  if (wallPost.imageUri) {
-    Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Your Polaroid has developed!',
-        body: 'A memory you posted is ready to view.',
-        sound: true,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-        seconds: Math.ceil(CURE_DURATION_MS / 1000),
-      },
-    }).catch((err) => console.warn('[cure notification] schedule failed:', err));
-  }
-
-  // Send notification to the subject about the new memory.
-  let recipientId: string | null = wallPost.subjectUserId;
-  if (!recipientId && wallPost.subjectContactId) {
-    const { data: contactRow } = await supabase.from('contacts').select('linked_user_id').eq('id', wallPost.subjectContactId).single();
-    recipientId = contactRow?.linked_user_id ?? null;
-  }
-  if (recipientId && recipientId !== authorUserId) {
-    const { data: authorRow } = await supabase.from('profiles').select('display_name').eq('id', authorUserId).single();
-    const authorName = authorRow?.display_name ?? 'Someone';
-    supabase.from('notifications').insert({
-      recipient_user_id: recipientId,
-      actor_user_id: authorUserId,
-      type: 'wall_post',
-      reference_id: wallPost.id,
-      message: `${authorName} added a memory about you`,
-    }).then(({ error: nErr }) => { if (nErr) console.error('[notification] wall_post insert failed:', nErr); });
-  }
-
-  return wallPost;
+async function createLocalMemory(input: AddMemoryInput): Promise<{ record: PendingMemoryRecord; posts: WallPost[] }> {
+  const record = await createPendingMemory(input);
+  return { record, posts: buildOptimisticWallPosts(record) };
 }
+
 
 /** Mutation hook for creating a memory (optional image upload + wall post). */
 export function useAddMemory() {
   const queryClient = useQueryClient();
+  const { showLocal } = useInAppNotification();
 
   return useMutation({
-    mutationFn: uploadImageAndCreatePost,
-    onSuccess: (newPost) => {
-      // Optimistically prepend the new post to the cached wall posts.
-      queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) => [newPost, ...(old ?? [])]);
+    mutationFn: createLocalMemory,
+    onSuccess: ({ record, posts }) => {
+      queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) => [...posts, ...(old ?? [])].sort(compareWallPostsByMemoryDateDesc));
+      syncPendingMemoryToCache(queryClient, record).catch((error) => console.warn('[pending memories] immediate sync failed:', error));
+      if (posts.some((newPost) => newPost.imageUri)) {
+        setTimeout(() => {
+          if (AppState.currentState !== 'active') return;
+          showLocal(
+            posts.length > 1 ? 'Your shared memory cards have developed!' : 'Your memory card has developed!',
+            { referenceId: posts[0]?.id },
+          );
+        }, CURE_DURATION_MS);
+      }
     },
   });
 }

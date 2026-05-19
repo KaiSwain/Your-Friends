@@ -1,10 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Redirect, useRouter } from 'expo-router';
-import { useMemo, useRef, useState } from 'react';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  KeyboardAvoidingView,
   Modal,
   PanResponder,
+  Image,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,24 +20,31 @@ import { ActionButton } from '../../src/components/ActionButton';
 import { AppScreen } from '../../src/components/AppScreen';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { useCalendar } from '../../src/features/calendar/CalendarContext';
+import { getBirthdayEventUserId } from '../../src/features/birthday/birthdayMoments';
 import type { CalendarMemoryActivity } from '../../src/features/calendar/memoryActivity';
 import { getLocalDateKey, groupMemoryActivityByDay } from '../../src/features/calendar/memoryActivity';
+import { groupEventsByMonth } from '../../src/features/calendar/occurrences';
 import { usePremium } from '../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
+import { backOnce, pushOnce } from '../../src/lib/navigationGuard';
+import { createNotifications } from '../../src/lib/notifications';
 import { showCalendarPaywall } from '../../src/lib/premiumGates';
+import { protectTextFromFontClipping } from '../../src/theme/fontProtection';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, shadow, spacing } from '../../src/theme/tokens';
 import type {
   CalendarEvent,
   CalendarEventInput,
+  CalendarEventReactionValue,
   CalendarEventType,
   CalendarRecurrence,
   CalendarReminderOffset,
 } from '../../src/types/domain';
 
-type SubjectDraft = { kind: 'none' | 'user' | 'contact'; id: string | null; label: string };
+type SubjectDraft = { kind: 'none' | 'user' | 'contact'; id: string | null; label: string; linkedUserId?: string | null };
+type SharedFriendOption = { id: string; label: string; avatarColor: string; avatarPath?: string | null };
 
 type EventDraft = {
   type: CalendarEventType;
@@ -46,11 +56,12 @@ type EventDraft = {
   reminderOffsets: CalendarReminderOffset[];
   note: string;
   subject: SubjectDraft;
+  sharedFriendIds: string[];
 };
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const EVENT_TYPES: { value: CalendarEventType; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { value: 'birthday', label: 'Birthday', icon: 'gift-outline' },
+  { value: 'reminder', label: 'Reminder', icon: 'notifications-outline' },
   { value: 'anniversary', label: 'Anniversary', icon: 'heart-outline' },
   { value: 'custom', label: 'Event', icon: 'sparkles-outline' },
 ];
@@ -72,25 +83,29 @@ const TIME_PRESETS: { label: string; value: string }[] = [
   { label: '9p', value: '21:00' },
 ];
 
-type CategoryKey = 'birthday' | 'anniversary' | 'custom' | 'photo' | 'note';
+type CategoryKey = 'reminder' | 'birthday' | 'anniversary' | 'custom' | 'photo' | 'note';
 
 function getCategoryColor(category: CategoryKey, colors: ColorTokens): string {
   switch (category) {
+    case 'reminder':
+      return colors.accent;
     case 'birthday':
-      return colors.apricot;
+      return '#FF453A';
     case 'anniversary':
-      return colors.plum;
+      return '#BF5AF2';
     case 'custom':
-      return colors.gold;
+      return '#FF9F0A';
     case 'photo':
-      return colors.terracotta;
+      return '#30D158';
     case 'note':
-      return colors.sky;
+      return '#0A84FF';
   }
 }
 
 function getCategoryIcon(category: CategoryKey): keyof typeof Ionicons.glyphMap {
   switch (category) {
+    case 'reminder':
+      return 'notifications-outline';
     case 'birthday':
       return 'gift-outline';
     case 'anniversary':
@@ -104,14 +119,69 @@ function getCategoryIcon(category: CategoryKey): keyof typeof Ionicons.glyphMap 
   }
 }
 
+async function notifyCalendarEventRecipients({
+  actorUserId,
+  actorName,
+  eventId,
+  eventDate,
+  eventTitle,
+  recipientUserIds,
+}: {
+  actorUserId: string;
+  actorName: string;
+  eventId: string;
+  eventDate: string;
+  eventTitle: string;
+  recipientUserIds: string[];
+}) {
+  if (recipientUserIds.length === 0) return;
+  const creatorName = actorName.trim() || 'Someone';
+  const title = eventTitle.trim() || 'an event';
+  await createNotifications(
+    recipientUserIds.map((recipientUserId) => ({
+      recipientUserId,
+      actorUserId,
+      type: 'calendar_event',
+      referenceId: eventId,
+      message: `${creatorName} added you to "${title}"`,
+      metadata: {
+        eventId,
+        date: eventDate,
+        ownerUserId: actorUserId,
+        eventTitle: title,
+        source: 'calendar_event_shares',
+      },
+    })),
+  ).catch((error) => console.warn('[notification] calendar_event insert failed:', error));
+}
+
 export default function CalendarScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ date?: string | string[]; eventId?: string | string[] }>();
   const { currentUser } = useAuth();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
   const { isPremium } = usePremium();
-  const { events, addEvent, updateEvent, deleteEvent } = useCalendar();
-  const { contacts, wallPosts, getContactById, getDirectFriends, getUserById } = useSocialGraph();
+  const {
+    events,
+    ownerShares,
+    addEvent,
+    updateEvent,
+    deleteEvent,
+    shareEventWithFriend,
+    unshareEventWithFriend,
+    setSharedEventRemindersEnabled,
+  } = useCalendar();
+  const {
+    contacts,
+    wallPosts,
+    getContactById,
+    getDirectFriends,
+    getUserById,
+    getCalendarEventReactionSummary,
+    getCalendarEventReactionParticipantNames,
+    setCalendarEventReactionByEvent,
+  } = useSocialGraph();
 
   const todayKey = getLocalDateKey(new Date());
   const [monthCursor, setMonthCursor] = useState(() => startOfMonth(new Date()));
@@ -120,9 +190,21 @@ export default function CalendarScreen() {
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [saving, setSaving] = useState(false);
   const [completingEventKey, setCompletingEventKey] = useState<string | null>(null);
+  const [reactingEventId, setReactingEventId] = useState<string | null>(null);
+  const [mutingShareId, setMutingShareId] = useState<string | null>(null);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
 
-  if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
+  useEffect(() => {
+    const dateParam = Array.isArray(params.date) ? params.date[0] : params.date;
+    if (!dateParam || !isValidDateKey(dateParam)) return;
+    const parts = parseDateParts(dateParam);
+    if (!parts) return;
+    setSelectedDateKey(dateParam);
+    setMonthCursor(startOfMonth(new Date(parts.year, parts.month - 1, parts.day)));
+  }, [params.date]);
+
+  const authenticatedUserId = currentUser?.id ?? '';
+  const authenticatedUserName = currentUser?.displayName ?? 'Someone';
 
   const memoryByDay = useMemo(() => groupMemoryActivityByDay(wallPosts), [wallPosts]);
   const eventsByDay = useMemo(() => groupEventsByMonth(events, monthCursor), [events, monthCursor]);
@@ -134,11 +216,12 @@ export default function CalendarScreen() {
 
   const subjectOptions = useMemo<SubjectDraft[]>(() => {
     const options: SubjectDraft[] = [{ kind: 'none', id: null, label: 'No person' }];
+    if (!currentUser) return options;
     const ownedContacts = contacts
       .filter((contact) => contact.ownerUserId === currentUser.id)
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
     for (const contact of ownedContacts) {
-      options.push({ kind: 'contact', id: contact.id, label: contact.displayName });
+      options.push({ kind: 'contact', id: contact.id, label: contact.displayName, linkedUserId: contact.linkedUserId });
     }
     const linkedUserIds = new Set(
       ownedContacts.map((contact) => contact.linkedUserId).filter((id): id is string => !!id),
@@ -147,10 +230,22 @@ export default function CalendarScreen() {
       a.displayName.localeCompare(b.displayName),
     )) {
       if (linkedUserIds.has(friend.id)) continue;
-      options.push({ kind: 'user', id: friend.id, label: friend.displayName });
+      options.push({ kind: 'user', id: friend.id, label: friend.displayName, linkedUserId: friend.id });
     }
     return options;
-  }, [contacts, currentUser.id, getDirectFriends]);
+  }, [contacts, currentUser, getDirectFriends]);
+  const shareableFriendOptions = useMemo<SharedFriendOption[]>(
+    () =>
+      getDirectFriends(authenticatedUserId)
+        .sort((a, b) => a.displayName.localeCompare(b.displayName))
+        .map((friend) => ({
+          id: friend.id,
+          label: friend.displayName,
+          avatarColor: friend.avatarColor,
+          avatarPath: friend.avatarPath,
+        })),
+    [authenticatedUserId, getDirectFriends],
+  );
 
   function jumpToToday() {
     setMonthCursor(startOfMonth(new Date()));
@@ -175,34 +270,23 @@ export default function CalendarScreen() {
     }),
   ).current;
 
-  const topBar = (
+  const topBar = !onTodayView ? (
     <View style={styles.topBar}>
       <Pressable
-        onPress={() => router.back()}
-        style={styles.backButton}
+        onPress={jumpToToday}
+        style={styles.todayChip}
         accessibilityRole="button"
-        accessibilityLabel="Go back"
+        accessibilityLabel="Jump to today"
       >
-        <Ionicons name="chevron-back" size={18} color={colors.inkSoft} />
-        <Text style={styles.backLabel}>Back</Text>
+        <Ionicons name="locate-outline" size={14} color={colors.accent} />
+        <Text style={styles.todayChipLabel}>Today</Text>
       </Pressable>
-      {!onTodayView ? (
-        <Pressable
-          onPress={jumpToToday}
-          style={styles.todayChip}
-          accessibilityRole="button"
-          accessibilityLabel="Jump to today"
-        >
-          <Ionicons name="locate-outline" size={14} color={colors.accent} />
-          <Text style={styles.todayChipLabel}>Today</Text>
-        </Pressable>
-      ) : null}
     </View>
-  );
+  ) : undefined;
 
   function openAddEvent() {
     if (!isPremium) {
-      showCalendarPaywall(() => router.push('/(app)/store'));
+      showCalendarPaywall(() => pushOnce(router, '/(app)/store'));
       return;
     }
     setEditingEvent(null);
@@ -210,18 +294,34 @@ export default function CalendarScreen() {
   }
 
   function openEditEvent(event: CalendarEvent) {
+    if (event.type === 'birthday') return;
+    if (event.shareId) return;
     if (!isPremium) {
-      showCalendarPaywall(() => router.push('/(app)/store'));
+      showCalendarPaywall(() => pushOnce(router, '/(app)/store'));
       return;
     }
     setEditingEvent(event);
-    setDraft(createDraftFromEvent(event, subjectOptions));
+    setDraft(createDraftFromEvent(event, subjectOptions, ownerShares));
+  }
+
+  function openBirthdayMemory(event: CalendarEvent) {
+    const friendUserId = getBirthdayEventUserId(event, authenticatedUserId);
+    if (!friendUserId) return;
+    pushOnce(router, {
+      pathname: '/(app)/memories/add',
+      params: {
+        subjectId: friendUserId,
+        subjectType: 'user',
+        targetKeys: `user:${friendUserId}`,
+        backTo: '/calendar',
+      },
+    });
   }
 
   async function saveDraft() {
     if (!draft || saving) return;
     if (!isPremium) {
-      showCalendarPaywall(() => router.push('/(app)/store'));
+      showCalendarPaywall(() => pushOnce(router, '/(app)/store'));
       return;
     }
 
@@ -234,8 +334,27 @@ export default function CalendarScreen() {
     setSaving(true);
     try {
       const input = draftToInput(draft);
-      if (editingEvent) await updateEvent(editingEvent.id, input);
-      else await addEvent(input);
+      const savedEvent = editingEvent ? await updateEvent(editingEvent.id, input) : await addEvent(input);
+      const existingShares = ownerShares.filter((share) => share.eventId === savedEvent.id);
+      const shareableIds = new Set(shareableFriendOptions.map((friend) => friend.id));
+      const nextRecipientIds = new Set(draft.sharedFriendIds.filter((id) => shareableIds.has(id)));
+      const newRecipientIds = [...nextRecipientIds].filter(
+        (id) => !existingShares.some((share) => share.recipientUserId === id),
+      );
+      await Promise.all(newRecipientIds.map((id) => shareEventWithFriend(savedEvent.id, id)));
+      await notifyCalendarEventRecipients({
+        actorUserId: authenticatedUserId,
+        actorName: authenticatedUserName,
+        eventId: savedEvent.id,
+        eventDate: savedEvent.eventDate,
+        eventTitle: savedEvent.title,
+        recipientUserIds: newRecipientIds,
+      });
+      await Promise.all(
+        existingShares
+          .filter((share) => !nextRecipientIds.has(share.recipientUserId))
+          .map((share) => unshareEventWithFriend(savedEvent.id, share.recipientUserId)),
+      );
       setDraft(null);
       setEditingEvent(null);
     } catch (error) {
@@ -248,9 +367,28 @@ export default function CalendarScreen() {
     }
   }
 
+  async function toggleCalendarReaction(event: CalendarEvent, value: CalendarEventReactionValue) {
+    if (reactingEventId) return;
+    const summary = getCalendarEventReactionSummary(event.id);
+    setReactingEventId(event.id);
+    try {
+      await setCalendarEventReactionByEvent(
+        event.id,
+        summary.myReaction === value ? null : value,
+        {
+          eventOwnerUserId: event.ownerUserId,
+          eventDate: event.eventDate,
+          eventTitle: event.title,
+        },
+      );
+    } finally {
+      setReactingEventId(null);
+    }
+  }
+
   function confirmDeleteEvent(event: CalendarEvent) {
     if (!isPremium) {
-      showCalendarPaywall(() => router.push('/(app)/store'));
+      showCalendarPaywall(() => pushOnce(router, '/(app)/store'));
       return;
     }
     Alert.alert('Delete event?', `${event.title} will be removed from your calendar.`, [
@@ -273,8 +411,9 @@ export default function CalendarScreen() {
   }
 
   async function toggleEventComplete(event: CalendarEvent) {
+    if (event.shareId) return;
     if (!isPremium) {
-      showCalendarPaywall(() => router.push('/(app)/store'));
+      showCalendarPaywall(() => pushOnce(router, '/(app)/store'));
       return;
     }
 
@@ -295,6 +434,23 @@ export default function CalendarScreen() {
       setCompletingEventKey(null);
     }
   }
+
+  async function toggleSharedReminders(event: CalendarEvent) {
+    if (!event.shareId || mutingShareId) return;
+    setMutingShareId(event.shareId);
+    try {
+      await setSharedEventRemindersEnabled(event.shareId, !event.sharedRemindersEnabled);
+    } catch (error) {
+      Alert.alert(
+        'Could not update reminders',
+        error instanceof Error ? error.message : 'Try again in a moment.',
+      );
+    } finally {
+      setMutingShareId(null);
+    }
+  }
+
+  if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
 
   return (
     <>
@@ -404,7 +560,7 @@ export default function CalendarScreen() {
 
         {!isPremium ? (
           <Pressable
-            onPress={() => showCalendarPaywall(() => router.push('/(app)/store'))}
+            onPress={() => showCalendarPaywall(() => pushOnce(router, '/(app)/store'))}
             style={styles.premiumBanner}
             accessibilityRole="button"
           >
@@ -447,8 +603,22 @@ export default function CalendarScreen() {
                 const accent = getCategoryColor(category, colors);
                 const completed = isEventOccurrenceComplete(event, selectedDateKey);
                 const subjectLabel = getEventSubjectLabel(event, getContactById, getUserById);
+                const sharedByName = event.sharedByUserId ? getUserById(event.sharedByUserId)?.displayName ?? 'a friend' : null;
+                const sharedWithNames = !event.shareId
+                  ? ownerShares
+                    .filter((share) => share.eventId === event.id)
+                    .map((share) => getUserById(share.recipientUserId)?.displayName ?? 'Friend')
+                  : [];
                 const pendingKey = `${event.id}:${selectedDateKey}`;
                 const completing = completingEventKey === pendingKey;
+                const sharedReminderBusy = event.shareId ? mutingShareId === event.shareId : false;
+                const reactionSummary = getCalendarEventReactionSummary(event.id);
+                const reacting = reactingEventId === event.id;
+                const isReminderOwner = event.ownerUserId === authenticatedUserId;
+                const reactionParticipants = isReminderOwner
+                  ? getCalendarEventReactionParticipantNames(event.id)
+                  : null;
+                const birthdayUserId = getBirthdayEventUserId(event, authenticatedUserId);
 
                 return (
                   <View
@@ -484,10 +654,99 @@ export default function CalendarScreen() {
                           {formatEventSubject(event, subjectLabel)}
                         </Text>
                       ) : null}
+                      {sharedByName ? (
+                        <Text style={styles.detailSubject}>
+                          Shared by {sharedByName}
+                        </Text>
+                      ) : null}
+                      {sharedWithNames.length > 0 ? (
+                        <Text style={styles.detailSubject} numberOfLines={2}>
+                          Shared with {formatNameList(sharedWithNames)}
+                        </Text>
+                      ) : null}
                       <Text style={styles.detailSub}>{formatEventMeta(event, selectedDateKey)}</Text>
                       {event.note ? <Text style={styles.detailNote}>{event.note}</Text> : null}
+                      <View style={styles.eventReactionRow}>
+                        <Pressable
+                          onPress={() => toggleCalendarReaction(event, 'up')}
+                          disabled={reacting}
+                          style={[styles.eventReactionButton, reactionSummary.myReaction === 'up' && styles.eventReactionButtonActive]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Thumbs up ${event.title}`}
+                        >
+                          <Ionicons
+                            name="thumbs-up-outline"
+                            size={13}
+                            color={reactionSummary.myReaction === 'up' ? colors.white : colors.inkSoft}
+                          />
+                          <Text style={[styles.eventReactionText, reactionSummary.myReaction === 'up' && styles.eventReactionTextActive]}>
+                            {reactionSummary.upCount}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => toggleCalendarReaction(event, 'down')}
+                          disabled={reacting}
+                          style={[styles.eventReactionButton, reactionSummary.myReaction === 'down' && styles.eventReactionButtonActive]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Thumbs down ${event.title}`}
+                        >
+                          <Ionicons
+                            name="thumbs-down-outline"
+                            size={13}
+                            color={reactionSummary.myReaction === 'down' ? colors.white : colors.inkSoft}
+                          />
+                          <Text style={[styles.eventReactionText, reactionSummary.myReaction === 'down' && styles.eventReactionTextActive]}>
+                            {reactionSummary.downCount}
+                          </Text>
+                        </Pressable>
+                      </View>
+                      {reactionParticipants
+                      && (reactionParticipants.up.length > 0 || reactionParticipants.down.length > 0) ? (
+                        <View style={styles.eventReactionParticipants}>
+                          {reactionParticipants.up.length > 0 ? (
+                            <Text style={styles.eventReactionParticipantsText} numberOfLines={4}>
+                              Thumbs up from {formatNameList(reactionParticipants.up)}
+                            </Text>
+                          ) : null}
+                          {reactionParticipants.down.length > 0 ? (
+                            <Text style={styles.eventReactionParticipantsText} numberOfLines={4}>
+                              Thumbs down from {formatNameList(reactionParticipants.down)}
+                            </Text>
+                          ) : null}
+                        </View>
+                      ) : null}
+                      {birthdayUserId ? (
+                        <Pressable
+                          onPress={() => openBirthdayMemory(event)}
+                          style={styles.birthdayMemoryAction}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Add a birthday memory for ${getUserById(birthdayUserId)?.displayName ?? 'this friend'}`}
+                        >
+                          <Ionicons name="gift-outline" size={14} color={colors.white} />
+                          <Text style={styles.birthdayMemoryActionText}>Make their day</Text>
+                        </Pressable>
+                      ) : null}
                     </View>
-                    {isPremium ? (
+                    {event.shareId ? (
+                      <View style={styles.eventActions}>
+                        <Pressable
+                          onPress={() => toggleSharedReminders(event)}
+                          style={[styles.completeAction, event.sharedRemindersEnabled && styles.completeActionDone]}
+                          accessibilityRole="button"
+                          accessibilityLabel={event.sharedRemindersEnabled ? `Mute reminders for ${event.title}` : `Turn on reminders for ${event.title}`}
+                          disabled={sharedReminderBusy}
+                        >
+                          <Ionicons
+                            name={event.sharedRemindersEnabled ? 'notifications' : 'notifications-off-outline'}
+                            size={18}
+                            color={event.sharedRemindersEnabled ? colors.success : colors.inkSoft}
+                          />
+                          <Text style={[styles.completeActionText, event.sharedRemindersEnabled && styles.completeActionTextDone]}>
+                            {sharedReminderBusy ? '...' : event.sharedRemindersEnabled ? 'On' : 'Muted'}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    ) : isPremium && event.type !== 'birthday' ? (
                       <View style={styles.eventActions}>
                         <Pressable
                           onPress={() => toggleEventComplete(event)}
@@ -553,7 +812,10 @@ export default function CalendarScreen() {
                       <Text style={styles.detailTitle}>
                         {getMemoryTitle(activity, getContactById, getUserById)}
                       </Text>
-                      {activity.post.body ? (
+                      <Text style={styles.detailSubject}>
+                        By {getMemoryAuthorName(activity, getUserById)}
+                      </Text>
+                      {activity.kind !== 'photo' && activity.post.body ? (
                         <Text style={styles.detailNote} numberOfLines={2}>
                           {activity.post.body}
                         </Text>
@@ -570,7 +832,7 @@ export default function CalendarScreen() {
       <EventEditorModal
         draft={draft}
         editingEvent={editingEvent}
-        subjectOptions={subjectOptions}
+        shareableFriendOptions={shareableFriendOptions}
         saving={saving}
         colors={colors}
         fonts={fonts}
@@ -603,7 +865,7 @@ export default function CalendarScreen() {
 interface EventEditorModalProps {
   draft: EventDraft | null;
   editingEvent: CalendarEvent | null;
-  subjectOptions: SubjectDraft[];
+  shareableFriendOptions: SharedFriendOption[];
   saving: boolean;
   colors: ColorTokens;
   fonts: FontSet;
@@ -616,7 +878,7 @@ interface EventEditorModalProps {
 function EventEditorModal({
   draft,
   editingEvent,
-  subjectOptions,
+  shareableFriendOptions,
   saving,
   colors,
   fonts,
@@ -632,16 +894,26 @@ function EventEditorModal({
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        style={styles.modalKeyboardAvoider}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
       <View style={styles.modalBackdrop}>
         <View style={styles.modalSheet}>
           <View style={styles.modalDateHeader}>
-            <View style={styles.modalDateTextBlock}>
-              <Text style={styles.modalDateMonth}>
-                {formatDateMonth(draft.eventDate).toUpperCase()}
-              </Text>
-              <Text style={styles.modalDateDay}>{formatDateDay(draft.eventDate)}</Text>
-              <Text style={styles.modalDateWeekday}>{formatDateWeekday(draft.eventDate)}</Text>
-            </View>
+            <Pressable
+              onPress={onOpenDatePicker}
+              style={styles.modalDatePickerButton}
+              accessibilityRole="button"
+              accessibilityLabel="Choose event date"
+            >
+              <Ionicons name="calendar-outline" size={18} color={colors.accent} />
+              <View style={styles.modalDateReadableBlock}>
+                <Text style={styles.modalDateLabel}>Date</Text>
+                <Text style={styles.modalDateReadable}>{formatReadableDate(draft.eventDate)}</Text>
+              </View>
+              <Ionicons name="chevron-down" size={16} color={colors.inkMuted} />
+            </Pressable>
             <Pressable
               onPress={onClose}
               style={styles.modalClose}
@@ -664,7 +936,9 @@ function EventEditorModal({
           <ScrollView
             contentContainerStyle={styles.editorScroll}
             showsVerticalScrollIndicator={false}
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           >
             <View style={styles.segmentRow}>
               {EVENT_TYPES.map((option) => {
@@ -676,7 +950,7 @@ function EventEditorModal({
                     onPress={() =>
                       setDraft({
                         type: option.value,
-                        recurrence: option.value === 'custom' ? draft.recurrence : 'yearly',
+                        recurrence: option.value === 'anniversary' ? 'yearly' : draft.recurrence,
                       })
                     }
                     style={[
@@ -699,33 +973,52 @@ function EventEditorModal({
               })}
             </View>
 
-            <View style={styles.fieldBlock}>
-              <Text style={styles.fieldLabel}>Person</Text>
-              <View style={styles.chipWrap}>
-                {subjectOptions.map((option) => {
-                  const active =
-                    draft.subject.kind === option.kind && draft.subject.id === option.id;
-                  return (
-                    <Pressable
-                      key={`${option.kind}-${option.id ?? 'none'}`}
-                      onPress={() =>
-                        setDraft({
-                          subject: option,
-                          title: draft.title || defaultTitleFor(option, draft.type),
-                        })
-                      }
-                      style={[styles.choiceChip, active && styles.choiceChipActive]}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active }}
-                    >
-                      <Text style={[styles.choiceLabel, active && styles.choiceLabelActive]}>
-                        {option.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+            {shareableFriendOptions.length > 0 ? (
+              <View style={styles.tagSection}>
+                <View style={styles.tagHeaderRow}>
+                  <Text style={styles.tagLabel}>Tag friends</Text>
+                  <Text style={styles.tagCount}>{draft.sharedFriendIds.length} selected</Text>
+                </View>
+                <Text style={styles.fieldHint}>Selected friends get this event on their calendar and can mute their own reminders.</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagScroll}>
+                  {shareableFriendOptions.map((friend) => {
+                    const active = draft.sharedFriendIds.includes(friend.id);
+                    return (
+                      <Pressable
+                        key={friend.id}
+                        onPress={() => {
+                          const nextSharedFriendIds = toggleString(draft.sharedFriendIds, friend.id);
+                          const nextSubject = subjectFromTaggedFriend(nextSharedFriendIds[0], shareableFriendOptions);
+                          setDraft({
+                            sharedFriendIds: nextSharedFriendIds,
+                            subject: nextSubject,
+                            title: shouldReplaceDefaultTitle(draft.title, draft.subject, draft.type)
+                              ? defaultTitleFor(nextSubject, draft.type)
+                              : draft.title,
+                          });
+                        }}
+                        style={[styles.tagChip, active && styles.tagChipActive]}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: active }}
+                        accessibilityLabel={`Tag ${friend.label} in this calendar event`}
+                      >
+                        <View style={[styles.tagAvatar, { backgroundColor: friend.avatarColor }]}>
+                          {friend.avatarPath ? (
+                            <Image source={{ uri: friend.avatarPath }} style={styles.tagAvatarImage} />
+                          ) : (
+                            <Text style={styles.tagInitials}>{getInitials(friend.label)}</Text>
+                          )}
+                        </View>
+                        <Text style={[styles.tagChipText, active && styles.tagChipTextActive]} numberOfLines={1}>
+                          {friend.label}
+                        </Text>
+                        {active ? <Ionicons name="checkmark-circle" size={16} color={colors.accent} /> : null}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
               </View>
-            </View>
+            ) : null}
 
             <LabeledInput
               label="Title"
@@ -735,20 +1028,6 @@ function EventEditorModal({
               styles={styles}
               colors={colors}
             />
-
-            <View style={styles.fieldBlock}>
-              <Text style={styles.fieldLabel}>Date</Text>
-              <Pressable
-                onPress={onOpenDatePicker}
-                style={styles.pickerPill}
-                accessibilityRole="button"
-                accessibilityLabel="Choose date"
-              >
-                <Ionicons name="calendar-outline" size={17} color={colors.inkSoft} />
-                <Text style={styles.pickerPillText}>{formatReadableDate(draft.eventDate)}</Text>
-                <Ionicons name="chevron-down" size={16} color={colors.inkMuted} />
-              </Pressable>
-            </View>
 
             <View style={styles.inlineToggleRow}>
               <Pressable
@@ -879,6 +1158,7 @@ function EventEditorModal({
           </View>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1008,19 +1288,20 @@ function LabeledInput({
 function createDraft(dateKey: string, subject?: SubjectDraft): EventDraft {
   const resolvedSubject = subject ?? { kind: 'none', id: null, label: 'No person' };
   return {
-    type: 'birthday',
-    title: defaultTitleFor(resolvedSubject, 'birthday'),
+    type: 'reminder',
+    title: defaultTitleFor(resolvedSubject, 'reminder'),
     eventDate: dateKey,
     eventTime: '19:00',
     allDay: true,
-    recurrence: 'yearly',
+    recurrence: 'none',
     reminderOffsets: [1],
     note: '',
     subject: resolvedSubject,
+    sharedFriendIds: resolvedSubject.linkedUserId ? [resolvedSubject.linkedUserId] : [],
   };
 }
 
-function createDraftFromEvent(event: CalendarEvent, subjectOptions: SubjectDraft[]): EventDraft {
+function createDraftFromEvent(event: CalendarEvent, subjectOptions: SubjectDraft[], ownerShares: { eventId: string; recipientUserId: string }[]): EventDraft {
   const subject =
     subjectOptions.find((option) =>
       event.subjectUserId
@@ -1040,6 +1321,9 @@ function createDraftFromEvent(event: CalendarEvent, subjectOptions: SubjectDraft
     reminderOffsets: event.reminderOffsets ?? [],
     note: event.note ?? '',
     subject,
+    sharedFriendIds: ownerShares
+      .filter((share) => share.eventId === event.id)
+      .map((share) => share.recipientUserId),
   };
 }
 
@@ -1074,12 +1358,43 @@ function toggleReminder(
     : [...offsets, value].sort((a, b) => b - a);
 }
 
+function toggleString(values: string[], value: string) {
+  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+}
+
+function subjectFromTaggedFriend(friendId: string | undefined, friends: SharedFriendOption[]): SubjectDraft {
+  if (!friendId) return { kind: 'none', id: null, label: 'No person' };
+  const friend = friends.find((option) => option.id === friendId);
+  return {
+    kind: 'user',
+    id: friendId,
+    label: friend?.label ?? 'Friend',
+    linkedUserId: friendId,
+  };
+}
+
+function getInitials(value: string) {
+  return value
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('');
+}
+
+function shouldReplaceDefaultTitle(title: string, subject: SubjectDraft, type: CalendarEventType) {
+  if (!title.trim()) return true;
+  return title === defaultTitleFor(subject, type);
+}
+
 function defaultTitleFor(subject: SubjectDraft, type: CalendarEventType) {
   if (subject.kind === 'none') {
+    if (type === 'reminder') return 'Reminder';
     if (type === 'birthday') return 'Birthday';
     if (type === 'anniversary') return 'Anniversary';
     return '';
   }
+  if (type === 'reminder') return `Reminder for ${subject.label}`;
   if (type === 'birthday') return `${subject.label}'s birthday`;
   if (type === 'anniversary') return `${subject.label} anniversary`;
   return `${subject.label} plan`;
@@ -1095,7 +1410,7 @@ function collectDayCategories(
 ): CategoryKey[] {
   const set = new Set<CategoryKey>();
   for (const event of events) {
-    if (event.type === 'birthday' || event.type === 'anniversary' || event.type === 'custom') {
+    if (event.type === 'reminder' || event.type === 'birthday' || event.type === 'anniversary' || event.type === 'custom') {
       set.add(event.type);
     }
   }
@@ -1103,7 +1418,7 @@ function collectDayCategories(
     set.add(activity.kind === 'photo' ? 'photo' : 'note');
   }
   // Stable display order.
-  const order: CategoryKey[] = ['birthday', 'anniversary', 'custom', 'photo', 'note'];
+  const order: CategoryKey[] = ['reminder', 'birthday', 'anniversary', 'custom', 'photo', 'note'];
   return order.filter((category) => set.has(category));
 }
 
@@ -1123,7 +1438,12 @@ function getEventSubjectLabel(
 }
 
 function formatEventSubject(event: CalendarEvent, subjectLabel: string) {
-  return `${event.type === 'custom' ? 'With' : 'For'} ${subjectLabel}`;
+  return `${event.type === 'birthday' || event.type === 'anniversary' ? 'For' : 'With'} ${subjectLabel}`;
+}
+
+function formatNameList(names: string[]) {
+  if (names.length <= 2) return names.join(' and ');
+  return `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`;
 }
 
 function isEventOccurrenceComplete(event: CalendarEvent, occurrenceKey: string) {
@@ -1151,43 +1471,6 @@ function buildCalendarCells(month: Date): Array<Date | null> {
     cells.push(new Date(month.getFullYear(), month.getMonth(), day));
   while (cells.length % 7 !== 0) cells.push(null);
   return cells;
-}
-
-function groupEventsByMonth(
-  events: readonly CalendarEvent[],
-  month: Date,
-): Record<string, CalendarEvent[]> {
-  const year = month.getFullYear();
-  const monthIndex = month.getMonth();
-  const grouped: Record<string, CalendarEvent[]> = {};
-  for (const event of events) {
-    const key = getEventOccurrenceKey(event, year, monthIndex);
-    if (!key) continue;
-    grouped[key] = [...(grouped[key] ?? []), event];
-  }
-  for (const key of Object.keys(grouped)) {
-    grouped[key].sort(
-      (a, b) =>
-        (a.eventTime ?? '').localeCompare(b.eventTime ?? '') || a.title.localeCompare(b.title),
-    );
-  }
-  return grouped;
-}
-
-function getEventOccurrenceKey(event: CalendarEvent, year: number, monthIndex: number) {
-  const parts = parseDateParts(event.eventDate);
-  if (!parts) return '';
-  const { year: eventYear, month, day } = parts;
-  if (event.recurrence === 'none') {
-    return eventYear === year && month === monthIndex + 1 ? event.eventDate : '';
-  }
-  if (event.recurrence === 'yearly' && month !== monthIndex + 1) return '';
-  const maxDay = new Date(year, monthIndex + 1, 0).getDate();
-  const occurrenceDay = Math.min(day, maxDay);
-  if (event.recurrence === 'monthly' || event.recurrence === 'yearly') {
-    return formatDateKey(year, monthIndex + 1, occurrenceDay);
-  }
-  return '';
 }
 
 function parseDateParts(dateKey: string) {
@@ -1303,9 +1586,17 @@ function getMemoryTitle(
   getUserById: (id: string) => { displayName: string } | undefined,
 ) {
   const { post } = activity;
+  if (activity.kind === 'photo') return post.body.trim() || 'Photo memory';
   if (post.subjectContactId) return getContactById(post.subjectContactId)?.displayName ?? 'Saved contact';
   if (post.subjectUserId) return getUserById(post.subjectUserId)?.displayName ?? 'Friend';
   return 'Memory';
+}
+
+function getMemoryAuthorName(
+  activity: CalendarMemoryActivity,
+  getUserById: (id: string) => { displayName: string } | undefined,
+) {
+  return getUserById(activity.post.authorUserId)?.displayName ?? 'Someone';
 }
 
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
@@ -1333,7 +1624,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
 
     heroBlock: { gap: 4 },
-    title: { fontFamily: fonts.heading, fontSize: 30, lineHeight: 36, color: colors.ink },
+    title: { fontFamily: fonts.heading, fontSize: 30, lineHeight: 36, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 30) },
     subtitle: { fontFamily: fonts.body, fontSize: 14, lineHeight: 20, color: colors.inkSoft },
 
     calendarShell: {
@@ -1354,7 +1645,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       justifyContent: 'center',
       backgroundColor: colors.paperMuted,
     },
-    monthTitle: { fontFamily: fonts.heading, fontSize: 22, color: colors.ink },
+    monthTitle: { fontFamily: fonts.heading, fontSize: 22, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 22) },
 
     legendRow: {
       flexDirection: 'row',
@@ -1432,7 +1723,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       letterSpacing: 1,
       color: colors.accent,
     },
-    dayPanelTitle: { fontFamily: fonts.heading, fontSize: 22, color: colors.ink },
+    dayPanelTitle: { fontFamily: fonts.heading, fontSize: 22, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 22) },
     smallAddButton: {
       width: 40,
       height: 40,
@@ -1494,6 +1785,36 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     detailSubject: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft },
     detailSub: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted },
     detailNote: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.inkSoft },
+    eventReactionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.xs },
+    eventReactionParticipants: { marginTop: spacing.xs, gap: 2 },
+    eventReactionParticipantsText: { fontFamily: fonts.body, fontSize: 12, lineHeight: 16, color: colors.inkMuted },
+    eventReactionButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderWidth: 1,
+      borderColor: colors.line,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 4,
+      backgroundColor: colors.paper,
+    },
+    eventReactionButtonActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    eventReactionText: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.inkSoft },
+    eventReactionTextActive: { color: colors.white },
+    birthdayMemoryAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      alignSelf: 'flex-start',
+      gap: spacing.xs,
+      marginTop: spacing.sm,
+      borderRadius: radius.pill,
+      backgroundColor: colors.accent,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    birthdayMemoryActionText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.white },
     eventActions: { flexDirection: 'row', gap: spacing.xs },
     completeAction: {
       minWidth: 68,
@@ -1542,6 +1863,28 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderWidth: 1,
       borderColor: colors.accent + '33',
     },
+    modalDatePickerButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    modalDateReadableBlock: { flex: 1, gap: 2 },
+    modalDateLabel: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 11,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      color: colors.accent,
+    },
+    modalDateReadable: {
+      fontFamily: fonts.heading,
+      fontSize: 20,
+      lineHeight: 25,
+      color: colors.ink,
+      ...protectTextFromFontClipping(fonts.heading, 20),
+    },
     modalDateTextBlock: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm, flex: 1 },
     modalDateMonth: {
       fontFamily: fonts.bodyBold,
@@ -1554,6 +1897,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontSize: 32,
       lineHeight: 36,
       color: colors.ink,
+      ...protectTextFromFontClipping(fonts.heading, 32),
     },
     modalDateWeekday: {
       fontFamily: fonts.body,
@@ -1568,7 +1912,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       letterSpacing: 1,
       color: colors.accent,
     },
-    modalTitle: { fontFamily: fonts.heading, fontSize: 25, color: colors.ink },
+    modalTitle: { fontFamily: fonts.heading, fontSize: 25, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 25) },
     modalClose: {
       width: 38,
       height: 38,
@@ -1577,7 +1921,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       justifyContent: 'center',
       backgroundColor: colors.paperMuted,
     },
-    editorScroll: { gap: spacing.md, paddingBottom: spacing.md },
+    modalKeyboardAvoider: { flex: 1 },
+    editorScroll: { gap: spacing.md, paddingBottom: spacing.xxl },
     segmentRow: { flexDirection: 'row', gap: spacing.xs },
     segmentChip: {
       flex: 1,
@@ -1598,6 +1943,49 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
 
     fieldBlock: { gap: spacing.xs },
     fieldLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft },
+    fieldHint: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkMuted },
+    tagSection: { gap: spacing.xs },
+    tagHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    tagLabel: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 12,
+      color: colors.inkMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    tagCount: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    tagScroll: { gap: spacing.sm, paddingVertical: 2 },
+    tagChip: {
+      minWidth: 112,
+      maxWidth: 148,
+      minHeight: 44,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      paddingVertical: 6,
+      paddingLeft: 6,
+      paddingRight: spacing.sm,
+    },
+    tagChipActive: {
+      borderColor: colors.accent,
+      backgroundColor: colors.accent + '12',
+    },
+    tagAvatar: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+    },
+    tagAvatarImage: { width: '100%', height: '100%' },
+    tagInitials: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.white },
+    tagChipText: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    tagChipTextActive: { fontFamily: fonts.bodyBold, color: colors.ink },
     input: {
       fontFamily: fonts.body,
       fontSize: 16,
@@ -1661,7 +2049,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderWidth: 1,
       borderColor: colors.line,
     },
-    timeDisplayText: { fontFamily: fonts.heading, fontSize: 22, color: colors.ink },
+    timeDisplayText: { fontFamily: fonts.heading, fontSize: 22, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 22) },
 
     inlineToggleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     checkbox: {

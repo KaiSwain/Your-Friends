@@ -3,16 +3,19 @@ import { InteractionManager, Platform } from 'react-native';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
+import { useRouter } from 'expo-router';
 
+import { pushOnce } from '../lib/navigationGuard';
+import { getNotificationRoute } from '../lib/notificationRoutes';
 import { supabase } from '../lib/supabase';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
+    shouldShowAlert: false,
+    shouldPlaySound: false,
     shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
+    shouldShowBanner: false,
+    shouldShowList: false,
   }),
 });
 
@@ -58,6 +61,7 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
  * in the user's profile row for server-side sending.
  */
 export function usePushNotifications(userId: string | undefined) {
+  const router = useRouter();
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
   const savedUserIdRef = useRef<string | null>(null);
 
@@ -95,6 +99,21 @@ export function usePushNotifications(userId: string | undefined) {
     });
     return () => sub.remove();
   }, []);
+
+  useEffect(() => {
+    const routeFromResponse = (response: Notifications.NotificationResponse | null) => {
+      const data = response?.notification.request.content.data;
+      const route = getNotificationRoute(data);
+      if (route) pushOnce(router, route);
+    };
+
+    Notifications.getLastNotificationResponseAsync()
+      .then(routeFromResponse)
+      .catch(() => undefined);
+
+    const sub = Notifications.addNotificationResponseReceivedListener(routeFromResponse);
+    return () => sub.remove();
+  }, [router]);
 
   return expoPushToken;
 }

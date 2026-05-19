@@ -8,7 +8,9 @@ import { useAuth } from '../../src/features/auth/AuthContext';
 import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
+import { cropAvatarImage } from '../../src/lib/avatarImage';
 import { onCapturedUri } from '../../src/lib/cameraHandoff';
+import { pushOnce } from '../../src/lib/navigationGuard';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
 
@@ -21,8 +23,11 @@ export default function OnboardingProfilePhotoScreen() {
   const [localUri, setLocalUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Receive the URI captured by the polaroid camera screen when it pops back.
-  useEffect(() => onCapturedUri((uri) => setLocalUri(uri)), []);
+  useEffect(() => onCapturedUri((uri) => {
+    cropAvatarImage(uri)
+      .then(setLocalUri)
+      .catch(() => setLocalUri(uri));
+  }), []);
 
   const initials = (currentUser?.displayName ?? '?')
     .trim()
@@ -33,7 +38,7 @@ export default function OnboardingProfilePhotoScreen() {
     .toUpperCase();
 
   function takePhoto() {
-    router.push({ pathname: '/(app)/camera', params: { handoff: '1' } });
+    pushOnce(router, { pathname: '/(app)/camera', params: { handoff: '1', avatarHandoff: '1' } });
   }
 
   async function handleContinue() {
@@ -43,7 +48,8 @@ export default function OnboardingProfilePhotoScreen() {
       if (localUri) {
         await updateProfile({ avatarLocalUri: localUri });
       }
-      router.push('/(onboarding)/fact');
+      pushOnce(router, '/(onboarding)/fact');
+      setBusy(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not save your photo.';
       Alert.alert('Hmm', message);
@@ -53,13 +59,13 @@ export default function OnboardingProfilePhotoScreen() {
 
   function handleSkip() {
     if (busy) return;
-    router.push('/(onboarding)/fact');
+    pushOnce(router, '/(onboarding)/fact');
   }
 
   return (
     <OnboardingFrame
-      step={4}
-      totalSteps={7}
+      step={8}
+      totalSteps={12}
       eyebrow="Your face"
       title="Add a profile photo."
       subtitle="A photo helps your friends spot you when they connect. You can change it anytime."
@@ -122,9 +128,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     avatarImage: { width: '100%', height: '100%' },
     avatarInitials: {
-      fontFamily: fonts.heading,
-      fontSize: 48,
+      fontFamily: fonts.bodyBold,
+      fontSize: 42,
+      lineHeight: 48,
       color: colors.inkSoft,
+      textAlign: 'center',
     },
     actionRow: {
       flexDirection: 'row',

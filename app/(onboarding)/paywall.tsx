@@ -1,14 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../src/components/ActionButton';
 import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
 import { useOnboarding } from '../../src/features/onboarding/OnboardingContext';
-import { usePremium } from '../../src/features/premium/PremiumContext';
+import { PREMIUM_PRODUCT_IDS, type PremiumPlanId, usePremium } from '../../src/features/premium/PremiumContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
+import { LEGAL_LINKS, SUBSCRIPTION_LEGAL_COPY } from '../../src/lib/legalLinks';
 import type { ColorTokens } from '../../src/features/theme/themes';
+import { replaceOnce } from '../../src/lib/navigationGuard';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
 
@@ -20,37 +22,67 @@ interface Perk {
 
 const PERKS: Perk[] = [
   {
-    icon: 'sparkles-outline',
-    title: 'No ads, ever',
-    body: 'A clean, quiet scrapbook with nothing trying to sell you anything.',
-  },
-  {
-    icon: 'color-palette-outline',
-    title: 'Every app theme, unlocked',
-    body: 'Switch the whole app between curated palettes whenever the mood changes.',
-  },
-  {
-    icon: 'person-circle-outline',
-    title: 'Profile themes for every friend',
-    body: 'Give each friend their own backdrop so their wall feels unmistakably theirs.',
-  },
-  {
-    icon: 'square-outline',
-    title: 'All card colors',
-    body: 'Pick from the full palette of polaroid card colors when posting memories.',
+    icon: 'videocam-outline',
+    title: 'Live Memory Cards',
+    body: 'Hold the shutter to save a short video with sound, then keep a beautiful still cover on the wall.',
   },
   {
     icon: 'images-outline',
-    title: 'Pull memories from your gallery',
-    body: 'Add photos straight from your camera roll — not just freshly taken polaroids.',
+    title: 'Use your whole camera roll',
+    body: 'Turn old photos, screenshots, trips, and favorite moments into memory cards anytime.',
+  },
+  {
+    icon: 'sparkles-outline',
+    title: 'AI captions that sound like you',
+    body: 'Get witty, sweet, or heartfelt caption ideas using the photo and your friendship context.',
+  },
+  {
+    icon: 'calendar-outline',
+    title: 'Never miss friend moments',
+    body: 'Create birthdays, anniversaries, plans, recurring reminders, and shared events your friends can keep too.',
+  },
+  {
+    icon: 'color-palette-outline',
+    title: 'Every app theme',
+    body: 'Unlock every palette, mood, and matching typography so the whole app feels like yours.',
+  },
+  {
+    icon: 'person-circle-outline',
+    title: 'Custom friend profiles',
+    body: 'Give each person their own backdrop, profile theme, profile card video, and personal vibe.',
+  },
+  {
+    icon: 'brush-outline',
+    title: 'All card colors',
+    body: 'Use the full memory-card color palette so every post and profile card can match the moment.',
+  },
+  {
+    icon: 'phone-portrait-outline',
+    title: 'Shake-to-develop',
+    body: 'Make fresh memory cards interactive: shake your phone to help photos develop faster.',
+  },
+  {
+    icon: 'ribbon-outline',
+    title: 'Premium profile glow',
+    body: 'Show off Premium with the glowing treatment on your profile and friend cards.',
+  },
+  {
+    icon: 'ban-outline',
+    title: 'No ads, ever',
+    body: 'Keep the scrapbook calm, focused, and uninterrupted.',
+  },
+  {
+    icon: 'rocket-outline',
+    title: 'Future creative tools first',
+    body: 'Get upcoming memory formats, editing tools, decorations, and packs as they launch.',
   },
 ];
 
-const PRICE_LABEL = '$14.99 / 3 months';
+const PRICE_LABEL = '$29.99 / year';
 
 export default function OnboardingPaywallScreen() {
   const router = useRouter();
-  const { purchase } = usePremium();
+  const { purchase, premiumPlans, purchaseLoading, purchaseError } = usePremium();
   const { completeOnboarding } = useOnboarding();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
@@ -59,14 +91,14 @@ export default function OnboardingPaywallScreen() {
 
   async function finish() {
     await completeOnboarding();
-    router.replace('/(app)/friends');
+    replaceOnce(router, '/friends');
   }
 
-  async function handlePurchase() {
+  async function handlePurchase(planId: PremiumPlanId = PREMIUM_PRODUCT_IDS.yearly) {
     if (busy) return;
     setBusy(true);
     try {
-      await purchase();
+      await purchase(planId);
       await finish();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not complete the purchase.';
@@ -85,18 +117,27 @@ export default function OnboardingPaywallScreen() {
     }
   }
 
+  async function openExternalLink(url: string) {
+    const canOpen = await Linking.canOpenURL(url);
+    if (!canOpen) {
+      Alert.alert('Could not open link', url);
+      return;
+    }
+    await Linking.openURL(url);
+  }
+
   return (
     <OnboardingFrame
-      step={6}
-      totalSteps={7}
+      step={11}
+      totalSteps={12}
       eyebrow="One last thing"
-      title="Unlock everything."
-      subtitle={`${PRICE_LABEL}. Cancel anytime in Settings.`}
+      title="Make every friendship feel personal."
+      subtitle={`Unlock every creative tool for ${PRICE_LABEL}. Cancel anytime in Settings.`}
       onClose={handleLater}
       footer={
         <ActionButton
           label={busy ? 'Working…' : 'Subscribe to Premium'}
-          onPress={handlePurchase}
+          onPress={() => handlePurchase(PREMIUM_PRODUCT_IDS.yearly)}
           disabled={busy}
         />
       }
@@ -106,6 +147,23 @@ export default function OnboardingPaywallScreen() {
         contentContainerStyle={styles.scrollContent}
       >
         <View style={styles.perkList}>
+          <View style={styles.planList}>
+            {premiumPlans.map((plan) => (
+              <Pressable
+                key={plan.id}
+                onPress={() => handlePurchase(plan.id)}
+                disabled={busy || purchaseLoading}
+                style={[styles.planCard, plan.bestValue && styles.planCardBest]}
+              >
+                {plan.bestValue ? <Text style={styles.bestBadge}>Best deal</Text> : null}
+                <Text style={styles.planLabel}>{plan.label}</Text>
+                <Text style={styles.planPrice}>{plan.displayPrice}</Text>
+                <Text style={styles.planPeriod}>per {plan.period}</Text>
+                {plan.savingsLabel ? <Text style={styles.planSavings}>{plan.savingsLabel}</Text> : null}
+              </Pressable>
+            ))}
+          </View>
+          {purchaseError ? <Text style={styles.errorText}>{purchaseError}</Text> : null}
           {PERKS.map((perk) => (
             <View key={perk.title} style={styles.perkRow}>
               <View style={styles.perkIcon}>
@@ -119,8 +177,17 @@ export default function OnboardingPaywallScreen() {
           ))}
         </View>
         <Text style={styles.fineprint}>
-          Referral invites can unlock 7 days of Premium for both friends. Purchases restore automatically if you reinstall.
+          {SUBSCRIPTION_LEGAL_COPY}
         </Text>
+        <View style={styles.legalLinks}>
+          <Pressable onPress={() => void openExternalLink(LEGAL_LINKS.termsOfUse)} accessibilityRole="link">
+            <Text style={styles.legalLink}>Terms of Use (EULA)</Text>
+          </Pressable>
+          <Text style={styles.legalSeparator}>•</Text>
+          <Pressable onPress={() => void openExternalLink(LEGAL_LINKS.privacyPolicy)} accessibilityRole="link">
+            <Text style={styles.legalLink}>Privacy Policy</Text>
+          </Pressable>
+        </View>
       </ScrollView>
     </OnboardingFrame>
   );
@@ -130,6 +197,38 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
     scrollContent: { gap: spacing.md, paddingBottom: spacing.md },
     perkList: { gap: spacing.sm },
+    planList: { gap: spacing.sm },
+    planCard: {
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paperMuted,
+      borderRadius: radius.md,
+      padding: spacing.md,
+      gap: 2,
+    },
+    planCardBest: {
+      borderColor: colors.accent,
+      backgroundColor: colors.accent + '18',
+    },
+    bestBadge: {
+      alignSelf: 'flex-start',
+      borderRadius: radius.pill,
+      overflow: 'hidden',
+      backgroundColor: colors.accent,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 3,
+      fontFamily: fonts.bodyBold,
+      fontSize: 10,
+      color: colors.white,
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+      marginBottom: spacing.xs,
+    },
+    planLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
+    planPrice: { fontFamily: fonts.heading, fontSize: 25, color: colors.ink },
+    planPeriod: { fontFamily: fonts.body, fontSize: 12, color: colors.inkSoft },
+    planSavings: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent, marginTop: spacing.xs },
+    errorText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
     perkRow: {
       flexDirection: 'row',
       alignItems: 'flex-start',
@@ -157,6 +256,24 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       color: colors.inkSoft,
       textAlign: 'center',
       marginTop: spacing.xs,
+    },
+    legalLinks: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexWrap: 'wrap',
+      gap: spacing.xs,
+    },
+    legalLink: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 12,
+      color: colors.accent,
+      textDecorationLine: 'underline',
+    },
+    legalSeparator: {
+      fontFamily: fonts.body,
+      fontSize: 12,
+      color: colors.inkMuted,
     },
     skipButton: {
       alignItems: 'center',

@@ -1,37 +1,43 @@
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { ReactNode, useEffect, useMemo, useCallback, useRef, useState } from 'react';
-import { Alert, Animated, Image, Linking, type NativeScrollEvent, type NativeSyntheticEvent, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Animated, Image, Linking, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ActionButton } from '../../../../src/components/ActionButton';
 import { AppScreen } from '../../../../src/components/AppScreen';
-import { CardFlourish } from '../../../../src/components/CardFlourish';
 import {
-  MonthMemoryWallContent,
   type DayGroup,
 } from '../../../../src/components/MonthScrollableMemoryWall';
+import { MemoryWallViewToggle, MemoryWallViews, type MemoryWallViewMode } from '../../../../src/components/MemoryWallViews';
+import { MemoryPromptRequestList } from '../../../../src/components/MemoryPromptRequestList';
+import { MemoryReplyThreadPreview } from '../../../../src/components/MemoryReplyThreadPreview';
+import { LockedGiftNoteCard } from '../../../../src/components/LockedGiftNoteCard';
+import { MemoryProfileCard, ProfileBackgroundBackdrop, WallModeToggle } from '../../../../src/components/profile';
 import { SectionCard } from '../../../../src/components/SectionCard';
 import { ProfileSkeleton } from '../../../../src/components/Skeleton';
 import { WallPostCard } from '../../../../src/components/WallPostCard';
 import { useAuth } from '../../../../src/features/auth/AuthContext';
+import { useCalendar } from '../../../../src/features/calendar/CalendarContext';
 import { usePremium } from '../../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../../src/features/social/SocialGraphContext';
-import { useTheme } from '../../../../src/features/theme/ThemeContext';
-import type { ColorTokens, ThemeName } from '../../../../src/features/theme/themes';
-import { themes, themeNames } from '../../../../src/features/theme/themes';
+import { buildContactProfileViewModel } from '../../../../src/features/social/selectors';
+import type { ColorTokens } from '../../../../src/features/theme/themes';
+import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
 import type { FontSet } from '../../../../src/theme/typography';
 import { accentPalette, radius, spacing } from '../../../../src/theme/tokens';
-import { fontSets } from '../../../../src/theme/typography';
-import { contrastText, contrastTextSoft, contrastAccent } from '../../../../src/lib/contrastText';
+import { contrastText } from '../../../../src/lib/contrastText';
+import { backOnce, pushOnce, replaceOnce } from '../../../../src/lib/navigationGuard';
 import { createPrivateNoteImageUrl, removePrivateNoteImage, uploadPrivateNoteImage } from '../../../../src/lib/privateNoteMedia';
 import { showGalleryPaywall } from '../../../../src/lib/premiumGates';
 import { showPhotoSourceSheet } from '../../../../src/lib/photoSourceSheet';
-import { usePolaroidImageReady } from '../../../../src/hooks/usePolaroidImageReady';
+import { avatarImagePickerOptions, privateNoteImagePickerOptions } from '../../../../src/lib/imagePickerPresets';
+import { getProfileScreenGradientColors, useEffectiveProfileTheme } from '../../../../src/hooks/useEffectiveProfileTheme';
+import { compareWallPostsByMemoryDateDesc, groupPostsByMemoryDateDay } from '../../../../src/lib/memoryDate';
+import { usePrioritizedWallImageLoading } from '../../../../src/hooks/usePrioritizedWallImageLoading';
+import { useSyntheticNotificationReads } from '../../../../src/hooks/useSyntheticNotificationReads';
 import type { ContactPrivateNoteBlock, WallPost } from '../../../../src/types/domain';
 
 export default function ContactProfileScreen() {
@@ -39,9 +45,18 @@ export default function ContactProfileScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ contactId: string | string[] }>();
   const { currentUser } = useAuth();
-  const { isPremium } = usePremium();
-  const { loading, getContactById, getUserById, getDirectFriends, getPeopleListForUser, getWallPostsForSubject, getVisiblePostsByAuthor, getPrivateNotesForContact, getPrivateNoteById, getPrivateNoteBlocks, createPrivateNote, updatePrivateNote, deletePrivateNote, addPrivateNoteBlock, updatePrivateNoteBlock, deletePrivateNoteBlock, addContactFact, deleteContactFact, deleteWallPost, updateWallPost, updateContact, migrateContactPostsToUser, linkContactByFriendCode, togglePin, removeFriend, deleteContact, notifications, unreadCount, refresh } = useSocialGraph();
-  const { colors, fonts, resolvedMode } = useTheme();
+  const { isPremium, isUserPremium } = usePremium();
+  const { loading, contacts, getContactById, getUserById, getDirectFriends, getPeopleListForUser, getWallPostsForSubject, getVisiblePostsByAuthor, getPrivateNotesForContact, getPrivateNoteById, getPrivateNoteBlocks, cancelGiftNote, getGiftNotesForPair, getMovieReviewRequestsForPair, cancelMovieReviewRequest, getMemoryPromptRequestsForPair, cancelMemoryPromptRequest, getRepliesForWallPost, createPrivateNote, updatePrivateNote, deletePrivateNote, addPrivateNoteBlock, updatePrivateNoteBlock, deletePrivateNoteBlock, addContactFact, deleteContactFact, deleteWallPost, updateWallPost, updateContact, migrateContactPostsToUser, linkContactByFriendCode, togglePin, removeFriend, deleteContact, notifications, unreadCount, isPostOnProfileWall, addPostToProfileWall, refresh } = useSocialGraph();
+  const { events } = useCalendar();
+  const contactId = Array.isArray(params.contactId) ? params.contactId[0] : params.contactId;
+  const contact = contactId ? getContactById(contactId) : undefined;
+  const {
+    baseColors: colors,
+    effectiveColors,
+    effectiveFonts,
+    themedColors,
+    tint,
+  } = useEffectiveProfileTheme(contact?.profileBg);
 
   const [newFact, setNewFact] = useState('');
   const [factBusy, setFactBusy] = useState(false);
@@ -60,7 +75,10 @@ export default function ContactProfileScreen() {
   const [linkScanning, setLinkScanning] = useState(false);
   const [linkCameraPermission, requestLinkCameraPermission] = useCameraPermissions();
   const linkScannedRef = useRef(false);
+  const [existingFriendLinkOpen, setExistingFriendLinkOpen] = useState(false);
   const [activePane, setActivePane] = useState<'profile' | 'notes'>('profile');
+  const [memoryWallViewMode, setMemoryWallViewMode] = useState<MemoryWallViewMode>('timeline');
+  const [memoryFilter, setMemoryFilter] = useState<MemoryFilter>('all');
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [noteEditorOpen, setNoteEditorOpen] = useState(false);
   const [noteTitleDraft, setNoteTitleDraft] = useState('');
@@ -131,83 +149,55 @@ export default function ContactProfileScreen() {
     }
   }, []);
 
-  const contactId = Array.isArray(params.contactId) ? params.contactId[0] : params.contactId;
-  const contact = contactId ? getContactById(contactId) : undefined;
+  const { readIds: syntheticNotificationReadIds } = useSyntheticNotificationReads(currentUser?.id ?? null);
+  const calendarFallbackUnreadCount = useMemo(() => {
+    if (!currentUser?.id) return 0;
+    const existingEventIds = new Set(
+      notifications
+        .filter((notification) => notification.type === 'calendar_event')
+        .map((notification) => typeof notification.metadata.eventId === 'string' ? notification.metadata.eventId : notification.referenceId)
+        .filter((eventId): eventId is string => Boolean(eventId)),
+    );
+    return events.filter((event) => {
+      if (!event.shareId || event.sharedWithUserId !== currentUser.id || !event.sharedByUserId) return false;
+      if (existingEventIds.has(event.id)) return false;
+      return !syntheticNotificationReadIds.has(`calendar-share-fallback:${event.shareId}`);
+    }).length;
+  }, [currentUser?.id, events, notifications, syntheticNotificationReadIds]);
+  const notificationBadgeCount = unreadCount + calendarFallbackUnreadCount;
 
-  const linkedUser = contact?.linkedUserId
-    ? getUserById(contact.linkedUserId)
-    : currentUser && contact
-      ? getDirectFriends(currentUser.id).find(
-          (f) => f.displayName.toLowerCase() === contact.displayName.toLowerCase(),
-        ) ?? undefined
-      : undefined;
+  const linkedUser = contact?.linkedUserId ? getUserById(contact.linkedUserId) : undefined;
 
-  // Profile theme override — when a contact has a profileBg theme set, use that theme's palette on their profile.
-  const profileThemeName = contact?.profileBg && (themeNames as string[]).includes(contact.profileBg)
-    ? (contact.profileBg as ThemeName)
-    : null;
-  const themedColors = profileThemeName ? themes[profileThemeName][resolvedMode] : null;
-  const effectiveColors = themedColors ?? colors;
-  const effectiveFonts = profileThemeName ? (fontSets[profileThemeName] ?? fonts) : fonts;
-  const tint = themedColors?.accent ?? colors.accent;
+  const friendHasPremium = Boolean(linkedUser?.id && isUserPremium(linkedUser.id));
 
   const styles = useMemo(() => makeStyles(effectiveColors, tint, effectiveFonts), [effectiveColors, tint, effectiveFonts]);
 
-  // ── Hero card flip ──
-  const [showBack, setShowBack] = useState(false);
-  const [heroFrontHeight, setHeroFrontHeight] = useState(0);
-  const flipAnim = useRef(new Animated.Value(0)).current;
-  const flipping = useRef(false);
-  const flipTarget = useRef(0);
-
-  // Single continuous rotation 0 → 180° driving both faces. The back face is
-  // offset by 180° so backfaceVisibility cleanly hides whichever side is facing
-  // away at any given frame — no mid-flip image "ghost" during the swap.
-  const frontRotateY = flipAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '180deg'],
-  });
-  const backRotateY = flipAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['180deg', '360deg'],
-  });
-
   const handleHeroPress = useCallback(() => {
     if (editing) {
-      router.push(`/(app)/profiles/contact/edit?contactId=${contact!.id}`);
-      return;
+      pushOnce(router, `/(app)/profiles/contact/edit?contactId=${contact!.id}`);
     }
-    if (flipping.current) return;
-    flipping.current = true;
-    const next = flipTarget.current === 0 ? 1 : 0;
-    flipTarget.current = next;
-    setShowBack(next === 1);
-    Animated.timing(flipAnim, { toValue: next, duration: 360, useNativeDriver: true }).start(() => {
-      flipping.current = false;
-    });
-  }, [editing, contact?.id, flipAnim, router]);
+  }, [editing, contact?.id, router]);
 
-  // Persist the discovered link so future memories route through subject_user_id.
-  // Also migrate any existing wall posts so the friend can see them via RLS.
+  // Keep existing linked memories routed through subject_user_id. New links are
+  // made only after the user explicitly chooses an account.
   useEffect(() => {
-    if (!contact) return;
-    if (!contact.linkedUserId && linkedUser) {
-      updateContact(contact.id, { linkedUserId: linkedUser.id });
-      migrateContactPostsToUser(contact.id, linkedUser.id);
-    } else if (contact.linkedUserId) {
+    if (contact?.linkedUserId) {
       migrateContactPostsToUser(contact.id, contact.linkedUserId);
     }
-  }, [contact?.id, contact?.linkedUserId, linkedUser?.id]);
+  }, [contact?.id, contact?.linkedUserId]);
 
   // Compute wall posts unconditionally so the hook count stays stable across
   // renders (including during sign-out when `currentUser` becomes null).
   const [wallMode, setWallMode] = useState<'mine' | 'shared'>('shared');
+  const [focusedReferencePostId, setFocusedReferencePostId] = useState<string | null>(null);
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const postLayoutYRef = useRef<Record<string, number>>({});
   const contactPostsAll = contact ? getWallPostsForSubject(contact.id, 'contact') : [];
   const linkedPostsAll = contact?.linkedUserId ? getWallPostsForSubject(contact.linkedUserId, 'user') : [];
   const myWallPosts = useMemo(() =>
     [...contactPostsAll, ...linkedPostsAll]
       .filter((p, i, arr) => arr.findIndex((x) => x.id === p.id) === i)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+      .sort(compareWallPostsByMemoryDateDesc),
     [contactPostsAll, linkedPostsAll],
   );
   // The "shared wall" only contains polaroids each of you have explicitly
@@ -230,30 +220,38 @@ export default function ContactProfileScreen() {
       .filter((p) => p.subjectUserId === currentUser.id);
     const merged = [...myPostsAboutFriend, ...theirPostsAboutMe]
       .filter((p, i, arr) => arr.findIndex((x) => x.id === p.id) === i);
-    return merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return merged.sort(compareWallPostsByMemoryDateDesc);
   }, [contactPostsAll, linkedPostsAll, friendVisiblePosts, currentUser?.id, contact?.linkedUserId]);
   const isLinked = !!contact?.linkedUserId;
-  const wallPosts = wallMode === 'shared' && isLinked ? sharedWallPosts : myWallPosts;
-  const wallDayGroups = useMemo<DayGroup[]>(() => {
-    const out: DayGroup[] = [];
-    let lastLabel = '';
-    for (const post of wallPosts) {
-      const date = new Date(post.createdAt);
-      const dayLabel = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-      if (dayLabel !== lastLabel) {
-        lastLabel = dayLabel;
-        out.push({ label: dayLabel, posts: [] });
-      }
-      out[out.length - 1].posts.push(post);
-    }
-    return out;
-  }, [wallPosts]);
-  // Prefer the manual contact's own avatar; fall back to the linked friend's
-  // real avatar so connected contacts always show the friend's profile pic
-  // even when the contact row was saved before linking.
-  const heroAvatarUri = contact?.avatarPath ?? linkedUser?.avatarPath ?? null;
-  const heroImage = usePolaroidImageReady(heroAvatarUri);
-  const showHeroCard = !heroAvatarUri || heroImage.imageReady;
+  const unfilteredWallPosts = wallMode === 'shared' && isLinked ? sharedWallPosts : myWallPosts;
+  const wallPosts = useMemo(() => filterWallPosts(unfilteredWallPosts, memoryFilter), [unfilteredWallPosts, memoryFilter]);
+  const wallDayGroups = useMemo<DayGroup[]>(() => groupPostsByMemoryDateDay(wallPosts), [wallPosts]);
+  const wallImageLoading = usePrioritizedWallImageLoading(wallPosts, true);
+  const lockedGiftNotes = currentUser?.id && contact?.linkedUserId
+    ? getGiftNotesForPair(currentUser.id, contact.linkedUserId).filter((note) => note.status === 'locked')
+    : [];
+  const moviePromptRequests = currentUser?.id && contact?.linkedUserId && wallMode === 'shared'
+    ? getMovieReviewRequestsForPair(currentUser.id, contact.linkedUserId).filter((request) => request.status === 'pending')
+    : [];
+  const memoryPromptRequests = currentUser?.id && contact?.linkedUserId && wallMode === 'shared'
+    ? getMemoryPromptRequestsForPair(currentUser.id, contact.linkedUserId).filter((request) => request.status === 'pending')
+    : [];
+  const incomingPromptCount = currentUser?.id && wallMode === 'shared'
+    ? memoryPromptRequests.filter((request) => request.recipientUserId === currentUser.id).length
+      + moviePromptRequests.filter((request) => request.recipientUserId === currentUser.id).length
+    : 0;
+  const newSharedMemoryCount = wallMode === 'shared'
+    ? sharedWallPosts.filter((post) => notifications.some((notification) => (
+      !notification.read
+      && notification.type === 'wall_post'
+      && notification.referenceId === post.id
+    ))).length
+    : 0;
+  const wallViewIndicators = {
+    timeline: newSharedMemoryCount,
+    grid: newSharedMemoryCount,
+    prompts: incomingPromptCount,
+  };
   const privateNotes = contact ? getPrivateNotesForContact(contact.id) : [];
   const selectedPrivateNote = selectedNoteId ? getPrivateNoteById(selectedNoteId) : undefined;
   const selectedNoteBlocks = selectedPrivateNote ? getPrivateNoteBlocks(selectedPrivateNote.id) : [];
@@ -355,369 +353,6 @@ export default function ContactProfileScreen() {
     });
     return () => { cancelled = true; };
   }, [selectedPrivateNote?.id, selectedImageBlockSignature]);
-
-  if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
-
-  if (loading) {
-    return <AppScreen><ProfileSkeleton /></AppScreen>;
-  }
-
-  if (!contact || contact.ownerUserId !== currentUser.id) {
-    return (
-      <AppScreen>
-        <SectionCard title="That contact is not in your private list.">
-          <ActionButton label="Back to friends" onPress={() => router.replace('/(app)/friends')} />
-        </SectionCard>
-      </AppScreen>
-    );
-  }
-
-  const accentColor = getPeopleListForUser(currentUser.id).find((item) => item.id === contact.id)?.avatarColor ?? colors.apricot;
-  const heroCt = contact.cardColor ? contrastText(contact.cardColor) : FRAME_INK;
-  const heroCtSoft = contact.cardColor ? contrastTextSoft(contact.cardColor) : FRAME_INK_SOFT;
-  const heroCtAccent = contact.cardColor ? contrastAccent(contact.cardColor, tint) : tint;
-  const profileBackTo = `/(app)/profiles/contact/${contact.id}`;
-
-  async function handleAddFact() {
-    if (!newFact.trim()) return;
-    setFactBusy(true);
-    try {
-      await addContactFact(contact!.id, newFact.trim());
-      setNewFact('');
-    } catch (err: any) {
-      Alert.alert('Error', err.message);
-    }
-    setFactBusy(false);
-  }
-
-  function handleDeleteFact(fact: string) {
-    Alert.alert('Delete fact?', 'This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteContactFact(contact!.id, fact) },
-    ]);
-  }
-
-  function handleDeleteWallPost(postId: string) {
-    Alert.alert('Delete memory?', 'This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteWallPost(postId) },
-    ]);
-  }
-
-  function handleUnfriend() {
-    if (!currentUser || !contact || !contact.linkedUserId || !linkedUser) return;
-
-    Alert.alert(
-      `Unfriend ${linkedUser.displayName}?`,
-      'They will stay in your private contact list, but the friendship link will be removed.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Unfriend',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await removeFriend(currentUser.id, linkedUser.id);
-              setEditing(false);
-            } catch (err: any) {
-              Alert.alert('Error', err.message ?? 'Failed to remove friend.');
-            }
-          },
-        },
-      ],
-    );
-  }
-
-  function handleDeleteProfile() {
-    if (!currentUser || !contact) return;
-
-    if (contact.linkedUserId) {
-      Alert.alert('Unfriend first', 'You can only delete this profile after you remove them as a friend.');
-      return;
-    }
-
-    Alert.alert(
-      `Delete ${contact.displayName}'s profile?`,
-      'This will delete this profile card and remove its saved memories and facts from your app.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete profile',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteContact(currentUser.id, contact.id);
-              router.replace('/(app)/friends');
-            } catch (err: any) {
-              Alert.alert('Error', err.message ?? 'Failed to delete profile.');
-            }
-          },
-        },
-      ],
-    );
-  }
-
-  function startEditingPost(post: WallPost) {
-    setEditingPostId(post.id);
-    setEditingPostBody(post.body);
-    setEditingPostImage(post.imageUri);
-    setEditingPostColor(post.cardColor ?? null);
-    setImageChanged(false);
-  }
-
-  function cancelEditingPost() {
-    setEditingPostId(null);
-    setEditingPostBody('');
-    setEditingPostImage(null);
-    setEditingPostColor(null);
-    setImageChanged(false);
-  }
-
-  async function pickEditImage() {
-    if (!isPremium) {
-      showGalleryPaywall(() => router.push('/(app)/store'));
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setEditingPostImage(result.assets[0].uri);
-      setImageChanged(true);
-    }
-  }
-
-  async function saveEditingPost() {
-    if (!editingPostId) return;
-    setSavingPost(true);
-    try {
-      await updateWallPost(editingPostId, editingPostBody.trim(), imageChanged ? editingPostImage : undefined, editingPostColor);
-    } catch (err: any) {
-      Alert.alert('Error', err.message);
-    }
-    setSavingPost(false);
-    cancelEditingPost();
-  }
-
-  function handleSaveBackText(postId: string, text: string) {
-    const post = wallPosts.find((p) => p.id === postId);
-    if (post) updateWallPost(postId, post.body, undefined, undefined, text);
-  }
-
-  async function handleCreatePrivateNote() {
-    if (!currentUser || !contact) return;
-    setNotesBusy(true);
-    try {
-      const note = await createPrivateNote(currentUser.id, contact.id, { title: 'New note' });
-      const textBlock = await addPrivateNoteBlock(note.id, { type: 'text', content: '', sortOrder: 0 });
-      setActivePane('notes');
-      setSelectedNoteId(note.id);
-      setNoteEditorOpen(true);
-      setNoteTitleDraft(note.title);
-      setNoteTextDrafts({ [textBlock.id]: '' });
-      setActiveNoteTextBlockId(textBlock.id);
-      setNoteLinkDrafts({});
-      setNewNoteLinkDraft('');
-    } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Failed to create note.');
-    } finally {
-      setNotesBusy(false);
-    }
-  }
-
-  function openMemoryNoteShortcut() {
-    if (!contact) return;
-    router.push({
-      pathname: '/(app)/memories/add',
-      params: { subjectId: contact.id, subjectType: 'contact', backTo: profileBackTo },
-    });
-  }
-
-  function openMemoryCameraShortcut() {
-    if (!contact) return;
-    router.push({
-      pathname: '/(app)/camera',
-      params: {
-        subjectId: contact.id,
-        subjectType: 'contact',
-        returnTo: '/(app)/memories/add',
-        backTo: profileBackTo,
-      },
-    });
-  }
-
-  async function openMemoryGalleryShortcut() {
-    if (!contact) return;
-    if (!isPremium) {
-      showGalleryPaywall(() => router.push('/(app)/store'));
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.9,
-    });
-    if (!result.canceled && result.assets[0]?.uri) {
-      router.push({
-        pathname: '/(app)/memories/add',
-        params: {
-          subjectId: contact.id,
-          subjectType: 'contact',
-          capturedUri: result.assets[0].uri,
-          backTo: profileBackTo,
-        },
-      });
-    }
-  }
-
-  function openMemoryPhotoShortcut() {
-    if (!contact) return;
-    showPhotoSourceSheet({
-      galleryLocked: !isPremium,
-      onCamera: openMemoryCameraShortcut,
-      onGallery: openMemoryGalleryShortcut,
-    });
-  }
-
-  async function handleSavePrivateNote() {
-    if (!selectedPrivateNote) return;
-    setNotesBusy(true);
-    try {
-      await updatePrivateNote(selectedPrivateNote.id, { title: noteTitleDraft });
-      if (selectedTextBlocks.length > 0) {
-        for (const block of selectedTextBlocks) {
-          await updatePrivateNoteBlock(block.id, { content: noteTextDrafts[block.id] ?? block.content ?? '' });
-        }
-      } else {
-        const block = await addPrivateNoteBlock(selectedPrivateNote.id, { type: 'text', content: '', sortOrder: 0 });
-        setNoteTextDrafts((prev) => ({ ...prev, [block.id]: '' }));
-      }
-      const nextLinkDrafts: Record<string, string> = {};
-      for (const block of selectedLinkBlocks) {
-        const normalizedLink = normalizePrivateNoteLink(noteLinkDrafts[block.id] ?? block.url ?? block.content ?? '');
-        if (normalizedLink) {
-          await updatePrivateNoteBlock(block.id, { content: normalizedLink, url: normalizedLink });
-          nextLinkDrafts[block.id] = normalizedLink;
-        } else {
-          await deletePrivateNoteBlock(block.id);
-        }
-      }
-      const newNormalizedLink = normalizePrivateNoteLink(newNoteLinkDraft);
-      if (newNormalizedLink) {
-        const sortOrder = getNextNoteSortOrder(selectedNoteBlocks);
-        const block = await addPrivateNoteBlock(selectedPrivateNote.id, {
-          type: 'link',
-          content: newNormalizedLink,
-          url: newNormalizedLink,
-          sortOrder,
-        });
-        const textBlock = await addPrivateNoteBlock(selectedPrivateNote.id, { type: 'text', content: '', sortOrder: sortOrder + 1 });
-        nextLinkDrafts[block.id] = newNormalizedLink;
-        setNoteTextDrafts((prev) => ({ ...prev, [textBlock.id]: '' }));
-      }
-      setNoteLinkDrafts(nextLinkDrafts);
-      setNewNoteLinkDraft('');
-      setActiveNoteTextBlockId(null);
-    } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Failed to save note.');
-    } finally {
-      setNotesBusy(false);
-    }
-  }
-
-  async function handleAddPrivateNoteLink() {
-    if (!selectedPrivateNote) return;
-    const normalizedLink = normalizePrivateNoteLink(newNoteLinkDraft);
-    if (!normalizedLink) return;
-    setNotesBusy(true);
-    try {
-      const sortOrder = getNextNoteSortOrder(selectedNoteBlocks);
-      const block = await addPrivateNoteBlock(selectedPrivateNote.id, {
-        type: 'link',
-        content: normalizedLink,
-        url: normalizedLink,
-        sortOrder,
-      });
-      const textBlock = await addPrivateNoteBlock(selectedPrivateNote.id, { type: 'text', content: '', sortOrder: sortOrder + 1 });
-      setNoteLinkDrafts((prev) => ({ ...prev, [block.id]: normalizedLink }));
-      setNoteTextDrafts((prev) => ({ ...prev, [textBlock.id]: '' }));
-      setActiveNoteTextBlockId(textBlock.id);
-      setNewNoteLinkDraft('');
-    } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Failed to add link.');
-    } finally {
-      setNotesBusy(false);
-    }
-  }
-
-  async function handleAddPrivateNotePhoto() {
-    if (!selectedPrivateNote || !currentUser) return;
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.9,
-    });
-    if (result.canceled || !result.assets[0]?.uri) return;
-
-    setNotesBusy(true);
-    try {
-      const imagePath = await uploadPrivateNoteImage(currentUser.id, selectedPrivateNote.id, result.assets[0].uri);
-      const sortOrder = getNextNoteSortOrder(selectedNoteBlocks);
-      const block = await addPrivateNoteBlock(selectedPrivateNote.id, {
-        type: 'image',
-        content: result.assets[0].fileName ?? 'Photo',
-        imagePath,
-        sortOrder,
-      });
-      const textBlock = await addPrivateNoteBlock(selectedPrivateNote.id, { type: 'text', content: '', sortOrder: sortOrder + 1 });
-      const signedUrl = await createPrivateNoteImageUrl(imagePath);
-      setNoteImageUrls((prev) => ({ ...prev, [block.id]: signedUrl }));
-      setNoteTextDrafts((prev) => ({ ...prev, [textBlock.id]: '' }));
-      setActiveNoteTextBlockId(textBlock.id);
-    } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Failed to add photo.');
-    } finally {
-      setNotesBusy(false);
-    }
-  }
-
-  function handleDeletePrivateNotePhoto(block: ContactPrivateNoteBlock) {
-    Alert.alert('Remove photo?', 'This photo will be removed from this private note.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          setNotesBusy(true);
-          try {
-            if (block.imagePath) await removePrivateNoteImage(block.imagePath);
-            await deletePrivateNoteBlock(block.id);
-            setNoteImageUrls((prev) => {
-              const next = { ...prev };
-              delete next[block.id];
-              return next;
-            });
-          } catch (err: any) {
-            Alert.alert('Error', err.message ?? 'Failed to remove photo.');
-          } finally {
-            setNotesBusy(false);
-          }
-        },
-      },
-    ]);
-  }
-
-  function handleOpenPrivateNoteLink(rawUrl?: string | null) {
-    if (!rawUrl) return;
-    const url = normalizePrivateNoteLink(rawUrl);
-    if (!url) return;
-    Linking.openURL(url).catch(() => Alert.alert('Could not open link', url));
-  }
 
   // Persist any drafts that differ from what we last saved. This is the core
   // of the Apple Notes-style auto-save: it never adds blocks (photo handlers
@@ -823,6 +458,446 @@ export default function ContactProfileScreen() {
     };
   }, [selectedPrivateNote?.id, autoSavePrivateNote]);
 
+  if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
+
+  if (loading) {
+    return <AppScreen><ProfileSkeleton /></AppScreen>;
+  }
+
+  if (!contact || contact.ownerUserId !== currentUser.id) {
+    return (
+      <AppScreen>
+        <SectionCard title="That contact is not in your private list.">
+          <ActionButton label="Back to friends" onPress={() => replaceOnce(router, '/friends')} />
+        </SectionCard>
+      </AppScreen>
+    );
+  }
+
+  const accentColor = getPeopleListForUser(currentUser.id).find((item) => item.id === contact.id)?.avatarColor ?? colors.apricot;
+  const profileCard = buildContactProfileViewModel({ accentColor, contact, friendHasPremium, linkedUser });
+  const linkedFriendIds = new Set(
+    contacts
+      .filter((candidate) => candidate.ownerUserId === currentUser.id && candidate.id !== contact.id && candidate.linkedUserId)
+      .map((candidate) => candidate.linkedUserId!),
+  );
+  const existingFriendLinkTargets = getDirectFriends(currentUser.id)
+    .filter((friend) => !linkedFriendIds.has(friend.id))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const suggestedExistingFriend = existingFriendLinkTargets.find(
+    (friend) => friend.displayName.trim().toLowerCase().replace(/\s+/g, ' ') === contact.displayName.trim().toLowerCase().replace(/\s+/g, ' '),
+  );
+  const profileBackTo = `/(app)/profiles/contact/${contact.id}`;
+
+  async function handleAddFact() {
+    if (!newFact.trim()) return;
+    setFactBusy(true);
+    try {
+      await addContactFact(contact!.id, newFact.trim());
+      setNewFact('');
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    }
+    setFactBusy(false);
+  }
+
+  function handleDeleteFact(fact: string) {
+    Alert.alert('Delete fact?', 'This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteContactFact(contact!.id, fact) },
+    ]);
+  }
+
+  function openRealProfileLinkManager(userIdToOpen: string) {
+    pushOnce(router, { pathname: '/(app)/profiles/user/[userId]', params: { userId: userIdToOpen, actual: '1' } });
+  }
+
+  function handleLinkExistingFriend(friendUserId: string) {
+    const friend = existingFriendLinkTargets.find((candidate) => candidate.id === friendUserId);
+    if (!friend) return;
+    openRealProfileLinkManager(friend.id);
+  }
+
+  function handleDeleteWallPost(postId: string) {
+    Alert.alert('Delete memory?', 'This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteWallPost(postId) },
+    ]);
+  }
+
+  function handleUnfriend() {
+    if (!currentUser || !contact || !contact.linkedUserId || !linkedUser) return;
+
+    Alert.alert(
+      `Unfriend ${linkedUser.displayName}?`,
+      'They will stay in your private contact list, but the friendship link will be removed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unfriend',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await removeFriend(currentUser.id, linkedUser.id);
+              setEditing(false);
+            } catch (err: any) {
+              Alert.alert('Error', err.message ?? 'Failed to remove friend.');
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  function handleDeleteProfile() {
+    if (!currentUser || !contact) return;
+
+    if (contact.linkedUserId) {
+      Alert.alert('Unfriend first', 'You can only delete this profile after you remove them as a friend.');
+      return;
+    }
+
+    Alert.alert(
+      `Delete ${contact.displayName}'s profile?`,
+      'This will delete this profile card and remove its saved memories and facts from your app.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete profile',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteContact(currentUser.id, contact.id);
+              replaceOnce(router, '/friends');
+            } catch (err: any) {
+              Alert.alert('Error', err.message ?? 'Failed to delete profile.');
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  function startEditingPost(post: WallPost) {
+    setEditingPostId(post.id);
+    setEditingPostBody(post.body);
+    setEditingPostImage(post.imageUri);
+    setEditingPostColor(post.cardColor ?? null);
+    setImageChanged(false);
+  }
+
+  function cancelEditingPost() {
+    setEditingPostId(null);
+    setEditingPostBody('');
+    setEditingPostImage(null);
+    setEditingPostColor(null);
+    setImageChanged(false);
+  }
+
+  async function pickEditImage() {
+    if (!isPremium) {
+      showGalleryPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync(avatarImagePickerOptions);
+    if (!result.canceled && result.assets[0]) {
+      setEditingPostImage(result.assets[0].uri);
+      setImageChanged(true);
+    }
+  }
+
+  async function saveEditingPost() {
+    if (!editingPostId) return;
+    setSavingPost(true);
+    try {
+      await updateWallPost(editingPostId, editingPostBody.trim(), imageChanged ? editingPostImage : undefined, editingPostColor);
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    }
+    setSavingPost(false);
+    cancelEditingPost();
+  }
+
+  function handleSaveBackText(postId: string, text: string) {
+    const post = wallPosts.find((p) => p.id === postId);
+    if (post) updateWallPost(postId, post.body, undefined, undefined, text);
+  }
+
+  function handlePostLayout(postId: string, event: LayoutChangeEvent) {
+    postLayoutYRef.current[postId] = event.nativeEvent.layout.y;
+  }
+
+  function focusReferencedPost(postId: string) {
+    postLayoutYRef.current = {};
+    setMemoryFilter('all');
+    setMemoryWallViewMode('timeline');
+    setFocusedReferencePostId(postId);
+    [180, 420, 800].forEach((delay) => {
+      setTimeout(() => {
+        const y = postLayoutYRef.current[postId];
+        if (typeof y === 'number') scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 120), animated: true });
+      }, delay);
+    });
+    setTimeout(() => setFocusedReferencePostId((current) => current === postId ? null : current), 1800);
+  }
+
+  async function handleAddToMyProfile(postId: string, repliesHidden = false) {
+    if (!currentUser) return;
+    const result = await addPostToProfileWall(currentUser.id, postId, { repliesHidden });
+    if (!result.ok) Alert.alert('Could not add to profile', result.error);
+  }
+
+  function handleMemoryLongPress(post: WallPost) {
+    if (!currentUser || !contact || editing) return;
+    const actions: Parameters<typeof Alert.alert>[2] = [];
+    const onMyProfile = isPostOnProfileWall(currentUser.id, post.id);
+
+    if (!onMyProfile) {
+      actions.push({ text: 'Add with replies', onPress: () => handleAddToMyProfile(post.id, false) });
+      actions.push({ text: 'Add and hide replies', onPress: () => handleAddToMyProfile(post.id, true) });
+    }
+
+    if (actions.length === 0) return;
+    actions.push({ text: 'Cancel', style: 'cancel' });
+    Alert.alert('Memory options', 'Choose what to do with this memory card.', actions);
+  }
+
+  async function handleCreatePrivateNote() {
+    if (!currentUser || !contact) return;
+    setNotesBusy(true);
+    try {
+      const note = await createPrivateNote(currentUser.id, contact.id, { title: 'New note' });
+      const textBlock = await addPrivateNoteBlock(note.id, { type: 'text', content: '', sortOrder: 0 });
+      setActivePane('notes');
+      setSelectedNoteId(note.id);
+      setNoteEditorOpen(true);
+      setNoteTitleDraft(note.title);
+      setNoteTextDrafts({ [textBlock.id]: '' });
+      setActiveNoteTextBlockId(textBlock.id);
+      setNoteLinkDrafts({});
+      setNewNoteLinkDraft('');
+    } catch (err: any) {
+      Alert.alert('Error', err.message ?? 'Failed to create note.');
+    } finally {
+      setNotesBusy(false);
+    }
+  }
+
+  function openMemoryNoteShortcut() {
+    if (!contact) return;
+    pushOnce(router, {
+      pathname: '/(app)/memories/add',
+      params: { subjectId: contact.id, subjectType: 'contact', backTo: profileBackTo },
+    });
+  }
+
+  function openGiftNoteShortcut() {
+    if (!contact?.linkedUserId) return;
+    pushOnce(router, {
+      pathname: '/(app)/gifts/add',
+      params: { subjectId: contact.id, subjectType: 'contact', backTo: profileBackTo },
+    });
+  }
+
+  function openMovieRequestShortcut() {
+    if (!contact?.linkedUserId) return;
+    pushOnce(router, {
+      pathname: '/(app)/movies/request',
+      params: { subjectId: contact.id, subjectType: 'contact', backTo: profileBackTo },
+    });
+  }
+
+  function openMovieReviewResponse(requestId: string) {
+    pushOnce(router, `/(app)/movies/review/${requestId}`);
+  }
+
+  function openMemoryPromptRequestShortcut() {
+    if (!contact?.linkedUserId) return;
+    pushOnce(router, {
+      pathname: '/(app)/prompts/request',
+      params: { subjectId: contact.id, subjectType: 'contact', backTo: profileBackTo },
+    });
+  }
+
+  function openMemoryPromptResponse(requestId: string) {
+    pushOnce(router, `/(app)/prompts/respond/${requestId}`);
+  }
+
+  function openMemoryCameraShortcut() {
+    if (!contact) return;
+    pushOnce(router, {
+      pathname: '/(app)/camera',
+      params: {
+        subjectId: contact.id,
+        subjectType: 'contact',
+        returnTo: '/(app)/memories/add',
+        backTo: profileBackTo,
+      },
+    });
+  }
+
+  async function openMemoryGalleryShortcut() {
+    if (!contact) return;
+    if (!isPremium) {
+      showGalleryPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync(avatarImagePickerOptions);
+    if (!result.canceled && result.assets[0]?.uri) {
+      pushOnce(router, {
+        pathname: '/(app)/memories/add',
+        params: {
+          subjectId: contact.id,
+          subjectType: 'contact',
+          capturedUri: result.assets[0].uri,
+          backTo: profileBackTo,
+        },
+      });
+    }
+  }
+
+  function openMemoryPhotoShortcut() {
+    if (!contact) return;
+    showPhotoSourceSheet({
+      galleryLocked: !isPremium,
+      onCamera: openMemoryCameraShortcut,
+      onGallery: openMemoryGalleryShortcut,
+    });
+  }
+
+  async function handleSavePrivateNote() {
+    if (!selectedPrivateNote) return;
+    setNotesBusy(true);
+    try {
+      await updatePrivateNote(selectedPrivateNote.id, { title: noteTitleDraft });
+      if (selectedTextBlocks.length > 0) {
+        for (const block of selectedTextBlocks) {
+          await updatePrivateNoteBlock(block.id, { content: noteTextDrafts[block.id] ?? block.content ?? '' });
+        }
+      } else {
+        const block = await addPrivateNoteBlock(selectedPrivateNote.id, { type: 'text', content: '', sortOrder: 0 });
+        setNoteTextDrafts((prev) => ({ ...prev, [block.id]: '' }));
+      }
+      const nextLinkDrafts: Record<string, string> = {};
+      for (const block of selectedLinkBlocks) {
+        const normalizedLink = normalizePrivateNoteLink(noteLinkDrafts[block.id] ?? block.url ?? block.content ?? '');
+        if (normalizedLink) {
+          await updatePrivateNoteBlock(block.id, { content: normalizedLink, url: normalizedLink });
+          nextLinkDrafts[block.id] = normalizedLink;
+        } else {
+          await deletePrivateNoteBlock(block.id);
+        }
+      }
+      const newNormalizedLink = normalizePrivateNoteLink(newNoteLinkDraft);
+      if (newNormalizedLink) {
+        const sortOrder = getNextNoteSortOrder(selectedNoteBlocks);
+        const block = await addPrivateNoteBlock(selectedPrivateNote.id, {
+          type: 'link',
+          content: newNormalizedLink,
+          url: newNormalizedLink,
+          sortOrder,
+        });
+        const textBlock = await addPrivateNoteBlock(selectedPrivateNote.id, { type: 'text', content: '', sortOrder: sortOrder + 1 });
+        nextLinkDrafts[block.id] = newNormalizedLink;
+        setNoteTextDrafts((prev) => ({ ...prev, [textBlock.id]: '' }));
+      }
+      setNoteLinkDrafts(nextLinkDrafts);
+      setNewNoteLinkDraft('');
+      setActiveNoteTextBlockId(null);
+    } catch (err: any) {
+      Alert.alert('Error', err.message ?? 'Failed to save note.');
+    } finally {
+      setNotesBusy(false);
+    }
+  }
+
+  async function handleAddPrivateNoteLink() {
+    if (!selectedPrivateNote) return;
+    const normalizedLink = normalizePrivateNoteLink(newNoteLinkDraft);
+    if (!normalizedLink) return;
+    setNotesBusy(true);
+    try {
+      const sortOrder = getNextNoteSortOrder(selectedNoteBlocks);
+      const block = await addPrivateNoteBlock(selectedPrivateNote.id, {
+        type: 'link',
+        content: normalizedLink,
+        url: normalizedLink,
+        sortOrder,
+      });
+      const textBlock = await addPrivateNoteBlock(selectedPrivateNote.id, { type: 'text', content: '', sortOrder: sortOrder + 1 });
+      setNoteLinkDrafts((prev) => ({ ...prev, [block.id]: normalizedLink }));
+      setNoteTextDrafts((prev) => ({ ...prev, [textBlock.id]: '' }));
+      setActiveNoteTextBlockId(textBlock.id);
+      setNewNoteLinkDraft('');
+    } catch (err: any) {
+      Alert.alert('Error', err.message ?? 'Failed to add link.');
+    } finally {
+      setNotesBusy(false);
+    }
+  }
+
+  async function handleAddPrivateNotePhoto() {
+    if (!selectedPrivateNote || !currentUser) return;
+
+    const result = await ImagePicker.launchImageLibraryAsync(privateNoteImagePickerOptions);
+    if (result.canceled || !result.assets[0]?.uri) return;
+
+    setNotesBusy(true);
+    try {
+      const imagePath = await uploadPrivateNoteImage(currentUser.id, selectedPrivateNote.id, result.assets[0].uri);
+      const sortOrder = getNextNoteSortOrder(selectedNoteBlocks);
+      const block = await addPrivateNoteBlock(selectedPrivateNote.id, {
+        type: 'image',
+        content: result.assets[0].fileName ?? 'Photo',
+        imagePath,
+        sortOrder,
+      });
+      const textBlock = await addPrivateNoteBlock(selectedPrivateNote.id, { type: 'text', content: '', sortOrder: sortOrder + 1 });
+      const signedUrl = await createPrivateNoteImageUrl(imagePath);
+      setNoteImageUrls((prev) => ({ ...prev, [block.id]: signedUrl }));
+      setNoteTextDrafts((prev) => ({ ...prev, [textBlock.id]: '' }));
+      setActiveNoteTextBlockId(textBlock.id);
+    } catch (err: any) {
+      Alert.alert('Error', err.message ?? 'Failed to add photo.');
+    } finally {
+      setNotesBusy(false);
+    }
+  }
+
+  function handleDeletePrivateNotePhoto(block: ContactPrivateNoteBlock) {
+    Alert.alert('Remove photo?', 'This photo will be removed from this private note.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          setNotesBusy(true);
+          try {
+            if (block.imagePath) await removePrivateNoteImage(block.imagePath);
+            await deletePrivateNoteBlock(block.id);
+            setNoteImageUrls((prev) => {
+              const next = { ...prev };
+              delete next[block.id];
+              return next;
+            });
+          } catch (err: any) {
+            Alert.alert('Error', err.message ?? 'Failed to remove photo.');
+          } finally {
+            setNotesBusy(false);
+          }
+        },
+      },
+    ]);
+  }
+
+  function handleOpenPrivateNoteLink(rawUrl?: string | null) {
+    if (!rawUrl) return;
+    const url = normalizePrivateNoteLink(rawUrl);
+    if (!url) return;
+    Linking.openURL(url).catch(() => Alert.alert('Could not open link', url));
+  }
+
   function handleDeletePrivateNoteLink(block: ContactPrivateNoteBlock) {
     Alert.alert('Remove link?', 'This link will be removed from this private note.', [
       { text: 'Cancel', style: 'cancel' },
@@ -878,20 +953,37 @@ export default function ContactProfileScreen() {
 
   const topBar = (
     <View style={styles.topBar}>
-      <Pressable onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
+      <Pressable onPress={() => backOnce(router)} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
         <Text style={styles.backLabel}><Ionicons name="chevron-back" size={16} /> Back</Text>
       </Pressable>
       <View style={styles.topBarRight}>
+        {linkedUser ? (
+          <Pressable
+            onPress={() => pushOnce(router, { pathname: '/(app)/profiles/user/[userId]', params: { userId: linkedUser.id, actual: '1' } })}
+            style={styles.topBarFriendButton}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${linkedUser.displayName}'s profile`}
+          >
+            <View style={[styles.topBarFriendAvatar, { backgroundColor: linkedUser.avatarColor }]}>
+              {linkedUser.avatarPath ? (
+                <Image source={{ uri: linkedUser.avatarPath }} style={styles.topBarFriendAvatarImage} />
+              ) : (
+                <Text style={styles.topBarFriendAvatarText}>{linkedUser.displayName.trim().slice(0, 1).toUpperCase() || '?'}</Text>
+              )}
+            </View>
+            <Text style={styles.topBarFriendName} numberOfLines={1}>{linkedUser.displayName}</Text>
+          </Pressable>
+        ) : null}
         <Pressable
-          onPress={() => router.push('/(app)/notifications')}
+          onPress={() => pushOnce(router, '/(app)/notifications')}
           style={styles.notificationButton}
           accessibilityRole="button"
-          accessibilityLabel={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
+          accessibilityLabel={notificationBadgeCount > 0 ? `Notifications, ${notificationBadgeCount} unread` : 'Notifications'}
         >
-          <Ionicons name={unreadCount > 0 ? 'notifications' : 'notifications-outline'} size={20} color={colors.inkMuted} />
-          {unreadCount > 0 ? (
+          <Ionicons name={notificationBadgeCount > 0 ? 'notifications' : 'notifications-outline'} size={20} color={colors.inkMuted} />
+          {notificationBadgeCount > 0 ? (
             <View style={styles.notificationBadge}>
-              <Text style={styles.notificationBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+              <Text style={styles.notificationBadgeText}>{notificationBadgeCount > 9 ? '9+' : notificationBadgeCount}</Text>
             </View>
           ) : null}
         </Pressable>
@@ -1038,64 +1130,47 @@ export default function ContactProfileScreen() {
   } else {
 
   screenContent.push(
-    <Pressable key="hero" onPress={handleHeroPress} style={styles.heroSection}>
-      <View style={[styles.heroAmbientShadow, !showHeroCard && { opacity: 0 }]} renderToHardwareTextureAndroid>
-        <View onLayout={(e) => { const h = e.nativeEvent.layout.height; if (h > 0) setHeroFrontHeight(h); }} style={styles.heroFaceHost}>
-          <Animated.View pointerEvents={showBack ? 'none' : 'auto'} style={[styles.heroFace, { transform: [{ perspective: 1000 }, { rotateY: frontRotateY }] }]}>
-            <View style={styles.heroTape} />
-            <View style={[styles.heroCard, contact.cardColor ? { backgroundColor: contact.cardColor } : undefined]}>
-              <View style={styles.heroPhotoFrame}>
-                {heroImage.showImage ? (
-                  <>
-                    <Image source={{ uri: heroAvatarUri! }} style={styles.heroPhoto} fadeDuration={0} onLoad={heroImage.handleImageLoad} onError={heroImage.handleImageError} />
-                    <View style={styles.heroWarmBaseTint} />
-                    <LinearGradient
-                      colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.heroPhotoSheen}
-                    />
-                    <View style={styles.heroInsetShadowTop} />
-                    <View style={styles.heroInsetShadowLeft} />
-                  </>
-                ) : (
-                  <View style={[styles.heroPhotoSurface, { backgroundColor: accentColor }]}> 
-                    <Text style={styles.heroInitials}>{getInitials(contact.displayName)}</Text>
-                  </View>
-                )}
-              </View>
-              <View style={styles.heroBottom}>
-                <Text style={[styles.heroName, { color: heroCt }]} numberOfLines={1}>{contact.displayName}</Text>
-                <View style={styles.heroNoteSlot}>
-                  {contact.note ? (
-                    <Text style={[styles.heroNote, { color: heroCtSoft }]} numberOfLines={HERO_NOTE_LINES}>{contact.note}</Text>
-                  ) : null}
-                </View>
-              </View>
-              <CardFlourish size={16} color={heroCtSoft} opacity={0.28} inset={12} />
-            </View>
-          </Animated.View>
-
-          <Animated.View pointerEvents={showBack ? 'auto' : 'none'} style={[styles.heroFaceOverlay, styles.heroFace, { transform: [{ perspective: 1000 }, { rotateY: backRotateY }] }]}>
-            <View style={styles.heroTape} />
-            <View style={[styles.heroCard, styles.heroCardBack, contact.cardColor ? { backgroundColor: contact.cardColor } : undefined, heroFrontHeight > 0 && { height: heroFrontHeight }]}> 
-              {contact.backText ? (
-                <Text style={[styles.backText, { color: heroCt }]}>{contact.backText}</Text>
-              ) : (
-                <Text style={[styles.backPlaceholder, { color: heroCtSoft }]}>Nothing written on the back yet</Text>
-              )}
-              <Text style={[styles.backHint, { color: heroCtSoft }]}>tap to flip back</Text>
-            </View>
-          </Animated.View>
+    <View key="hero" style={[styles.heroSection, editing && styles.heroSectionEditing]}>
+      <MemoryProfileCard
+        accentColor={profileCard.accentColor}
+        backPlaceholder="Nothing written on the back yet"
+        backText={contact.backText}
+        cardColor={profileCard.cardColor}
+        colors={effectiveColors}
+        glow={profileCard.friendHasPremium}
+        imageUri={profileCard.avatarUri}
+        name={profileCard.displayName}
+        note={profileCard.note}
+        onPress={editing ? handleHeroPress : undefined}
+        videoMuted={profileCard.videoMuted}
+        videoUri={profileCard.videoUri}
+      />
+      {!linkedUser ? (
+        <View style={styles.connectionCard}>
+          <View style={styles.connectionHeader}>
+            <View style={[styles.statusDot, styles.statusDotOff]} />
+            <Text style={styles.connectionTitle}>Not connected to an account</Text>
+          </View>
+          <Text style={styles.connectionSubtitle}>
+            {suggestedExistingFriend
+              ? `Possible match found: ${suggestedExistingFriend.email}. Connect it only if this is the right account.`
+              : 'Invite them or link them when they join.'}
+          </Text>
         </View>
-      </View>
-      <View style={styles.statusRow}>
-        <View style={[styles.statusDot, linkedUser ? styles.statusDotOn : styles.statusDotOff]} />
-        <Text style={styles.heroSubtitle}>
-          {linkedUser ? 'Connected' : 'Not Connected'}
-        </Text>
-      </View>
-    </Pressable>,
+      ) : null}
+      {friendHasPremium ? (
+        <View style={styles.heroPremiumBadge}>
+          <Ionicons name="star" size={11} color="#7A5A1A" />
+          <Text style={styles.heroPremiumBadgeText}>PREMIUM</Text>
+        </View>
+      ) : null}
+      {editing ? (
+        <View style={styles.editHeroHint}>
+          <Ionicons name="create-outline" size={14} color={tint} />
+          <Text style={styles.editHeroHintText}>Tap the card to edit their profile</Text>
+        </View>
+      ) : null}
+    </View>,
   );
 
   if (contact.tags.length > 0) {
@@ -1139,7 +1214,7 @@ export default function ContactProfileScreen() {
     linkedUser ? (
       <Pressable
         key="wall-button"
-        onPress={() => router.push(`/(app)/wall/${linkedUser.id}`)}
+        onPress={() => pushOnce(router, `/(app)/wall/${linkedUser.id}`)}
         style={styles.wallButton}
       >
         <View style={styles.wallButtonRow}>
@@ -1179,7 +1254,43 @@ export default function ContactProfileScreen() {
               </View>
             ) : (
               <>
-                <Text style={styles.connectHint}>Scan their QR code or type their friend code.</Text>
+                {existingFriendLinkTargets.length > 0 ? (
+                  <View style={styles.existingFriendPanel}>
+                    <Pressable
+                      onPress={() => setExistingFriendLinkOpen((open) => !open)}
+                      style={styles.existingFriendToggle}
+                      accessibilityRole="button"
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.existingFriendTitle}>Already in your friends?</Text>
+                        <Text style={styles.existingFriendSubtitle}>Open their real profile to choose exactly which saved profile they belong to.</Text>
+                      </View>
+                      <Ionicons name={existingFriendLinkOpen ? 'chevron-up' : 'chevron-down'} size={18} color={tint} />
+                    </Pressable>
+                    {existingFriendLinkOpen ? (
+                      <View style={styles.existingFriendList}>
+                        {existingFriendLinkTargets.map((friend) => (
+                          <Pressable
+                            key={friend.id}
+                            onPress={() => handleLinkExistingFriend(friend.id)}
+                            style={styles.existingFriendRow}
+                            accessibilityRole="button"
+                          >
+                            <View style={[styles.existingFriendAvatar, { backgroundColor: friend.avatarColor }]}>
+                              <Text style={styles.existingFriendAvatarText}>{friend.displayName.trim().slice(0, 1).toUpperCase() || '?'}</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.existingFriendName}>{friend.displayName}</Text>
+                              <Text style={styles.existingFriendEmail}>{friend.email}</Text>
+                            </View>
+                            <Ionicons name="open-outline" size={17} color={tint} />
+                          </Pressable>
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+                <Text style={styles.connectHint}>Or scan their QR code or type their friend code.</Text>
                 <Pressable onPress={openLinkScanner} style={styles.scanButton}>
                   <Ionicons name="qr-code-outline" size={16} color={colors.accent} />
                   <Text style={styles.scanButtonLabel}>Scan QR Code</Text>
@@ -1219,6 +1330,10 @@ export default function ContactProfileScreen() {
                       if (!res.ok) { setLinkError(res.error); return; }
                       setLinkingOpen(false);
                       setLinkCode('');
+                      if (res.requested) {
+                        Alert.alert('Request sent', `${res.friend.displayName} needs to accept before this card can link to their account.`);
+                        return;
+                      }
                       Alert.alert('Linked!', `This card is now connected to ${res.friend.displayName}'s account. Memories you wrote will appear on their profile.`);
                     }}
                   />
@@ -1229,7 +1344,7 @@ export default function ContactProfileScreen() {
         ) : (
           <Pressable onPress={() => setLinkingOpen(true)} style={styles.connectCta}>
             <Text style={styles.connectCtaLabel}>Did {contact.displayName.split(' ')[0]} join the app?</Text>
-            <Text style={styles.connectCtaAction}>Link with friend code  →</Text>
+            <Text style={styles.connectCtaAction}>Connect existing friend or friend code  →</Text>
           </Pressable>
         )}
       </View>
@@ -1237,7 +1352,7 @@ export default function ContactProfileScreen() {
   );
 
   screenContent.push(
-    <View key="facts" style={styles.section}>
+    <View key="facts" style={[styles.section, editing && styles.editableFactsSection]}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Facts</Text>
       </View>
@@ -1258,17 +1373,23 @@ export default function ContactProfileScreen() {
         <Text style={styles.emptyHint}>No facts added yet.</Text>
       )}
       {editing && (
-        <View style={styles.addFactRow}>
-          <TextInput
-            style={styles.addFactInput}
-            value={newFact}
-            onChangeText={setNewFact}
-            placeholder="Add a fact…"
-            placeholderTextColor={effectiveColors.inkMuted}
-          />
-          <Pressable onPress={handleAddFact} disabled={factBusy} style={styles.addFactButton}>
-            <Text style={styles.addFactButtonLabel}>{factBusy ? '…' : '+'}</Text>
-          </Pressable>
+        <View style={styles.factEditorBox}>
+          <View style={styles.editFactHintRow}>
+            <Ionicons name="sparkles-outline" size={14} color={tint} />
+            <Text style={styles.editFactHintText}>Add facts here. Tap the x on a chip to remove one.</Text>
+          </View>
+          <View style={styles.addFactRow}>
+            <TextInput
+              style={styles.addFactInput}
+              value={newFact}
+              onChangeText={setNewFact}
+              placeholder="Add a fact…"
+              placeholderTextColor={effectiveColors.inkMuted}
+            />
+            <Pressable onPress={handleAddFact} disabled={factBusy} style={styles.addFactButton}>
+              <Text style={styles.addFactButtonLabel}>{factBusy ? '…' : '+'}</Text>
+            </Pressable>
+          </View>
         </View>
       )}
     </View>,
@@ -1277,69 +1398,183 @@ export default function ContactProfileScreen() {
   screenContent.push(
     <View key="memory-wall-heading" style={styles.section}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Memory Wall</Text>
+        <Text style={styles.memoryWallTitle}>Memory Wall</Text>
       </View>
       {isLinked ? (
-        <View style={styles.wallModeToggle} accessibilityRole="tablist">
-          {([
-            { key: 'shared', label: 'Shared wall' },
-            { key: 'mine', label: 'Your wall' },
-          ] as const).map((opt) => {
-            const active = wallMode === opt.key;
-            return (
-              <Pressable
-                key={opt.key}
-                onPress={() => setWallMode(opt.key)}
-                style={[styles.wallModeChip, active && styles.wallModeChipActive]}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: active }}
-                accessibilityLabel={opt.label}
-              >
-                <Text style={[styles.wallModeLabel, active && styles.wallModeLabelActive]}>{opt.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
+        <>
+          <WallModeToggle
+            colors={effectiveColors}
+            fonts={effectiveFonts}
+            onChange={setWallMode}
+            options={[
+              { key: 'shared', label: 'Shared wall' },
+              { key: 'mine', label: 'Your wall' },
+            ]}
+            tint={tint}
+            value={wallMode}
+          />
+          <MemoryWallViewToggle
+            colors={effectiveColors}
+            fonts={effectiveFonts}
+            indicators={wallViewIndicators}
+            onChange={setMemoryWallViewMode}
+            tint={tint}
+            value={memoryWallViewMode}
+          />
+          <View style={styles.memoryFilterRow}>
+            {MEMORY_FILTER_OPTIONS.map((option) => {
+              const active = memoryFilter === option.key;
+              return (
+                <Pressable
+                  key={option.key}
+                  onPress={() => setMemoryFilter(option.key)}
+                  style={[styles.memoryFilterChip, active && styles.memoryFilterChipActive]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  <Text style={[styles.memoryFilterText, active && styles.memoryFilterTextActive]}>{option.label}</Text>
+                </Pressable>
+              );
+            })}
+            </View>
+        </>
+      ) : (
+        <>
+          <MemoryWallViewToggle
+            colors={effectiveColors}
+            fonts={effectiveFonts}
+            indicators={wallViewIndicators}
+            onChange={setMemoryWallViewMode}
+            tint={tint}
+            value={memoryWallViewMode}
+          />
+          <View style={styles.memoryFilterRow}>
+            {MEMORY_FILTER_OPTIONS.map((option) => {
+              const active = memoryFilter === option.key;
+              return (
+                <Pressable
+                  key={option.key}
+                  onPress={() => setMemoryFilter(option.key)}
+                  style={[styles.memoryFilterChip, active && styles.memoryFilterChipActive]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  <Text style={[styles.memoryFilterText, active && styles.memoryFilterTextActive]}>{option.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      )}
     </View>,
   );
 
-  if (wallDayGroups.length === 0) {
-    screenContent.push(
-      <Text key="memory-wall-empty" style={styles.emptyHint}>
-        {wallMode === 'shared' && isLinked
+  screenContent.push(
+    lockedGiftNotes.length > 0 ? (
+      <View key="locked-gift-notes" style={styles.lockedGiftBlock}>
+        {lockedGiftNotes.map((note) => {
+          const otherUserId = note.authorUserId === currentUser.id ? note.recipientUserId : note.authorUserId;
+          return (
+            <LockedGiftNoteCard
+              key={note.id}
+              giftNote={note}
+              themeColors={effectiveColors}
+              tint={tint}
+              person={getUserById(otherUserId) ?? null}
+              viewerUserId={currentUser.id}
+              onCancel={note.authorUserId === currentUser.id ? () => cancelGiftNote(note.id, currentUser.id) : undefined}
+            />
+          );
+        })}
+      </View>
+    ) : null,
+  );
+
+  screenContent.push(
+    <View key="memory-wall-posts" style={styles.monthWallPostsBlock}>
+      <MemoryWallViews
+        dayGroups={wallDayGroups}
+        emptyAction={
+          <Pressable
+            onPress={openMemoryNoteShortcut}
+            style={styles.memoryPromptButton}
+            accessibilityRole="button"
+            accessibilityLabel={`Start a memory prompt for ${contact.displayName}`}
+          >
+            <Ionicons name="sparkles-outline" size={14} color={effectiveColors.white} />
+            <Text style={styles.memoryPromptButtonText}>Start with a prompt</Text>
+          </Pressable>
+        }
+        emptyHint={wallMode === 'shared' && isLinked
           ? `No shared memories between you and ${contact.displayName} yet.`
           : 'No memories yet. Be the first to write one.'}
-      </Text>,
-    );
-  } else {
-    screenContent.push(
-      <View key="memory-wall-posts" style={styles.monthWallPostsBlock}>
-        <MonthMemoryWallContent
-          dayGroups={wallDayGroups}
-          themeColors={effectiveColors}
-          renderPost={(post) => {
-            const author = getUserById(post.authorUserId);
-            const canEditPost = post.authorUserId === currentUser.id;
-            return (
-              <View key={post.id}>
-                <WallPostCard
-                  authorName={author?.displayName ?? 'Unknown'}
-                  post={post}
-                  cardColor={post.cardColor}
+        promptContent={wallMode === 'shared' && isLinked ? (
+          <MemoryPromptRequestList
+            currentUserId={currentUser.id}
+            friendName={contact.displayName}
+            memoryPrompts={memoryPromptRequests}
+            moviePrompts={moviePromptRequests}
+            onAnswerMemoryPrompt={openMemoryPromptResponse}
+            onCancelMemoryPrompt={(requestId) => cancelMemoryPromptRequest(requestId, currentUser.id)}
+            onCreateMemoryPrompt={openMemoryPromptRequestShortcut}
+            onAnswerMoviePrompt={openMovieReviewResponse}
+            onCancelMoviePrompt={(requestId) => cancelMovieReviewRequest(requestId, currentUser.id)}
+            onCreateMoviePrompt={openMovieRequestShortcut}
+            themeColors={effectiveColors}
+            tint={tint}
+          />
+        ) : undefined}
+        getGridExtraHeight={(post) => getReplyGridExtraHeight(getRepliesForWallPost(post.id).length)}
+        themeColors={effectiveColors}
+        viewMode={memoryWallViewMode}
+        renderPost={(post, context) => {
+          const author = getUserById(post.authorUserId);
+          const canEditPost = post.authorUserId === currentUser.id;
+          const referencedPost = post.referencedWallPostId
+            ? unfilteredWallPosts.find((candidate) => candidate.id === post.referencedWallPostId) ?? null
+            : null;
+          const replies = getRepliesForWallPost(post.id);
+          const replyItems = replies.map((reply) => ({
+            id: reply.id,
+            body: reply.body,
+            authorName: getUserById(reply.authorUserId)?.displayName ?? 'Someone',
+          }));
+          return (
+            <View
+              key={post.id}
+              onLayout={(event) => handlePostLayout(post.id, event)}
+              style={[styles.wallPostWithProfileAction, focusedReferencePostId === post.id && styles.glowRow]}
+            >
+              <WallPostCard
+                authorName={author?.displayName ?? 'Unknown'}
+                post={post}
+                cardColor={post.cardColor}
+                themeColors={effectiveColors}
+                imageLoadEnabled={wallImageLoading.isImageLoadEnabled(post)}
+                displayMode={context?.viewMode}
+                referencedPost={referencedPost}
+                referencedPostAuthorName={referencedPost ? getUserById(referencedPost.authorUserId)?.displayName ?? 'Someone' : undefined}
+                editing={editing}
+                shareable={!editing}
+                onPress={editing && canEditPost ? () => pushOnce(router, { pathname: '/(app)/memories/edit', params: { postId: post.id } }) : undefined}
+                onLongPress={!editing ? () => handleMemoryLongPress(post) : undefined}
+                onReferencedPostPress={post.referencedWallPostId ? focusReferencedPost : undefined}
+                onImageReady={wallImageLoading.markImageReady}
+                onSaveBackText={canEditPost ? handleSaveBackText : undefined}
+              />
+              {!editing ? (
+                <MemoryReplyThreadPreview
+                  replies={replyItems}
+                  onOpenThread={() => pushOnce(router, `/(app)/memories/replies/${post.id}`)}
                   themeColors={effectiveColors}
-                  editing={editing}
-                  shareable={!editing}
-                  onPress={editing && canEditPost ? () => router.push({ pathname: '/(app)/memories/edit', params: { postId: post.id } }) : undefined}
-                  onSaveBackText={canEditPost ? handleSaveBackText : undefined}
                 />
-              </View>
-            );
-          }}
-        />
-      </View>,
-    );
-  }
+              ) : null}
+            </View>
+          );
+        }}
+      />
+    </View>,
+  );
 
   if (editing) {
     screenContent.push(
@@ -1411,15 +1646,17 @@ export default function ContactProfileScreen() {
   };
 
   return (
-    <>
+    <View style={styles.screenShell}>
+      <ProfileBackgroundBackdrop colors={effectiveColors} imageUri={contact.profileBgImagePath} />
       <AppScreen
         header={showingFullScreenNote ? noteTopBar : topBar}
         floatingHeaderOnScroll={!showingFullScreenNote}
         contentContainerStyle={showingFullScreenNote ? styles.noteScreenContent : memoryControlsScreenStyle}
-        gradientColors={themedColors ? [themedColors.canvas, themedColors.canvasAlt, themedColors.canvas] : undefined}
+        gradientColors={getProfileScreenGradientColors(contact.profileBgImagePath, themedColors)}
         onScroll={activePane === 'profile' && !showingFullScreenNote ? handleMemoryMenuScroll : undefined}
         onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }}
         refreshing={refreshing}
+        scrollViewRef={scrollViewRef}
       >
         {screenContent}
       </AppScreen>
@@ -1430,39 +1667,39 @@ export default function ContactProfileScreen() {
             pointerEvents={memoryMenuVisible ? 'auto' : 'none'}
             style={[styles.memoryFloatingRow, { bottom: memoryDockBottom }, memoryMenuAnimatedStyle]}
           > 
-            <BlurView intensity={44} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={styles.memoryFloatingBar}>
-              <View style={styles.memoryFloatingTint} />
-              <View style={styles.memoryFloatingContent}>
-                <View style={styles.memoryFloatingDragHandle} />
-                <View style={styles.memoryFloatingActionRow}>
-                  <Pressable
-                    onPress={openMemoryNoteShortcut}
-                    style={[styles.memoryFloatingButton, styles.memoryFloatingSecondaryButton]}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Add note about ${contact.displayName}`}
-                  >
-                    <Ionicons name="create" size={22} color={effectiveColors.ink} />
-                  </Pressable>
-                  <Pressable
-                    onPress={openMemoryPhotoShortcut}
-                    style={[styles.memoryFloatingButton, styles.memoryFloatingPrimaryButton, styles.memoryFloatingPhotoButton]}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Add photo about ${contact.displayName}`}
-                  >
-                    <Ionicons name="camera" size={25} color={effectiveColors.white} />
-                  </Pressable>
-                </View>
-              </View>
-            </BlurView>
+            <View style={styles.memoryFloatingActionRow}>
+              <Pressable
+                onPress={openMemoryNoteShortcut}
+                style={[styles.memoryFloatingButton, styles.memoryFloatingSecondaryButton]}
+                accessibilityRole="button"
+                accessibilityLabel={`Add note about ${contact.displayName}`}
+              >
+                <Ionicons name="create-outline" size={24} color={effectiveColors.inkSoft} />
+              </Pressable>
+              {contact.linkedUserId ? (
+                <Pressable
+                  onPress={openGiftNoteShortcut}
+                  style={[styles.memoryFloatingButton, styles.memoryFloatingSecondaryButton]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add gift note for ${contact.displayName}`}
+                >
+                  <Ionicons name="gift-outline" size={24} color={effectiveColors.inkSoft} />
+                </Pressable>
+              ) : null}
+              <Pressable
+                onPress={openMemoryPhotoShortcut}
+                style={[styles.memoryFloatingButton, styles.memoryFloatingPrimaryButton]}
+                accessibilityRole="button"
+                accessibilityLabel={`Add photo about ${contact.displayName}`}
+              >
+                <Ionicons name="camera-outline" size={25} color={effectiveColors.white} />
+              </Pressable>
+            </View>
           </Animated.View>
         </View>
       ) : null}
-    </>
+    </View>
   );
-}
-
-function getInitials(value: string) {
-  return value.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('');
 }
 
 function getNotePreview(blocks: ContactPrivateNoteBlock[]) {
@@ -1474,6 +1711,31 @@ function getNotePreview(blocks: ContactPrivateNoteBlock[]) {
   const photoCount = blocks.filter((block) => block.type === 'image').length;
   if (photoCount > 0) return photoCount === 1 ? '1 photo' : `${photoCount} photos`;
   return '';
+}
+
+type MemoryFilter = 'all' | 'photos' | 'notes' | 'songs' | 'movies' | 'prompts';
+
+const MEMORY_FILTER_OPTIONS: { key: MemoryFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'photos', label: 'Photos' },
+  { key: 'notes', label: 'Notes' },
+  { key: 'songs', label: 'Songs' },
+  { key: 'movies', label: 'Movies' },
+  { key: 'prompts', label: 'Prompts' },
+];
+
+function filterWallPosts(posts: WallPost[], filter: MemoryFilter) {
+  if (filter === 'all') return posts;
+  if (filter === 'photos') return posts.filter((post) => post.postType === 'polaroid');
+  if (filter === 'notes') return posts.filter((post) => post.postType === 'note');
+  if (filter === 'songs') return posts.filter((post) => post.postType === 'song' || Boolean(post.song));
+  if (filter === 'movies') return posts.filter((post) => post.postType === 'movie');
+  return posts.filter((post) => Boolean(post.memoryPromptRequestId || post.promptText || post.promptType));
+}
+
+function getReplyGridExtraHeight(replyCount: number) {
+  const visibleReplies = Math.min(replyCount, 3);
+  return 34 + visibleReplies * 28 + (replyCount > visibleReplies ? 24 : 0);
 }
 
 function normalizePrivateNoteLink(value: string | null | undefined) {
@@ -1538,10 +1800,51 @@ const FRAME_INK_SOFT = '#6B6052';
 
 const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
   StyleSheet.create({
+    screenShell: { flex: 1 },
+    profileBackgroundLayer: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 0,
+      backgroundColor: colors.canvas,
+    },
+    profileBackgroundImage: {
+      ...StyleSheet.absoluteFillObject,
+      width: '100%',
+      height: '100%',
+      opacity: 0.68,
+      transform: [{ scale: 1.04 }],
+    },
+    profileBackgroundScrim: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.canvas + '99',
+    },
     backButton: { paddingVertical: spacing.xs },
     backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
     topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     topBarRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    topBarFriendButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      maxWidth: 148,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: tint + '35',
+      backgroundColor: colors.paper + 'D9',
+      paddingLeft: 3,
+      paddingRight: spacing.sm,
+      paddingVertical: 3,
+    },
+    topBarFriendAvatar: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+    },
+    topBarFriendAvatarImage: { width: '100%', height: '100%' },
+    topBarFriendAvatarText: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.white },
+    topBarFriendName: { flexShrink: 1, fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink },
     notificationButton: {
       position: 'relative',
       padding: spacing.xs,
@@ -1611,7 +1914,23 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     profileScreenWithMemoryMenu: { paddingBottom: 150 },
     section: { gap: spacing.sm },
     sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    sectionTitle: { fontFamily: fonts.heading, fontSize: 22, color: colors.ink },
+    sectionTitle: {
+      fontFamily: fonts.heading,
+      fontSize: 22,
+      color: colors.ink,
+      overflow: 'visible' as const,
+      ...protectTextFromFontClipping(fonts.heading, 22),
+    },
+    memoryWallTitle: {
+      fontFamily: fonts.handwrittenBold,
+      fontSize: 40,
+      color: colors.ink,
+      textAlign: 'left',
+      width: '100%',
+      paddingHorizontal: 10,
+      overflow: 'visible' as const,
+      ...protectTextFromFontClipping(fonts.handwrittenBold, 40),
+    },
     addLink: { fontFamily: fonts.bodyBold, fontSize: 14, color: tint },
     memoryShortcutRow: {
       flexDirection: 'row',
@@ -1650,68 +1969,31 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       right: 0,
       alignItems: 'center',
     },
-    memoryFloatingBar: {
-      alignSelf: 'center',
-      minWidth: 172,
-      borderRadius: 42,
-      overflow: 'hidden',
-      paddingHorizontal: spacing.sm,
-      paddingVertical: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.line + '66',
-      backgroundColor: colors.paper + '42',
-    },
-    memoryFloatingTint: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: colors.paper + '24',
-    },
-    memoryFloatingContent: {
-      position: 'relative',
-      gap: 7,
-      alignItems: 'center',
-    },
-    memoryFloatingDragHandle: {
-      width: 34,
-      height: 3,
-      borderRadius: 2,
-      backgroundColor: colors.inkMuted + '45',
-      marginTop: 0,
-      marginBottom: -1,
-    },
     memoryFloatingActionRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: spacing.sm,
+      gap: spacing.md,
       alignSelf: 'center',
     },
     memoryFloatingButton: {
       width: 56,
       height: 56,
       borderRadius: 28,
+      borderWidth: 1,
       alignItems: 'center',
       justifyContent: 'center',
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: 0.14,
-      shadowRadius: 18,
-      elevation: 9,
-    },
-    memoryFloatingPhotoButton: {
-      width: 62,
-      height: 62,
-      borderRadius: 31,
-      shadowOpacity: 0.2,
-      shadowRadius: 22,
-      elevation: 12,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.18,
+      shadowRadius: 14,
+      elevation: 10,
     },
     memoryFloatingSecondaryButton: {
-      borderWidth: 1,
-      borderColor: colors.line + '99',
-      backgroundColor: colors.paper + 'A8',
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
     },
     memoryFloatingPrimaryButton: {
-      borderWidth: 1,
       borderColor: tint,
       backgroundColor: tint,
     },
@@ -1783,6 +2065,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       paddingVertical: spacing.xs,
       borderBottomWidth: 1,
       borderBottomColor: colors.line,
+      ...protectTextFromFontClipping(fonts.heading, 24),
     },
     noteBodyInput: {
       minHeight: 180,
@@ -1991,6 +2274,13 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     noteSaveLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.white },
     noteDeleteButton: { paddingVertical: spacing.sm, paddingHorizontal: spacing.md },
     noteDeleteLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.error },
+    editableFactsSection: {
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: tint + '66',
+      backgroundColor: tint + '0F',
+      padding: spacing.md,
+    },
     factList: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: spacing.sm },
     factChip: {
       flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.xs,
@@ -2002,8 +2292,56 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       paddingVertical: spacing.sm,
     },
     factChipText: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.ink },
-    deleteLink: { fontFamily: fonts.heading, fontSize: 20, color: colors.error, paddingLeft: spacing.sm },
+    deleteLink: { fontFamily: fonts.heading, fontSize: 20, color: colors.error, paddingLeft: spacing.sm, ...protectTextFromFontClipping(fonts.heading, 20) },
     emptyHint: { fontFamily: fonts.body, fontSize: 14, color: colors.inkMuted },
+    memoryFilterRow: { flexDirection: 'row', gap: spacing.xs, flexWrap: 'wrap' },
+    memoryFilterChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: radius.pill,
+      backgroundColor: colors.paper,
+      borderWidth: 1,
+      borderColor: colors.line,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    memoryFilterChipActive: { backgroundColor: tint, borderColor: tint },
+    memoryFilterText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkSoft },
+    memoryFilterTextActive: { color: colors.white },
+    memoryPromptButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xs,
+      borderRadius: radius.pill,
+      backgroundColor: tint,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    memoryPromptButtonText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.white },
+    lockedGiftBlock: { gap: spacing.sm },
+    factEditorBox: {
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderColor: tint + '66',
+      backgroundColor: colors.paper,
+      padding: spacing.sm,
+      gap: spacing.sm,
+    },
+    editFactHintRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+    },
+    editFactHintText: {
+      flex: 1,
+      fontFamily: fonts.bodyMedium,
+      fontSize: 12,
+      color: colors.inkSoft,
+      lineHeight: 17,
+    },
     addFactRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
     addFactInput: {
       flex: 1, borderRadius: radius.md, backgroundColor: colors.paper, borderWidth: 1,
@@ -2014,8 +2352,17 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       width: 40, height: 40, borderRadius: radius.pill, backgroundColor: tint,
       alignItems: 'center', justifyContent: 'center',
     },
-    addFactButtonLabel: { fontFamily: fonts.heading, fontSize: 22, color: colors.white },
+    addFactButtonLabel: { fontFamily: fonts.heading, fontSize: 22, color: colors.white, ...protectTextFromFontClipping(fonts.heading, 22) },
     monthWallPostsBlock: { marginTop: -spacing.md },
+    wallPostWithProfileAction: { alignItems: 'center', gap: spacing.xs },
+    glowRow: {
+      borderRadius: radius.lg,
+      shadowColor: colors.accent,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.55,
+      shadowRadius: 18,
+      elevation: 8,
+    },
     wallModeToggle: {
       flexDirection: 'row',
       alignSelf: 'flex-start',
@@ -2066,11 +2413,63 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
 
     /* ── Hero polaroid card (matches carousel style) ── */
     heroSection: { alignItems: 'center', gap: spacing.sm },
+    heroSectionEditing: {
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderColor: tint + '88',
+      backgroundColor: tint + '10',
+      padding: spacing.md,
+    },
+    editHeroHint: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: tint + '55',
+      backgroundColor: colors.paper,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+    },
+    editHeroHintText: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 12,
+      color: tint,
+    },
     heroAmbientShadow: {
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 8 },
       shadowOpacity: 0.1,
       shadowRadius: 20,
+    },
+    heroPremiumGlow: {
+      shadowColor: '#F5C242',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.95,
+      shadowRadius: 22,
+      elevation: 12,
+    },
+    heroPremiumBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 12,
+      paddingVertical: 4,
+      borderRadius: 999,
+      backgroundColor: '#F8DA7A',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: '#C99A2A',
+      shadowColor: '#F5C242',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.6,
+      shadowRadius: 6,
+    },
+    heroPremiumBadgeText: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 11,
+      letterSpacing: 1.2,
+      color: '#7A5A1A',
     },
     heroTape: {
       width: 48,
@@ -2080,6 +2479,9 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       alignSelf: 'center',
       marginBottom: -7,
       zIndex: 1,
+    },
+    heroTapeGhost: {
+      backgroundColor: 'rgba(255,255,220,0.18)',
     },
     heroFaceHost: {
       alignItems: 'center',
@@ -2115,6 +2517,12 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       shadowRadius: 3,
       elevation: 5,
     },
+    heroCardGhost: {
+      borderColor: 'rgba(180,170,155,0.22)',
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      opacity: 0.82,
+    },
     heroPhotoFrame: {
       width: HERO_PHOTO,
       height: HERO_PHOTO,
@@ -2123,12 +2531,40 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       borderWidth: 1,
       borderColor: 'rgba(0,0,0,0.045)',
     },
+    heroPhotoFrameGhost: {
+      borderColor: 'rgba(0,0,0,0.025)',
+      backgroundColor: 'rgba(237,232,221,0.58)',
+    },
     heroPhoto: { width: '100%', height: '100%', transform: [{ scale: 1.01 }] },
+    heroPhotoLoading: { opacity: 0 },
+    heroPhotoGhostSurface: {
+      ...StyleSheet.absoluteFillObject,
+      overflow: 'hidden',
+      backgroundColor: '#DCD7CC',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    heroPhotoGhostBloom: {
+      position: 'absolute' as const,
+      width: '74%',
+      height: '74%',
+      borderRadius: 999,
+      backgroundColor: 'rgba(255,255,255,0.22)',
+      transform: [{ rotate: '-8deg' }],
+    },
+    heroPhotoGhostBand: {
+      position: 'absolute' as const,
+      left: -26,
+      right: -26,
+      height: '38%',
+      backgroundColor: 'rgba(255,255,255,0.12)',
+      transform: [{ rotate: '-12deg' }],
+    },
     heroPhotoSurface: {
       flex: 1, width: '100%', height: '100%',
       alignItems: 'center', justifyContent: 'center',
     },
-    heroInitials: { fontFamily: fonts.heading, fontSize: 64, color: colors.white },
+    heroInitials: { fontFamily: fonts.bodyBold, fontSize: 52, lineHeight: 58, color: colors.white, textAlign: 'center' },
     heroWarmBaseTint: {
       ...StyleSheet.absoluteFillObject,
       backgroundColor: 'rgba(210,180,140,0.04)',
@@ -2187,6 +2623,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       width: '100%',
       paddingHorizontal: 10,
       overflow: 'visible' as const,
+      ...protectTextFromFontClipping(fonts.handwrittenBold, 26),
     },
     heroNote: {
       fontFamily: fonts.handwritten,
@@ -2197,6 +2634,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       width: '100%',
       paddingHorizontal: 10,
       overflow: 'visible' as const,
+      ...protectTextFromFontClipping(fonts.handwritten, 15),
     },
 
     /* ── Back face ── */
@@ -2207,12 +2645,62 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       justifyContent: 'center',
       gap: 8,
     },
-    backText: { fontFamily: fonts.handwritten, fontSize: 17, lineHeight: 24, textAlign: 'center', color: FRAME_INK, flex: 1 },
-    backPlaceholder: { fontFamily: fonts.handwritten, fontSize: 17, textAlign: 'center', color: FRAME_INK_SOFT, flex: 1, opacity: 0.5 },
+    backText: { fontFamily: fonts.handwritten, fontSize: 17, lineHeight: 24, textAlign: 'center', color: FRAME_INK, flex: 1, ...protectTextFromFontClipping(fonts.handwritten, 17) },
+    backPlaceholder: { fontFamily: fonts.handwritten, fontSize: 17, textAlign: 'center', color: FRAME_INK_SOFT, flex: 1, opacity: 0.5, ...protectTextFromFontClipping(fonts.handwritten, 17) },
     backHint: { fontFamily: fonts.body, fontSize: 10, textAlign: 'center', color: FRAME_INK_SOFT, opacity: 0.5, paddingTop: 2 },
 
     heroSubtitle: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.inkSoft },
-    statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+    connectionCard: {
+      width: '100%',
+      maxWidth: 340,
+      gap: spacing.xs,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper + 'D9',
+      padding: spacing.md,
+    },
+    connectionHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+    connectionTitle: { flex: 1, fontFamily: fonts.bodyBold, fontSize: 14, color: colors.ink },
+    connectionSubtitle: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkSoft },
+    manageConnectionButton: {
+      alignSelf: 'flex-start',
+      borderRadius: radius.pill,
+      backgroundColor: tint + '16',
+      borderWidth: 1,
+      borderColor: tint + '45',
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      marginTop: spacing.xs,
+    },
+    manageConnectionLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: tint },
+    moveConnectionPanel: {
+      gap: spacing.xs,
+      borderTopWidth: 1,
+      borderTopColor: colors.line,
+      paddingTop: spacing.sm,
+      marginTop: spacing.xs,
+    },
+    moveConnectionTitle: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkSoft },
+    moveConnectionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      borderRadius: radius.md,
+      backgroundColor: colors.paperMuted,
+      padding: spacing.sm,
+    },
+    moveConnectionAvatar: {
+      width: 32,
+      height: 32,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: tint,
+    },
+    moveConnectionAvatarText: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.white },
+    moveConnectionName: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.ink },
+    moveConnectionMeta: { fontFamily: fonts.body, fontSize: 11, color: colors.inkSoft },
     statusDot: { width: 7, height: 7, borderRadius: 4 },
     statusDotOn: { backgroundColor: '#34C759' },
     statusDotOff: { backgroundColor: '#8E8E93' },
@@ -2278,8 +2766,43 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       backgroundColor: colors.paper,
       gap: spacing.sm,
     },
-    connectFormTitle: { fontFamily: fonts.heading, fontSize: 18, color: colors.ink },
+    connectFormTitle: { fontFamily: fonts.heading, fontSize: 18, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 18) },
     connectHint: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.inkSoft },
+    existingFriendPanel: {
+      gap: spacing.xs,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: tint + '35',
+      backgroundColor: tint + '0F',
+      padding: spacing.sm,
+    },
+    existingFriendToggle: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    existingFriendTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.ink },
+    existingFriendSubtitle: { fontFamily: fonts.body, fontSize: 12, lineHeight: 16, color: colors.inkSoft },
+    existingFriendList: { gap: spacing.xs, paddingTop: spacing.xs },
+    existingFriendRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      borderRadius: radius.sm,
+      backgroundColor: colors.paper,
+      padding: spacing.sm,
+    },
+    disabledRow: { opacity: 0.45 },
+    existingFriendAvatar: {
+      width: 32,
+      height: 32,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    existingFriendAvatarText: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.white },
+    existingFriendName: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.ink },
+    existingFriendEmail: { fontFamily: fonts.body, fontSize: 11, color: colors.inkSoft },
     connectInput: {
       fontFamily: fonts.bodyBold,
       fontSize: 20,

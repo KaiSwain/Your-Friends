@@ -1,4 +1,7 @@
 import type { WallPost } from '../../types/domain';
+import { getLocalDateKey, getWallPostMemoryDateValue } from '../../lib/memoryDate';
+
+export { getLocalDateKey };
 
 export interface CalendarMemoryActivity {
   dateKey: string;
@@ -6,19 +9,10 @@ export interface CalendarMemoryActivity {
   post: WallPost;
 }
 
-export function getLocalDateKey(value: string | Date): string {
-  const date = typeof value === 'string' ? new Date(value) : value;
-  if (Number.isNaN(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 export function groupMemoryActivityByDay(posts: readonly WallPost[]): Record<string, CalendarMemoryActivity[]> {
   const grouped: Record<string, CalendarMemoryActivity[]> = {};
   for (const post of posts) {
-    const dateKey = getLocalDateKey(post.createdAt);
+    const dateKey = getLocalDateKey(getWallPostMemoryDateValue(post));
     if (!dateKey) continue;
     const item: CalendarMemoryActivity = {
       dateKey,
@@ -29,7 +23,7 @@ export function groupMemoryActivityByDay(posts: readonly WallPost[]): Record<str
   }
 
   for (const key of Object.keys(grouped)) {
-    grouped[key].sort((a, b) => b.post.createdAt.localeCompare(a.post.createdAt));
+    grouped[key].sort((a, b) => getWallPostMemoryDateValue(b.post).localeCompare(getWallPostMemoryDateValue(a.post)) || b.post.createdAt.localeCompare(a.post.createdAt));
   }
   return grouped;
 }

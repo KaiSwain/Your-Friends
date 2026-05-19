@@ -1,14 +1,15 @@
 import { Session } from '@supabase/supabase-js';
-import { decode } from 'base64-arraybuffer';
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
-import * as FileSystem from 'expo-file-system/legacy';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Linking from 'expo-linking';
 
 import { supabase } from '../../lib/supabase';
 import { AppUser } from '../../types/domain';
 import { createFriendCode, normalizeFriendCode } from '../../lib/friendCode';
+import { uploadSelfAvatar, uploadSelfProfileBackground } from '../../lib/memoryMediaUpload';
 import { applyReferralRewardForUser, clearIncomingReferralCode, consumeIncomingReferralCode } from '../../lib/referrals';
 import { accentPalette } from '../../theme/tokens';
+import { rowToUser } from '../social/mappers';
 
 // Describe the full shape of the auth context that screens and components will consume.
 interface AuthContextValue {
@@ -20,8 +21,13 @@ interface AuthContextValue {
   loading: boolean;
   // Expose a sign-in function that returns either success or a readable error.
   signIn: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  requestPasswordReset: (email: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  recoverPasswordFromUrl: (url: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  updatePassword: (password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   // Expose a sign-out function for screens that need to log the user out.
   signOut: () => void;
+  // Expose a delete-account function for App Store compliant self-service removal.
+  deleteAccount: () => Promise<void>;
   // Expose a sign-up function that creates both the auth account and the profile row.
   signUp: (
     // Accept the display name entered by the user.
@@ -33,7 +39,7 @@ interface AuthContextValue {
     // Optionally accept a referral code collected from a share link or typed manually.
     referralCode?: string,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
-  updateProfile: (updates: { displayName?: string; avatarLocalUri?: string | null; profileFacts?: string[] }) => Promise<void>;
+  updateProfile: (updates: { displayName?: string; avatarLocalUri?: string | null; birthday?: string | null; profileFacts?: string[]; profileBgImageLocalUri?: string | null; profileBgImagePublic?: boolean }) => Promise<void>;
   signInWithApple: (referralCode?: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   signInWithGoogle: (idToken: string, referralCode?: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 } // End the AuthContextValue interface.
@@ -103,26 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setCurrentUser(null);
     } else {
       // Otherwise, map the Supabase row into the `AppUser` shape used by the app.
-      setCurrentUser({
-        // Copy the profile ID into the app user object.
-        id: data.id,
-        // Copy the stored email address.
-        email: data.email,
-        // Convert the snake_case database column into the camelCase app field.
-        displayName: data.display_name,
-        // Copy the friend code used for adding this user.
-        friendCode: data.friend_code,
-        // Copy the avatar accent color used by the UI.
-        avatarColor: data.avatar_color,
-        // Copy any stored avatar path value.
-        avatarPath: data.avatar_path,
-        // Use the stored profile facts array, or an empty array if none was saved.
-        profileFacts: data.profile_facts ?? [],
-        // Copy the creation timestamp as-is.
-        createdAt: data.created_at,
-        // Copy Premium expiry when the backend schema includes referral rewards.
-        premiumUntil: data.premium_until ?? null,
-      });
+      setCurrentUser(rowToUser(data));
     } // End the profile mapping branch.
 
     // Mark auth loading as finished once the profile query completes.
@@ -151,15 +138,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { ok: false as const, error: error.message };
     }
 
-    // If sign-in returned a user, fetch the app-specific profile row next.
+    // If sign-in returned a user, ensure the app-specific profile row exists next.
+    // This self-heals accounts where Auth succeeded but profile creation failed
+    // during signup, which otherwise leaves the app stuck with no currentUser.
     if (data.user) {
-      // Load the signed-in user's profile into context state.
-      await fetchProfile(data.user.id);
+      try {
+        await ensureProfile(data.user.id, data.user.email ?? email.trim().toLowerCase());
+      } catch (profileError) {
+        return {
+          ok: false as const,
+          error: profileError instanceof Error ? profileError.message : 'Could not load your profile.',
+        };
+      }
     }
 
     // Return a success result once sign-in and profile loading are complete.
     return { ok: true as const };
   } // End signIn after returning either success or failure.
+
+  async function requestPasswordReset(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) return { ok: false as const, error: 'Enter your email address.' };
+    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+      redirectTo: Linking.createURL('/(auth)/reset-password'),
+    });
+    if (error) return { ok: false as const, error: error.message };
+    return { ok: true as const };
+  }
+
+  async function recoverPasswordFromUrl(url: string) {
+    const params = parseAuthParams(url);
+    const accessToken = params.get('access_token');
+    const refreshToken = params.get('refresh_token');
+    const tokenHash = params.get('token_hash');
+
+    if (accessToken && refreshToken) {
+      const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+      if (error) return { ok: false as const, error: error.message };
+      return { ok: true as const };
+    }
+
+    if (tokenHash) {
+      const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'recovery' });
+      if (error) return { ok: false as const, error: error.message };
+      return { ok: true as const };
+    }
+
+    return { ok: true as const };
+  }
+
+  async function updatePassword(password: string) {
+    if (!password) return { ok: false as const, error: 'Enter a new password.' };
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) return { ok: false as const, error: error.message };
+    return { ok: true as const };
+  }
 
   // Create a new auth account and a matching profile row.
   async function signUp(displayName: string, email: string, password: string, referralCode?: string) {
@@ -195,34 +228,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { ok: false as const, error: 'Sign up failed. Try again.' };
     }
 
-    // Generate a friend code for the new profile.
-    const friendCode = createFriendCode(email, []);
     // Derive a stable number from the email so the app can pick a repeatable accent color.
     const colorIndex = email.split('').reduce((sum, c) => sum + c.charCodeAt(0), 0);
 
     // Insert the matching app profile row after auth sign-up succeeds.
-    const { error: profileError } = await supabase.from('profiles').insert({
+    const profileResult = await insertProfileWithUniqueFriendCode({
       // Use the auth user's ID as the profile primary key.
-      id: authData.user.id,
+      userId: authData.user.id,
       // Store the normalized email address on the profile row too.
       email: email.trim().toLowerCase(),
       // Store the trimmed display name.
-      display_name: resolvedDisplayName,
-      // Store the generated friend code.
-      friend_code: friendCode,
+      displayName: resolvedDisplayName,
       // Pick an accent color from the shared palette using the derived color index.
-      avatar_color: accentPalette[colorIndex % accentPalette.length],
-      // Start the user with no profile facts yet.
-      profile_facts: [],
+      avatarColor: accentPalette[colorIndex % accentPalette.length],
     });
 
     // If creating the profile row fails, return that error to the UI.
-    if (profileError) {
+    if (!profileResult.ok) {
       // Return the database error in the same result shape used elsewhere.
-      return { ok: false as const, error: profileError.message };
+      return { ok: false as const, error: profileResult.error };
     }
 
-    const referralResult = await applyReferralForNewProfile(authData.user.id, friendCode, referralCode);
+    const referralResult = await applyReferralForNewProfile(authData.user.id, profileResult.friendCode, referralCode);
     if (!referralResult.ok) return referralResult;
 
     // Load the newly created profile into context state so the app is ready immediately.
@@ -233,25 +260,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   } // End signUp after returning either success or failure.
 
   // Update the current user's profile (display name, avatar, facts).
-  async function updateProfile(updates: { displayName?: string; avatarLocalUri?: string | null; profileFacts?: string[] }) {
+  async function updateProfile(updates: { displayName?: string; avatarLocalUri?: string | null; birthday?: string | null; profileFacts?: string[]; profileBgImageLocalUri?: string | null; profileBgImagePublic?: boolean }) {
     if (!currentUser) throw new Error('Not signed in');
     const dbUpdate: Record<string, unknown> = {};
     if (updates.displayName !== undefined) dbUpdate.display_name = updates.displayName;
+    if (updates.birthday !== undefined) dbUpdate.birthday = updates.birthday;
     if (updates.profileFacts !== undefined) dbUpdate.profile_facts = updates.profileFacts;
+    if (updates.profileBgImagePublic !== undefined) dbUpdate.profile_bg_image_public = updates.profileBgImagePublic;
 
     if (updates.avatarLocalUri !== undefined) {
       if (updates.avatarLocalUri) {
-        const ext = updates.avatarLocalUri.split('.').pop()?.toLowerCase() ?? 'jpg';
-        const fileName = `avatars/${currentUser.id}/${Date.now()}.${ext}`;
-        const base64 = await FileSystem.readAsStringAsync(updates.avatarLocalUri, { encoding: FileSystem.EncodingType.Base64 });
-        const { error: uploadErr } = await supabase.storage
-          .from('Memories')
-          .upload(fileName, decode(base64), { contentType: `image/${ext}`, upsert: false });
-        if (uploadErr) throw new Error(uploadErr.message);
-        const { data: urlData } = supabase.storage.from('Memories').getPublicUrl(fileName);
-        dbUpdate.avatar_path = urlData.publicUrl;
+        dbUpdate.avatar_path = await uploadSelfAvatar(updates.avatarLocalUri, currentUser.id);
       } else {
         dbUpdate.avatar_path = null;
+      }
+    }
+
+    if (updates.profileBgImageLocalUri !== undefined) {
+      if (updates.profileBgImageLocalUri) {
+        dbUpdate.profile_bg_image_path = await uploadSelfProfileBackground(updates.profileBgImageLocalUri, currentUser.id);
+      } else {
+        dbUpdate.profile_bg_image_path = null;
+        dbUpdate.profile_bg_image_public = false;
       }
     }
 
@@ -264,9 +294,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return {
         ...prev,
         ...(updates.displayName !== undefined && { displayName: updates.displayName }),
+        ...(updates.birthday !== undefined && { birthday: updates.birthday }),
         ...(updates.profileFacts !== undefined && { profileFacts: updates.profileFacts }),
         ...(typeof dbUpdate.avatar_path === 'string' && { avatarPath: dbUpdate.avatar_path }),
         ...(dbUpdate.avatar_path === null && { avatarPath: null }),
+        ...(typeof dbUpdate.profile_bg_image_path === 'string' && { profileBgImagePath: dbUpdate.profile_bg_image_path }),
+        ...(dbUpdate.profile_bg_image_path === null && { profileBgImagePath: null }),
+        ...(dbUpdate.profile_bg_image_public !== undefined && { profileBgImagePublic: Boolean(dbUpdate.profile_bg_image_public) }),
       };
     });
   }
@@ -297,23 +331,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return manualCode ? { ok: false as const, error: result.error ?? 'Could not apply referral code.' } : { ok: true as const };
   }
 
+  async function insertProfileWithUniqueFriendCode(input: {
+    userId: string;
+    email: string;
+    displayName: string;
+    avatarColor: string;
+  }): Promise<{ ok: true; friendCode: string } | { ok: false; error: string }> {
+    const { data: existingRows, error: existingError } = await supabase
+      .from('profiles')
+      .select('friend_code');
+    if (existingError) return { ok: false, error: existingError.message };
+
+    const existingCodes = (existingRows ?? [])
+      .map((row) => typeof row.friend_code === 'string' ? row.friend_code : null)
+      .filter((code): code is string => Boolean(code));
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const friendCode = createFriendCode(`${input.email}:${input.userId}:${attempt}`, existingCodes);
+      const { error } = await supabase.from('profiles').insert({
+        id: input.userId,
+        email: input.email,
+        display_name: input.displayName,
+        friend_code: friendCode,
+        avatar_color: input.avatarColor,
+        profile_facts: [],
+      });
+
+      if (!error) return { ok: true, friendCode };
+      if (!isFriendCodeCollision(error)) return { ok: false, error: error.message };
+      existingCodes.push(friendCode);
+    }
+
+    return { ok: false, error: 'Could not create a unique friend code. Try again.' };
+  }
+
+  function isFriendCodeCollision(error: { code?: string; message?: string; details?: string | null }) {
+    return error.code === '23505'
+      && (
+        error.message?.includes('profiles_friend_code_key') ||
+        error.details?.includes('friend_code')
+      );
+  }
+
   async function ensureProfile(userId: string, email: string, displayName?: string, referralCode?: string) {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
     if (data) {
       await fetchProfile(userId);
       return;
     }
-    const friendCode = createFriendCode(email, []);
     const colorIndex = email.split('').reduce((sum, c) => sum + c.charCodeAt(0), 0);
-    await supabase.from('profiles').insert({
-      id: userId,
+    const profileResult = await insertProfileWithUniqueFriendCode({
+      userId,
       email,
-      display_name: displayName || email.split('@')[0],
-      friend_code: friendCode,
-      avatar_color: accentPalette[colorIndex % accentPalette.length],
-      profile_facts: [],
+      displayName: displayName || email.split('@')[0],
+      avatarColor: accentPalette[colorIndex % accentPalette.length],
     });
-    await applyReferralForNewProfile(userId, friendCode, referralCode);
+    if (!profileResult.ok) throw new Error(profileResult.error);
+    await applyReferralForNewProfile(userId, profileResult.friendCode, referralCode);
     await fetchProfile(userId);
   }
 
@@ -376,6 +450,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCurrentUser(null);
   } // End signOut after clearing auth-related local state.
 
+  async function deleteAccount() {
+    if (!currentUser) throw new Error('Not signed in');
+    const { error } = await supabase.functions.invoke('delete-account', { method: 'POST' });
+    if (error) throw new Error(error.message);
+    await supabase.auth.signOut();
+    setCurrentUser(null);
+  }
+
   // Render the provider so child components can read auth state and actions.
   return (
     // Provide the assembled auth value object to the entire subtree.
@@ -390,8 +472,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         // Expose the sign-in action.
         signIn,
+        requestPasswordReset,
+        recoverPasswordFromUrl,
+        updatePassword,
         // Expose the sign-out action.
         signOut,
+        // Expose self-service account deletion.
+        deleteAccount,
         // Expose the sign-up action.
         signUp,
         // Expose the profile update action.
@@ -405,6 +492,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     </AuthContext.Provider>
   );
 } // End AuthProvider after returning the context provider component.
+
+function parseAuthParams(url: string) {
+  const params = new URLSearchParams();
+  const query = url.split('?')[1]?.split('#')[0] ?? '';
+  const hash = url.split('#')[1] ?? '';
+  for (const source of [query, hash]) {
+    const sourceParams = new URLSearchParams(source);
+    sourceParams.forEach((value, key) => params.set(key, value));
+  }
+  return params;
+}
 
 // Export a small hook so the rest of the app can consume auth state more ergonomically.
 export function useAuth() {

@@ -8,6 +8,7 @@ import { useAuth } from '../../src/features/auth/AuthContext';
 import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
+import { pushOnce } from '../../src/lib/navigationGuard';
 import type { FontSet } from '../../src/theme/typography';
 import { spacing } from '../../src/theme/tokens';
 
@@ -41,7 +42,8 @@ export default function OnboardingFactScreen() {
       // Prepend the new fact so it shows first on the user's profile.
       const next = [trimmed, ...existing.filter((f) => f.trim() !== trimmed)];
       await updateProfile({ profileFacts: next });
-      router.push('/(onboarding)/paywall');
+      pushOnce(router, '/(onboarding)/features');
+      setBusy(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not save your fact.';
       Alert.alert('Hmm', message);
@@ -51,13 +53,13 @@ export default function OnboardingFactScreen() {
 
   function handleSkip() {
     if (busy) return;
-    router.push('/(onboarding)/paywall');
+    pushOnce(router, '/(onboarding)/features');
   }
 
   return (
     <OnboardingFrame
-      step={5}
-      totalSteps={7}
+      step={9}
+      totalSteps={12}
       eyebrow="One little thing"
       title="Tell us a fact about you."
       subtitle="A small detail your friends will smile at — a habit, a quirk, something you love."

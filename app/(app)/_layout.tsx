@@ -1,6 +1,7 @@
 import * as Linking from 'expo-linking';
-import { Stack, useRouter } from 'expo-router';
+import { Redirect, Stack, useRouter } from 'expo-router';
 import { useEffect, useMemo } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { PhotoSourceSheetHost } from '../../src/components/PhotoSourceSheetHost';
@@ -8,13 +9,16 @@ import { CalendarProvider } from '../../src/features/calendar/CalendarContext';
 import { InAppNotificationProvider } from '../../src/features/notifications/InAppNotificationContext';
 import { usePremium } from '../../src/features/premium/PremiumContext';
 import { SocialGraphProvider, useSocialGraph } from '../../src/features/social/SocialGraphContext';
+import { useTheme } from '../../src/features/theme/ThemeContext';
 import { usePushNotifications } from '../../src/hooks/usePushNotifications';
 import { extractFriendCode } from '../../src/lib/friendCode';
+import { pushOnce } from '../../src/lib/navigationGuard';
 import { storeIncomingReferralCode } from '../../src/lib/referrals';
 
 export default function AppLayout() {
-  const { currentUser } = useAuth();
+  const { currentUser, loading } = useAuth();
   const router = useRouter();
+  const { colors } = useTheme();
   usePushNotifications(currentUser?.id);
 
   useEffect(() => {
@@ -29,7 +33,7 @@ export default function AppLayout() {
       const code = extractFriendCode(url);
       if (code && /^[A-Z0-9]{6,12}$/.test(code)) {
         storeIncomingReferralCode(code).catch(() => {});
-        router.push({ pathname: '/(app)/friends/add', params: { code } });
+        pushOnce(router, { pathname: '/(app)/friends/add', params: { code } });
       }
     }
     const sub = Linking.addEventListener('url', handleDeepLink);
@@ -40,20 +44,34 @@ export default function AppLayout() {
     return () => sub.remove();
   }, [router]);
 
+  if (loading) {
+    return (
+      <View style={[styles.loadingScreen, { backgroundColor: colors.canvas }]}>
+        <ActivityIndicator color={colors.accent} size="large" />
+      </View>
+    );
+  }
+
+  if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
+
   return (
     <SocialGraphProvider>
       <CalendarProvider>
         <InAppNotificationProvider>
           <PremiumFriendsSync />
           <PhotoSourceSheetHost />
-          <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
-            <Stack.Screen name="friends/index" options={{ animation: 'fade' }} />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              animation: 'slide_from_right',
+              contentStyle: { backgroundColor: 'transparent' },
+            }}
+          >
+            <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
             <Stack.Screen name="friends/add" />
-            <Stack.Screen name="calendar" />
             <Stack.Screen name="notifications" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
             <Stack.Screen name="settings" />
             <Stack.Screen name="store" />
-            <Stack.Screen name="profiles/me" />
           </Stack>
         </InAppNotificationProvider>
       </CalendarProvider>
@@ -81,3 +99,7 @@ function PremiumFriendsSync() {
   }, [idsKey]);
   return null;
 }
+
+const styles = StyleSheet.create({
+  loadingScreen: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+});

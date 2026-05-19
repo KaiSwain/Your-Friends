@@ -8,6 +8,7 @@ import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
 import { useOnboarding, type ReferralSource } from '../../src/features/onboarding/OnboardingContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
+import { pushOnce } from '../../src/lib/navigationGuard';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
 
@@ -36,16 +37,17 @@ export default function OnboardingReferralScreen() {
   const [busy, setBusy] = useState(false);
 
   async function handleNext() {
-    if (!selected) return;
+    if (!selected || busy) return;
     setBusy(true);
     await setReferralSource(selected);
-    router.push('/(onboarding)/privacy');
+    pushOnce(router, '/(onboarding)/privacy');
+    setBusy(false);
   }
 
   return (
     <OnboardingFrame
       step={1}
-      totalSteps={7}
+      totalSteps={12}
       eyebrow="Quick question"
       title="How did you hear about Your Friends?"
       subtitle="No wrong answers — this just helps us understand how people are finding the app."

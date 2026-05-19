@@ -10,20 +10,42 @@ import { AppScreen } from '../../../src/components/AppScreen';
 import { FormField } from '../../../src/components/FormField';
 import { SectionCard } from '../../../src/components/SectionCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
-import { FREE_FRIEND_LIMIT, PREMIUM_SUBSCRIPTION_PRICE, usePremium } from '../../../src/features/premium/PremiumContext';
+import {
+  REFERRAL_REWARD_LABEL,
+  usePremium,
+} from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
 import { createFriendInviteLink, extractFriendCode } from '../../../src/lib/friendCode';
+import { backOnce, pushOnce, replaceOnce } from '../../../src/lib/navigationGuard';
+import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import type { FontSet } from '../../../src/theme/typography';
 import { radius, spacing } from '../../../src/theme/tokens';
+import type { FriendRequest } from '../../../src/types/domain';
 
 export default function AddFriendScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ code?: string }>();
+  const params = useLocalSearchParams<{ code?: string; scan?: string }>();
   const { currentUser } = useAuth();
-  const { isPremium, purchase } = usePremium();
-  const { addFriendByCode, addManualContact, contacts } = useSocialGraph();
+  const {
+    referralRewardCount,
+    referrerCode,
+    pendingReferralCode,
+    applyReferralCode,
+  } = usePremium();
+  const {
+    addFriendByCode,
+    addManualContact,
+    acceptFriendRequest,
+    contacts,
+    createLinkedContactForFriend,
+    declineFriendRequest,
+    getDirectFriends,
+    getIncomingFriendRequests,
+    getOutgoingFriendRequests,
+    getUserById,
+  } = useSocialGraph();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
@@ -34,68 +56,143 @@ export default function AddFriendScreen() {
 
   const [friendCode, setFriendCode] = useState(extractFriendCode(params.code ?? ''));
   const [friendError, setFriendError] = useState('');
+  const [friendNotice, setFriendNotice] = useState('');
   const [friendBusy, setFriendBusy] = useState(false);
+  const [requestBusyId, setRequestBusyId] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState('');
+  const [linkedProfileBusyId, setLinkedProfileBusyId] = useState<string | null>(null);
+  const [linkedProfileError, setLinkedProfileError] = useState('');
+  const [enteredReferralCode, setEnteredReferralCode] = useState('');
+  const [referralError, setReferralError] = useState<string | null>(null);
 
   const [scanning, setScanning] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const scannedRef = useRef(false);
 
+  useEffect(() => {
+    if (pendingReferralCode && !referrerCode) {
+      setEnteredReferralCode((current) => current || pendingReferralCode);
+    }
+  }, [pendingReferralCode, referrerCode]);
+
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   const authenticatedUser = currentUser;
   const inviteLink = createFriendInviteLink(authenticatedUser.friendCode);
   const topBar = (
-    <Pressable onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
+    <Pressable onPress={() => backOnce(router)} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
       <Text style={styles.backLabel}><Ionicons name="chevron-back" size={16} /> Back</Text>
     </Pressable>
   );
 
-  const friendCount = contacts.filter((c) => c.ownerUserId === authenticatedUser.id).length;
-  const atLimit = !isPremium && friendCount >= FREE_FRIEND_LIMIT;
-
-  function guardLimit(): boolean {
-    if (!atLimit) return false;
-    Alert.alert(
-      'Friend Limit Reached',
-      `You've got ${FREE_FRIEND_LIMIT} friends! Premium unlocks unlimited friends. ${PREMIUM_SUBSCRIPTION_PRICE}.`,
-      [
-        { text: 'Not now', style: 'cancel' },
-        { text: 'Subscribe', onPress: () => purchase() },
-        { text: 'Browse store', onPress: () => router.push('/(app)/store') },
-      ],
-    );
-    return true;
-  }
+  const incomingRequests = getIncomingFriendRequests(authenticatedUser.id);
+  const outgoingRequests = getOutgoingFriendRequests(authenticatedUser.id);
+  const linkedFriendIds = new Set(
+    contacts
+      .filter((contact) => contact.ownerUserId === authenticatedUser.id && contact.linkedUserId)
+      .map((contact) => contact.linkedUserId!),
+  );
+  const existingFriendsWithoutProfile = getDirectFriends(authenticatedUser.id)
+    .filter((friend) => !linkedFriendIds.has(friend.id))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
   async function handleCreateManualContact() {
-    if (guardLimit()) return;
     if (!displayName.trim()) { setError('A display name is required.'); return; }
     setBusy(true);
     setError('');
     try {
       const result = await addManualContact(authenticatedUser.id, { displayName: displayName.trim(), nickname: nickname.trim() || undefined });
-      router.replace(`/(app)/profiles/contact/${result.id}`);
+      replaceOnce(router, `/(app)/profiles/contact/${result.id}`);
     } catch (err: any) {
       setError(err.message ?? 'Something went wrong.');
       setBusy(false);
     }
   }
 
+  async function handleCreateProfileForFriend(friendId: string) {
+    const friend = getUserById(friendId);
+    if (!friend) return;
+    Alert.alert(
+      'Create memory profile card?',
+      `Create your private saved profile for ${friend.displayName} (${friend.email})? This will not create anything on their side.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Create',
+          onPress: async () => {
+            setLinkedProfileBusyId(friend.id);
+            setLinkedProfileError('');
+            const result = await createLinkedContactForFriend(authenticatedUser.id, friend.id);
+            setLinkedProfileBusyId(null);
+            if (!result.ok) {
+              setLinkedProfileError(result.error);
+              return;
+            }
+            replaceOnce(router, `/(app)/profiles/contact/${result.contactId}`);
+          },
+        },
+      ],
+    );
+  }
+
   async function handleAddByCode() {
-    if (guardLimit()) return;
     if (!friendCode.trim()) { setFriendError('Enter a friend code.'); return; }
     setFriendBusy(true);
     setFriendError('');
+    setFriendNotice('');
     const result = await addFriendByCode(authenticatedUser.id, friendCode);
     if (!result.ok) { setFriendError(result.error); setFriendBusy(false); return; }
+    if (result.requested) {
+      setFriendError('');
+      setFriendNotice(`Request sent to ${result.friend.displayName}.`);
+      setFriendBusy(false);
+      setFriendCode('');
+      return;
+    }
     if (result.contactId) {
-      router.replace(`/(app)/profiles/contact/${result.contactId}`);
+      replaceOnce(router, `/(app)/profiles/contact/${result.contactId}`);
     } else if (result.candidateContactIds.length > 0) {
       // Ambiguous: the user already has manual contacts that look like this
       // person. Send them to the chooser so they can merge or create new.
-      router.replace(`/(app)/friends/link?friendId=${result.friend.id}`);
+      replaceOnce(router, `/(app)/friends/link?friendId=${result.friend.id}`);
     } else {
-      router.replace(`/(app)/profiles/user/${result.friend.id}`);
+      replaceOnce(router, `/(app)/profiles/user/${result.friend.id}`);
     }
+  }
+
+  async function handleAcceptRequest(request: FriendRequest) {
+    setRequestBusyId(request.id);
+    setRequestError('');
+    const result = await acceptFriendRequest(request.id, authenticatedUser.id);
+    if (!result.ok) {
+      setRequestBusyId(null);
+      setRequestError(result.error);
+      return;
+    }
+    if (result.contactId) {
+      replaceOnce(router, `/(app)/profiles/contact/${result.contactId}`);
+    } else if (result.candidateContactIds.length > 0) {
+      replaceOnce(router, `/(app)/friends/link?friendId=${result.friend.id}`);
+    } else {
+      replaceOnce(router, `/(app)/profiles/user/${result.friend.id}`);
+    }
+  }
+
+  async function handleDeclineRequest(request: FriendRequest) {
+    setRequestBusyId(request.id);
+    setRequestError('');
+    const result = await declineFriendRequest(request.id, authenticatedUser.id);
+    if (!result.ok) setRequestError(result.error);
+    setRequestBusyId(null);
+  }
+
+  async function submitReferralCode() {
+    setReferralError(null);
+    const result = await applyReferralCode(enteredReferralCode);
+    if (!result.ok) {
+      setReferralError(result.error ?? 'Could not apply code.');
+      return;
+    }
+    setEnteredReferralCode('');
   }
 
   async function openScanner() {
@@ -106,6 +203,11 @@ export default function AddFriendScreen() {
     scannedRef.current = false;
     setScanning(true);
   }
+
+  useEffect(() => {
+    if (params.scan !== '1') return;
+    openScanner();
+  }, [params.scan]);
 
   const handleBarcodeScan = useCallback(({ data }: { data: string }) => {
     if (scannedRef.current) return;
@@ -128,21 +230,65 @@ export default function AddFriendScreen() {
         <Text style={styles.subtitle}>Add a real friend by their code, or save someone as a private contact.</Text>
       </View>
 
-      {atLimit && (
-        <Pressable
-          onPress={() => router.push('/(app)/store')}
-          style={[styles.limitBanner, { backgroundColor: colors.accent + '18', borderColor: colors.accent + '40' }]}
-        >
-          <Ionicons name="lock-closed" size={16} color={colors.accent} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.limitBannerTitle, { color: colors.ink }]}>Friend limit reached</Text>
-            <Text style={[styles.limitBannerSub, { color: colors.inkSoft }]}>
-              Premium unlocks unlimited friends — {PREMIUM_SUBSCRIPTION_PRICE}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.accent} />
-        </Pressable>
-      )}
+      <SectionCard eyebrow="Requests" title="Friend requests">
+          {requestError ? <Text style={styles.error}>{requestError}</Text> : null}
+          {incomingRequests.length === 0 && outgoingRequests.length === 0 ? (
+            <Text style={styles.note}>When someone adds you by QR or friend code, their request will appear here.</Text>
+          ) : null}
+          {incomingRequests.length > 0 ? (
+            <View style={styles.requestList}>
+              {incomingRequests.map((request) => {
+                const requester = getUserById(request.requesterUserId);
+                const busy = requestBusyId === request.id;
+                return (
+                  <View key={request.id} style={styles.requestRow}>
+                    <View style={styles.requestCopy}>
+                      <Text style={styles.requestTitle}>{requester?.displayName ?? 'Someone'}</Text>
+                      <Text style={styles.requestSubtitle}>Wants to be your friend</Text>
+                    </View>
+                    <View style={styles.requestActions}>
+                      <Pressable
+                        onPress={() => handleDeclineRequest(request)}
+                        disabled={!!requestBusyId}
+                        style={({ pressed }) => [styles.secondaryRequestButton, pressed && styles.pressed, !!requestBusyId && !busy && styles.disabled]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Decline request from ${requester?.displayName ?? 'friend'}`}
+                      >
+                        <Text style={styles.secondaryRequestLabel}>Decline</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => handleAcceptRequest(request)}
+                        disabled={!!requestBusyId}
+                        style={({ pressed }) => [styles.primaryRequestButton, pressed && styles.pressed, !!requestBusyId && !busy && styles.disabled]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Accept request from ${requester?.displayName ?? 'friend'}`}
+                      >
+                        <Text style={styles.primaryRequestLabel}>{busy ? '...' : 'Accept'}</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {outgoingRequests.length > 0 ? (
+            <View style={styles.requestList}>
+              {outgoingRequests.map((request) => {
+                const recipient = getUserById(request.recipientUserId);
+                return (
+                  <View key={request.id} style={styles.requestRow}>
+                    <View style={styles.requestCopy}>
+                      <Text style={styles.requestTitle}>{recipient?.displayName ?? 'Someone'}</Text>
+                      <Text style={styles.requestSubtitle}>Waiting for them to accept</Text>
+                    </View>
+                    <Ionicons name="time-outline" size={18} color={colors.inkSoft} />
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+      </SectionCard>
 
       <SectionCard eyebrow="Connect" title="Add by friend code">
         <Text style={styles.note}>Ask your friend for their code, paste their invite link, or scan their QR.</Text>
@@ -174,6 +320,7 @@ export default function AddFriendScreen() {
             </View>
             <FormField autoCapitalize="characters" label="Friend code" onChangeText={setFriendCode} placeholder="e.g. AB3XK7PN" value={friendCode} />
             {friendError ? <Text style={styles.error}>{friendError}</Text> : null}
+            {friendNotice ? <Text style={styles.notice}>{friendNotice}</Text> : null}
             <ActionButton label={friendBusy ? 'Looking up…' : 'Add friend'} onPress={handleAddByCode} disabled={friendBusy} />
           </>
         )}
@@ -200,8 +347,104 @@ export default function AddFriendScreen() {
         </Pressable>
       </SectionCard>
 
+      <SectionCard eyebrow="Refer a friend" title="Give 7 days, get 7 days">
+        {!referrerCode ? (
+          <View style={styles.referralAttentionRow}>
+            <View style={styles.referralSectionBadge}>
+              <Text style={styles.referralSectionBadgeText}>1</Text>
+            </View>
+            <Text style={styles.referralAttentionText}>Enter the code from whoever invited you.</Text>
+          </View>
+        ) : null}
+        <Text style={styles.note}>
+          Share your referral code. When a friend creates an account with it, both of you get {REFERRAL_REWARD_LABEL}, free.
+        </Text>
+        <View style={styles.referralCodeRow}>
+          <Text style={styles.referralCodeLabel}>Your code</Text>
+          <Text style={styles.referralCode} selectable>{authenticatedUser.friendCode}</Text>
+        </View>
+        <ActionButton
+          label="Share invite"
+          onPress={() =>
+            Share.share({
+              message: `Join me on Your Friends and use my referral code so we both get 7 days of Premium free.\n${inviteLink}\nReferral code: ${authenticatedUser.friendCode}`,
+            })
+          }
+          variant="secondary"
+        />
+        {referralRewardCount > 0 ? (
+          <View style={styles.referralRewardBanner}>
+            <Ionicons name="gift" size={16} color={colors.accent} />
+            <Text style={styles.referralRewardText}>
+              {referralRewardCount === 1
+                ? '1 referral reward earned'
+                : `${referralRewardCount} referral rewards earned`}
+            </Text>
+          </View>
+        ) : null}
+        {referrerCode ? (
+          <Text style={styles.referrerLine}>
+            Referral locked to code <Text style={styles.referrerCode}>{referrerCode}</Text>
+          </Text>
+        ) : (
+          <View style={styles.referrerForm}>
+            <Text style={styles.note}>Got referred? Enter the code once to give both of you {REFERRAL_REWARD_LABEL}.</Text>
+            <FormField
+              label="Referrer's friend code"
+              autoCapitalize="characters"
+              placeholder="e.g. AB3XK7PN"
+              value={enteredReferralCode}
+              onChangeText={(text) => {
+                setEnteredReferralCode(text);
+                if (referralError) setReferralError(null);
+              }}
+            />
+            {referralError ? <Text style={styles.error}>{referralError}</Text> : null}
+            <ActionButton
+              label="Apply code"
+              onPress={submitReferralCode}
+              variant="secondary"
+              disabled={!enteredReferralCode.trim()}
+            />
+          </View>
+        )}
+      </SectionCard>
+
+      {existingFriendsWithoutProfile.length > 0 ? (
+        <SectionCard eyebrow="Existing friends" title="Create profile for a friend">
+          <Text style={styles.note}>
+            Pick a friend who does not have one of your saved memory profile cards yet. This only creates a private profile on your side.
+          </Text>
+          {linkedProfileError ? <Text style={styles.error}>{linkedProfileError}</Text> : null}
+          <View style={styles.existingFriendList}>
+            {existingFriendsWithoutProfile.map((friend) => {
+              const busy = linkedProfileBusyId === friend.id;
+              return (
+                <Pressable
+                  key={friend.id}
+                  onPress={() => handleCreateProfileForFriend(friend.id)}
+                  disabled={linkedProfileBusyId !== null}
+                  style={({ pressed }) => [styles.existingFriendRow, pressed && styles.pressed, linkedProfileBusyId !== null && !busy && styles.disabled]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Create memory profile card for ${friend.displayName}`}
+                >
+                  <View style={[styles.existingFriendAvatar, { backgroundColor: friend.avatarColor }]}>
+                    <Text style={styles.existingFriendAvatarText}>{friend.displayName.trim().slice(0, 1).toUpperCase() || '?'}</Text>
+                  </View>
+                  <View style={styles.existingFriendCopy}>
+                    <Text style={styles.existingFriendName}>{friend.displayName}</Text>
+                    <Text style={styles.existingFriendEmail}>{friend.email}</Text>
+                  </View>
+                  <Ionicons name={busy ? 'hourglass-outline' : 'add-circle-outline'} size={19} color={colors.accent} />
+                </Pressable>
+              );
+            })}
+          </View>
+        </SectionCard>
+      ) : null}
+
       <SectionCard eyebrow="Private" title="Add manually">
-        <Text style={styles.note}>Save someone as a private contact only you can see. You can link them to a real account later.</Text>
+        <Text style={styles.note}>Save someone as a private contact only you can see, even if they are not on the app yet. You can link them to a real account later.</Text>
         <FormField label="Display name" onChangeText={setDisplayName} placeholder="Rosa Maren" value={displayName} />
         <FormField label="Nickname" onChangeText={setNickname} placeholder="Aunt Rosa" value={nickname} />
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -220,10 +463,34 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent,
       letterSpacing: 0.8, textTransform: 'uppercase',
     },
-    title: { fontFamily: fonts.heading, fontSize: 36, lineHeight: 40, color: colors.ink },
+    title: { fontFamily: fonts.heading, fontSize: 36, lineHeight: 40, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 36) },
+    referralAttentionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      alignSelf: 'flex-start',
+      borderRadius: radius.pill,
+      backgroundColor: colors.error + '12',
+      borderWidth: 1,
+      borderColor: colors.error + '36',
+      paddingVertical: spacing.xs,
+      paddingHorizontal: spacing.sm,
+    },
+    referralSectionBadge: {
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      backgroundColor: colors.error ?? '#EF4444',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 5,
+    },
+    referralSectionBadgeText: { fontFamily: fonts.bodyBold, fontSize: 10, color: '#fff' },
+    referralAttentionText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink },
     subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
     note: { fontFamily: fonts.body, fontSize: 14, lineHeight: 21, color: colors.inkSoft },
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
+    notice: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.accent },
 
     scanButton: {
       backgroundColor: colors.accent, borderRadius: radius.md,
@@ -261,19 +528,94 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: colors.paper, borderRadius: radius.md,
       paddingVertical: spacing.lg,
     },
-    qrCodeText: { fontFamily: fonts.heading, fontSize: 20, color: colors.accent, letterSpacing: 3 },
+    qrCodeText: { fontFamily: fonts.heading, fontSize: 20, color: colors.accent, letterSpacing: 3, ...protectTextFromFontClipping(fonts.heading, 20) },
     shareButton: {
       alignSelf: 'center',
       paddingHorizontal: spacing.lg, paddingVertical: spacing.xs,
       borderRadius: radius.pill, backgroundColor: colors.accent,
     },
     shareButtonLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.white },
-
-    limitBanner: {
-      flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-      padding: spacing.md, borderRadius: radius.md,
+    referralCodeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
       borderWidth: 1,
+      borderColor: colors.line,
+      borderRadius: radius.md,
+      padding: spacing.md,
+      backgroundColor: colors.paperMuted,
+      marginTop: spacing.xs,
     },
-    limitBannerTitle: { fontFamily: fonts.bodyBold, fontSize: 14 },
-    limitBannerSub: { fontFamily: fonts.body, fontSize: 12, marginTop: 2 },
+    referralCodeLabel: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkMuted, letterSpacing: 1.2 },
+    referralCode: { fontFamily: fonts.bodyBold, fontSize: 18, color: colors.ink, letterSpacing: 2 },
+    referralRewardBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      backgroundColor: 'rgba(245,194,66,0.18)',
+    },
+    referralRewardText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.ink },
+    referrerLine: { fontFamily: fonts.body, fontSize: 13, color: colors.inkSoft, marginTop: spacing.sm },
+    referrerCode: { fontFamily: fonts.bodyBold, color: colors.ink, letterSpacing: 1.4 },
+    referrerForm: { marginTop: spacing.sm, gap: spacing.xs },
+
+    existingFriendList: { gap: spacing.sm, marginTop: spacing.sm },
+    existingFriendRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paperMuted,
+      padding: spacing.md,
+    },
+    existingFriendAvatar: {
+      width: 44,
+      height: 44,
+      borderRadius: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+    },
+    existingFriendAvatarText: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.white },
+    existingFriendCopy: { flex: 1, gap: 2 },
+    existingFriendName: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
+    existingFriendEmail: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+
+    requestList: { gap: spacing.sm },
+    requestRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+      paddingVertical: spacing.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.line,
+    },
+    requestCopy: { flex: 1, gap: 2 },
+    requestTitle: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
+    requestSubtitle: { fontFamily: fonts.body, fontSize: 12, color: colors.inkSoft },
+    requestActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+    primaryRequestButton: {
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      borderRadius: radius.pill,
+      backgroundColor: colors.accent,
+    },
+    primaryRequestLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.white },
+    secondaryRequestButton: {
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.line,
+    },
+    secondaryRequestLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkSoft },
+    pressed: { opacity: 0.72 },
+    disabled: { opacity: 0.45 },
   });

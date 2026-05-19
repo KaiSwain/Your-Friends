@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export function usePolaroidImageReady(imageUri?: string | null) {
+export function usePolaroidImageReady(imageUri?: string | null, enabled: boolean = true) {
   const [imageReady, setImageReady] = useState(!imageUri);
-  const [showImage, setShowImage] = useState(!!imageUri);
+  const [showImage, setShowImage] = useState(!!imageUri && enabled);
 
   useEffect(() => {
-    setImageReady(!imageUri);
-    setShowImage(!!imageUri);
-  }, [imageUri]);
+    if (!imageUri) {
+      setImageReady(true);
+      setShowImage(false);
+      return;
+    }
+
+    if (!enabled) {
+      setImageReady(false);
+      setShowImage(false);
+      return;
+    }
+
+    setImageReady(false);
+    setShowImage(true);
+  }, [enabled, imageUri]);
 
   const handleImageLoad = useCallback(() => {
     setImageReady(true);

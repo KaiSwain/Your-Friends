@@ -1,25 +1,27 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useMemo, useCallback, useRef, useState } from 'react';
-import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useCallback, useState } from 'react';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { AppScreen } from '../../../../src/components/AppScreen';
 import { useAuth } from '../../../../src/features/auth/AuthContext';
 import { usePremium } from '../../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../../src/features/social/SocialGraphContext';
-import { useTheme } from '../../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../../src/features/theme/themes';
 import { polaroidFilters } from '../../../../src/lib/polaroidFilters';
+import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
 import type { FontSet } from '../../../../src/theme/typography';
-import { fontSets } from '../../../../src/theme/typography';
 import { accentPalette, radius, spacing } from '../../../../src/theme/tokens';
-import { themes, themeNames, type ThemeName } from '../../../../src/features/theme/themes';
-import { contrastText, contrastTextSoft, contrastAccent } from '../../../../src/lib/contrastText';
-import { showGalleryPaywall } from '../../../../src/lib/premiumGates';
+import { themes, themeNames } from '../../../../src/features/theme/themes';
+import { onCapturedUri } from '../../../../src/lib/cameraHandoff';
+import { backOnce, pushOnce } from '../../../../src/lib/navigationGuard';
+import { showGalleryPaywall, showProfileBackgroundPaywall } from '../../../../src/lib/premiumGates';
+import { cropProfileBackgroundAsset } from '../../../../src/lib/profileBackgroundImage';
 import { isCardColorUnlocked, getCardColorLockMessage } from '../../../../src/features/theme/cardColorUnlocks';
-import { usePolaroidImageReady } from '../../../../src/hooks/usePolaroidImageReady';
+import { MemoryProfileCardPreview } from '../../../../src/components/profile';
+import { avatarImagePickerOptions, profileBackgroundImagePickerOptions } from '../../../../src/lib/imagePickerPresets';
+import { useEffectiveProfileTheme } from '../../../../src/hooks/useEffectiveProfileTheme';
 
 const RELATIONSHIP_TAG_PRESETS = [
   'Friend',
@@ -72,10 +74,9 @@ const RELATIONSHIP_TAG_PRESETS = [
 
 export default function EditContactProfileScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ contactId: string | string[]; capturedUri: string | string[] }>();
+  const params = useLocalSearchParams<{ contactId: string | string[]; capturedUri: string | string[]; capturedVideoUri: string | string[] }>();
   const { currentUser } = useAuth();
   const { getContactById, getPeopleListForUser, updateContact } = useSocialGraph();
-  const { colors, fonts, themeName, resolvedMode } = useTheme();
   const { purchasedThemes, isPremium } = usePremium();
   const unlockedThemeSet = useMemo(() => new Set<string>(['default', ...purchasedThemes]), [purchasedThemes]);
 
@@ -84,65 +85,70 @@ export default function EditContactProfileScreen() {
 
   const [name, setName] = useState(contact?.displayName ?? '');
   const [localImageUri, setLocalImageUri] = useState<string | null>(null);
+  const [localVideoUri, setLocalVideoUri] = useState<string | null>(null);
+  const [removeAvatarVideo, setRemoveAvatarVideo] = useState(false);
+  const [avatarVideoMuted, setAvatarVideoMuted] = useState(contact?.avatarVideoMuted ?? false);
   const [note, setNote] = useState(contact?.note ?? '');
   const [selectedTags, setSelectedTags] = useState<string[]>(contact?.tags ?? []);
   const [customTag, setCustomTag] = useState('');
   const [cardColor, setCardColor] = useState<string | null>(contact?.cardColor ?? null);
   const [backText, setBackText] = useState(contact?.backText ?? '');
   const [profileBg, setProfileBg] = useState<string | null>(contact?.profileBg ?? null);
+  const [profileBgImageUri, setProfileBgImageUri] = useState<string | null>(null);
+  const [removeProfileBgImage, setRemoveProfileBgImage] = useState(false);
+  const {
+    baseColors: colors,
+    effectiveColors,
+    effectiveFonts,
+    themedColors,
+  } = useEffectiveProfileTheme(profileBg);
 
-  // Live preview: derive effective theme from the currently-selected profileBg.
-  const previewThemeName = profileBg && (themeNames as string[]).includes(profileBg)
-    ? (profileBg as ThemeName)
-    : null;
-  const previewThemedColors = previewThemeName ? themes[previewThemeName][resolvedMode] : null;
-  const effectiveColors = previewThemedColors ?? colors;
-  const effectiveFonts = previewThemeName ? (fontSets[previewThemeName] ?? fonts) : fonts;
   const styles = useMemo(() => makeStyles(effectiveColors, effectiveFonts), [effectiveColors, effectiveFonts]);
 
-  // Pick up photo from Polaroid camera screen
+  // Pick up media from Polaroid camera screen.
   const capturedUri = Array.isArray(params.capturedUri) ? params.capturedUri[0] : params.capturedUri;
+  const capturedVideoUri = Array.isArray(params.capturedVideoUri) ? params.capturedVideoUri[0] : params.capturedVideoUri;
   useEffect(() => {
-    if (capturedUri) setLocalImageUri(capturedUri);
-  }, [capturedUri]);
+    if (capturedUri) {
+      setLocalImageUri(capturedUri);
+      if (capturedVideoUri) {
+        setLocalVideoUri(capturedVideoUri);
+        setRemoveAvatarVideo(false);
+        setAvatarVideoMuted(false);
+      } else {
+        setLocalVideoUri(null);
+        setRemoveAvatarVideo(Boolean(contact?.avatarVideoPath));
+        setAvatarVideoMuted(false);
+      }
+    }
+  }, [capturedUri, capturedVideoUri, contact?.avatarVideoPath]);
+
+  useEffect(() => onCapturedUri((uri, videoUri) => {
+    setLocalImageUri(uri);
+    if (videoUri) {
+      setLocalVideoUri(videoUri);
+      setRemoveAvatarVideo(false);
+      setAvatarVideoMuted(false);
+    } else {
+      setLocalVideoUri(null);
+      setRemoveAvatarVideo(Boolean(contact?.avatarVideoPath));
+      setAvatarVideoMuted(false);
+    }
+  }), [contact?.avatarVideoPath]);
 
   // ── Preview flip ──
   const [showBack, setShowBack] = useState(false);
-  const [previewFrontHeight, setPreviewFrontHeight] = useState(0);
-  const flipAnim = useRef(new Animated.Value(0)).current;
-  const flipping = useRef(false);
-
-  const rotateY = flipAnim.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: ['0deg', '90deg', '0deg'],
-  });
-  const scaleX = flipAnim.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [1, 0.95, 1],
-  });
-
-  const handleFlipPreview = useCallback(() => {
-    if (flipping.current) return;
-    flipping.current = true;
-    Animated.timing(flipAnim, { toValue: 0.5, duration: 180, useNativeDriver: true }).start(() => {
-      setShowBack((prev) => !prev);
-      Animated.timing(flipAnim, { toValue: 1, duration: 180, useNativeDriver: true }).start(() => {
-        flipAnim.setValue(0);
-        flipping.current = false;
-      });
-    });
-  }, [flipAnim]);
   const [saving, setSaving] = useState(false);
   const displayImage = localImageUri ?? contact?.avatarPath ?? null;
-  const previewImage = usePolaroidImageReady(displayImage);
-  const showPreviewCard = !displayImage || previewImage.imageReady;
+  const displayVideo = removeAvatarVideo ? null : localVideoUri ?? contact?.avatarVideoPath ?? null;
+  const displayVideoMuted = avatarVideoMuted;
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   if (!contact || contact.ownerUserId !== currentUser.id) {
     return (
       <AppScreen
         header={(
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
+          <Pressable onPress={() => backOnce(router)} style={styles.backButton}>
             <Text style={styles.backLabel}><Ionicons name="chevron-back" size={16} /> Back</Text>
           </Pressable>
         )}
@@ -159,31 +165,43 @@ export default function EditContactProfileScreen() {
   // The image to show: prefer locally picked image, then saved avatar, then nothing.
   const displayName = name.trim() || contact.displayName;
 
-  async function pickPhoto() {
+  function openMemoryCamera() {
+    pushOnce(router, {
+      pathname: '/(app)/camera',
+      params: { handoff: '1', liveHandoff: '1' },
+    });
+  }
+
+  async function pickProfileCardPhoto() {
     if (!isPremium) {
-      showGalleryPaywall(() => router.push('/(app)/store'));
+      showGalleryPaywall(() => pushOnce(router, '/(app)/store'));
       return;
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets[0]) {
+    const result = await ImagePicker.launchImageLibraryAsync(avatarImagePickerOptions);
+    if (!result.canceled && result.assets[0]?.uri) {
       setLocalImageUri(result.assets[0].uri);
+      setLocalVideoUri(null);
+      setRemoveAvatarVideo(Boolean(contact?.avatarVideoPath));
+      setAvatarVideoMuted(false);
     }
   }
 
-  function openCamera() {
-    router.push({
-      pathname: '/(app)/camera',
-      params: { returnTo: `/(app)/profiles/contact/edit`, contactId: contactId ?? '' },
-    });
+  async function pickProfileBackgroundPhoto() {
+    if (!isPremium) {
+      showProfileBackgroundPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync(profileBackgroundImagePickerOptions);
+    if (!result.canceled && result.assets[0]) {
+      const croppedUri = await cropProfileBackgroundAsset(result.assets[0]);
+      setProfileBgImageUri(croppedUri);
+      setRemoveProfileBgImage(false);
+    }
   }
 
-  function removePhoto() {
-    setLocalImageUri(null);
+  function clearProfileBackgroundPhoto() {
+    setProfileBgImageUri(null);
+    setRemoveProfileBgImage(Boolean(contact?.profileBgImagePath));
   }
 
   function addTag(rawTag: string) {
@@ -209,41 +227,50 @@ export default function EditContactProfileScreen() {
   const hasChanges =
     name.trim() !== contact.displayName ||
     localImageUri !== null ||
+    localVideoUri !== null ||
+    removeAvatarVideo ||
+    (displayVideo ? avatarVideoMuted !== (contact.avatarVideoMuted ?? false) : false) ||
     note.trim() !== (contact.note ?? '') ||
     tagsChanged ||
     cardColor !== (contact.cardColor ?? null) ||
     backText.trim() !== (contact.backText ?? '') ||
-    profileBg !== (contact.profileBg ?? null);
+    profileBg !== (contact.profileBg ?? null) ||
+    profileBgImageUri !== null ||
+    removeProfileBgImage;
 
   async function handleSave() {
-    if (!hasChanges) { router.back(); return; }
+    if (!hasChanges) { backOnce(router); return; }
     setSaving(true);
     try {
-      const updates: { displayName?: string; avatarLocalUri?: string | null; tags?: string[]; note?: string | null; cardColor?: string | null; backText?: string | null; profileBg?: string | null } = {};
+      const updates: { displayName?: string; avatarLocalUri?: string | null; avatarVideoLocalUri?: string | null; avatarVideoMuted?: boolean; tags?: string[]; note?: string | null; cardColor?: string | null; backText?: string | null; profileBg?: string | null; profileBgImageLocalUri?: string | null } = {};
       if (name.trim() && name.trim() !== contact!.displayName) updates.displayName = name.trim();
-      if (localImageUri !== null) updates.avatarLocalUri = localImageUri;
+      if (localImageUri !== null) {
+        updates.avatarLocalUri = localImageUri;
+      }
+      if (localVideoUri) {
+        updates.avatarVideoLocalUri = localVideoUri;
+      } else if (removeAvatarVideo) {
+        updates.avatarVideoLocalUri = null;
+      }
+      if (displayVideo && (localVideoUri || avatarVideoMuted !== (contact!.avatarVideoMuted ?? false))) updates.avatarVideoMuted = avatarVideoMuted;
       if (note.trim() !== (contact!.note ?? '')) updates.note = note.trim() || null;
       if (tagsChanged) updates.tags = selectedTags;
       if (cardColor !== (contact!.cardColor ?? null)) updates.cardColor = cardColor;
       if (backText.trim() !== (contact!.backText ?? '')) updates.backText = backText.trim() || null;
       if (profileBg !== (contact!.profileBg ?? null)) updates.profileBg = profileBg;
+      if (profileBgImageUri) updates.profileBgImageLocalUri = profileBgImageUri;
+      else if (removeProfileBgImage) updates.profileBgImageLocalUri = null;
       if (Object.keys(updates).length > 0) await updateContact(contact!.id, updates);
-      router.back();
+      backOnce(router);
     } catch (err: any) {
       Alert.alert('Error', err.message);
     }
     setSaving(false);
   }
 
-  const frameDefault = !cardColor;
-  const ct = frameDefault ? FRAME_INK : contrastText(cardColor);
-  const ctSoft = frameDefault ? FRAME_INK_SOFT : contrastTextSoft(cardColor);
-  const ctAccent = frameDefault ? colors.accent : contrastAccent(cardColor, colors.accent);
-  const previewBg = cardColor || POLAROID_FRAME;
-
   const topBar = (
     <View style={styles.topBar}>
-      <Pressable onPress={() => router.back()} style={styles.backButton}>
+      <Pressable onPress={() => backOnce(router)} style={styles.backButton}>
         <Text style={styles.backLabel}><Ionicons name="chevron-back" size={16} /> Cancel</Text>
       </Pressable>
       <Pressable onPress={handleSave} disabled={saving} style={[styles.saveButton, !hasChanges && styles.saveButtonDisabled]}>
@@ -255,92 +282,54 @@ export default function EditContactProfileScreen() {
   );
 
   return (
-    <AppScreen header={topBar} floatingHeaderOnScroll gradientColors={previewThemedColors ? [previewThemedColors.canvas, previewThemedColors.canvasAlt, previewThemedColors.canvas] : undefined}>
+    <AppScreen header={topBar} floatingHeaderOnScroll gradientColors={themedColors ? [themedColors.canvas, themedColors.canvasAlt, themedColors.canvas] : undefined}>
 
       <Text style={styles.title}>Edit Profile</Text>
 
       {/* Photo actions — above the card */}
       <View style={styles.fieldSection}>
-        <Text style={styles.fieldLabel}>Photo</Text>
-        <View style={styles.photoRow}>
-          {!displayImage && (
-            <Pressable onPress={openCamera} style={styles.photoOption}>
-              <Ionicons name="camera-outline" size={28} color={colors.ink} />
-              <Text style={styles.photoOptionLabel}>Take Photo</Text>
-            </Pressable>
-          )}
-          {!displayImage && (
-            <Pressable onPress={pickPhoto} style={styles.photoOption}>
-              <Ionicons name="images-outline" size={28} color={colors.ink} />
-              <Text style={styles.photoOptionLabel}>Gallery</Text>
-            </Pressable>
-          )}
+        <Text style={styles.fieldLabel}>Memory Profile Card</Text>
+        <View style={styles.photoActionRow}>
+          <Pressable onPress={openMemoryCamera} style={styles.changePhotoButton}>
+            <Text style={styles.changePhotoLabel}>Take Memory</Text>
+          </Pressable>
+          <Pressable onPress={pickProfileCardPhoto} style={styles.changePhotoButton}>
+            <Text style={styles.changePhotoLabel}>Gallery Photo</Text>
+          </Pressable>
         </View>
-        {displayImage && (
-          <View style={styles.photoActionRow}>
-            <Pressable onPress={openCamera} style={styles.changePhotoButton}>
-              <Text style={styles.changePhotoLabel}>Retake Photo</Text>
-            </Pressable>
-            <Pressable onPress={pickPhoto} style={styles.changePhotoButton}>
-              <Text style={styles.changePhotoLabel}>Gallery</Text>
-            </Pressable>
+        <Text style={styles.fieldHint}>Take this like a regular memory, or use a Premium gallery photo for this profile card.</Text>
+        {displayVideo ? (
+          <View style={styles.videoAudioRow}>
+            <View style={styles.videoAudioCopy}>
+              <Text style={styles.videoAudioLabel}>Video Sound</Text>
+              <Text style={styles.videoAudioHint}>Turn this off if the profile card video should always play silently.</Text>
+            </View>
+            <Switch
+              value={!avatarVideoMuted}
+              onValueChange={(enabled) => setAvatarVideoMuted(!enabled)}
+              trackColor={{ false: colors.line, true: colors.accent }}
+              thumbColor={colors.white}
+            />
           </View>
-        )}
+        ) : null}
       </View>
 
       {/* Live preview — flippable card with front and back */}
       <View style={styles.previewSection}>
         <Text style={styles.previewLabel}>Preview — tap to flip</Text>
-        <Pressable onPress={handleFlipPreview}>
-          <Animated.View style={[styles.previewAmbientShadow, !showPreviewCard && { opacity: 0 }, { transform: [{ perspective: 800 }, { rotateY }, { scaleX }] }]} renderToHardwareTextureAndroid shouldRasterizeIOS>
-            <View style={styles.previewTape} />
-            <View onLayout={(e) => { const h = e.nativeEvent.layout.height; if (h > 0) setPreviewFrontHeight(h); }} style={styles.previewFaceHost}>
-              <View pointerEvents={showBack ? 'none' : 'auto'} style={[showBack && styles.previewHiddenFace]}>
-                <View style={[styles.previewCard, { backgroundColor: previewBg }]}> 
-                  <View style={styles.previewPhotoFrame}>
-                    {previewImage.showImage ? (
-                      <>
-                        <Image source={{ uri: displayImage! }} style={styles.previewPhoto} fadeDuration={0} onLoad={previewImage.handleImageLoad} onError={previewImage.handleImageError} />
-                        <View style={styles.previewWarmBaseTint} />
-                        <LinearGradient
-                          colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 1 }}
-                          style={styles.previewPhotoSheen}
-                        />
-                        <View style={styles.previewInsetShadowTop} />
-                        <View style={styles.previewInsetShadowLeft} />
-                      </>
-                    ) : (
-                      <View style={[styles.previewPhotoSurface, { backgroundColor: accentColor }]}> 
-                        <Text style={styles.previewInitials}>{getInitials(displayName)}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <View style={styles.previewBottom}>
-                    <Text style={[styles.previewName, { color: ct }]} numberOfLines={1}>{displayName}</Text>
-                    <View style={styles.previewNoteSlot}>
-                      {note.trim() ? (
-                        <Text style={[styles.previewNote, { color: ctSoft }]} numberOfLines={PREVIEW_NOTE_LINES}>{note.trim()}</Text>
-                      ) : null}
-                    </View>
-                  </View>
-                </View>
-              </View>
-
-              <View pointerEvents={showBack ? 'auto' : 'none'} style={[styles.previewFaceOverlay, !showBack && styles.previewHiddenFace]}>
-                <View style={[styles.previewCard, styles.previewCardBack, { backgroundColor: previewBg }, previewFrontHeight > 0 && { height: previewFrontHeight }]}> 
-                  {backText.trim() ? (
-                    <Text style={[styles.previewBackText, { color: ct }]}>{backText.trim()}</Text>
-                  ) : (
-                    <Text style={[styles.previewBackPlaceholder, { color: ctSoft }]}>Write on the back…</Text>
-                  )}
-                  <Text style={[styles.previewBackHint, { color: ctSoft }]}>tap card to flip back</Text>
-                </View>
-              </View>
-            </View>
-          </Animated.View>
-        </Pressable>
+        <MemoryProfileCardPreview
+          accentColor={accentColor}
+          backPlaceholder="Write on the back…"
+          backText={backText.trim()}
+          cardColor={cardColor}
+          colors={effectiveColors}
+          imageUri={displayImage}
+          name={displayName}
+          note={note.trim()}
+          onFlip={setShowBack}
+          videoMuted={displayVideoMuted}
+          videoUri={displayVideo}
+        />
       </View>
 
       {/* Name editor */}
@@ -425,6 +414,32 @@ export default function EditContactProfileScreen() {
         </View>
       </View>
 
+      {/* Profile background photo */}
+      <View style={styles.fieldSection}>
+        <Text style={styles.fieldLabel}>Background Photo</Text>
+        <Text style={styles.fieldHint}>Premium: choose a gallery photo to sit behind this friend's profile.</Text>
+        <View style={styles.backgroundPhotoCard}>
+          {profileBgImageUri || (!removeProfileBgImage && contact.profileBgImagePath) ? (
+            <Image source={{ uri: profileBgImageUri ?? contact.profileBgImagePath! }} style={styles.backgroundPhotoPreview} resizeMode="cover" />
+          ) : (
+            <View style={styles.backgroundPhotoEmpty}>
+              <Ionicons name="image-outline" size={28} color={colors.inkMuted} />
+              <Text style={styles.backgroundPhotoEmptyText}>No background photo</Text>
+            </View>
+          )}
+        </View>
+        <View style={styles.photoActionRow}>
+          <Pressable onPress={pickProfileBackgroundPhoto} style={styles.changePhotoButton}>
+            <Text style={styles.changePhotoLabel}>{profileBgImageUri || (!removeProfileBgImage && contact.profileBgImagePath) ? 'Change Background' : 'Choose Background'}</Text>
+          </Pressable>
+          {(profileBgImageUri || (!removeProfileBgImage && contact.profileBgImagePath)) ? (
+            <Pressable onPress={clearProfileBackgroundPhoto} style={styles.changePhotoButton}>
+              <Text style={styles.changePhotoLabel}>Remove</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
       <View style={styles.fieldSection}>
         <Text style={styles.fieldLabel}>Relationship Tags</Text>
         <Text style={styles.fieldHint}>Add a few labels for how you know this person.</Text>
@@ -467,10 +482,6 @@ export default function EditContactProfileScreen() {
   );
 }
 
-function getInitials(value: string) {
-  return value.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('');
-}
-
 const PREVIEW_PHOTO = 140;
 const PREVIEW_PAD_SIDE = 10;
 const PREVIEW_WIDTH = PREVIEW_PHOTO + PREVIEW_PAD_SIDE * 2;
@@ -498,7 +509,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     saveButtonDisabled: { opacity: 0.5 },
     saveButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.white },
     saveButtonLabelDisabled: { color: colors.white },
-    title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, textAlign: 'center' },
+    title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, textAlign: 'center', ...protectTextFromFontClipping(fonts.heading, 28) },
     errorText: { fontFamily: fonts.body, fontSize: 15, color: colors.error, textAlign: 'center' },
     previewSection: { alignItems: 'center', gap: spacing.sm },
     previewLabel: {
@@ -522,20 +533,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontSize: 16,
       color: colors.ink,
     },
-    photoRow: { flexDirection: 'row', gap: spacing.md, justifyContent: 'center' },
-    photoOption: {
-      width: 100,
-      height: 100,
-      borderRadius: radius.md,
-      backgroundColor: colors.paper,
-      borderWidth: 1,
-      borderColor: colors.line,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.xs,
-    },
-    photoOptionIcon: { fontSize: 28 },
-    photoOptionLabel: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
     photoActionRow: { flexDirection: 'row', gap: spacing.md, justifyContent: 'center' },
     changePhotoButton: {
       paddingVertical: spacing.sm,
@@ -545,6 +542,46 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderColor: colors.line,
     },
     changePhotoLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft },
+    videoAudioRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+      padding: spacing.md,
+    },
+    videoAudioCopy: { flex: 1, gap: 3 },
+    videoAudioLabel: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.ink },
+    videoAudioHint: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkSoft },
+    backgroundPhotoCard: {
+      width: '58%',
+      maxWidth: 220,
+      aspectRatio: 9 / 16,
+      alignSelf: 'center',
+      borderRadius: radius.lg,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+    },
+    backgroundPhotoPreview: {
+      width: '100%',
+      height: '100%',
+    },
+    backgroundPhotoEmpty: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xs,
+    },
+    backgroundPhotoEmptyText: {
+      fontFamily: fonts.bodyMedium,
+      fontSize: 13,
+      color: colors.inkMuted,
+    },
     noteInput: {
       borderRadius: radius.md,
       backgroundColor: colors.paper,
@@ -602,7 +639,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    customTagButtonLabel: { fontFamily: fonts.heading, fontSize: 22, color: colors.white },
+    customTagButtonLabel: { fontFamily: fonts.heading, fontSize: 22, color: colors.white, ...protectTextFromFontClipping(fonts.heading, 22) },
 
     /* ── Live preview card (matches PolaroidCarousel card exactly) ── */
     previewAmbientShadow: {
@@ -661,6 +698,20 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderColor: 'rgba(0,0,0,0.045)',
     },
     previewPhoto: { width: '100%', height: '100%', transform: [{ scale: 1.01 }] },
+    previewLiveBadge: {
+      position: 'absolute',
+      top: spacing.xs,
+      left: spacing.xs,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderRadius: radius.pill,
+      backgroundColor: 'rgba(0,0,0,0.62)',
+      paddingHorizontal: spacing.xs,
+      paddingVertical: 3,
+      zIndex: 7,
+    },
+    previewLiveBadgeText: { fontFamily: fonts.bodyBold, fontSize: 9, color: '#fff', letterSpacing: 0.7 },
     previewPhotoSurface: {
       flex: 1,
       width: '100%',
@@ -668,7 +719,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    previewInitials: { fontFamily: fonts.heading, fontSize: 44, color: colors.white },
+    previewInitials: { fontFamily: fonts.bodyBold, fontSize: 38, lineHeight: 42, color: colors.white, textAlign: 'center' },
     previewWarmBaseTint: {
       ...StyleSheet.absoluteFillObject,
       backgroundColor: 'rgba(210,180,140,0.04)',
@@ -727,6 +778,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: '100%',
       paddingHorizontal: 10,
       overflow: 'visible' as const,
+      ...protectTextFromFontClipping(fonts.handwrittenBold, 22),
     },
     previewNote: {
       fontFamily: fonts.handwritten,
@@ -737,6 +789,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: '100%',
       paddingHorizontal: 10,
       overflow: 'visible' as const,
+      ...protectTextFromFontClipping(fonts.handwritten, 14),
     },
     /* ── Back face ── */
     previewCardBack: {
@@ -754,6 +807,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       flex: 1,
       width: '100%',
       overflow: 'visible' as const,
+      ...protectTextFromFontClipping(fonts.handwritten, 15),
     },
     previewBackPlaceholder: {
       fontFamily: fonts.handwritten,
@@ -764,6 +818,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: '100%',
       overflow: 'visible' as const,
       opacity: 0.5,
+      ...protectTextFromFontClipping(fonts.handwritten, 15),
     },
     previewBackHint: {
       fontFamily: fonts.body,

@@ -15,6 +15,10 @@ export const seedUsers: AppUser[] = [
     friendCode: 'AVR6K2PM',
     // Store Avery's avatar accent color.
     avatarColor: '#CC8B74',
+    // Store Avery's birthday for calendar seed data.
+    birthday: null,
+    // Keep Avery's app background private by default.
+    profileBgImagePublic: false,
     // Store example facts that appear on Avery's profile.
     profileFacts: ['Keeps birthday notes in a paper journal.', 'Collects tiny cafe receipts while traveling.'],
     // Store Avery's profile creation timestamp.
@@ -32,6 +36,10 @@ export const seedUsers: AppUser[] = [
     friendCode: 'NBL4R7QS',
     // Store Noah's avatar accent color.
     avatarColor: '#9AB7C9',
+    // Store Noah's birthday for calendar seed data.
+    birthday: null,
+    // Keep Noah's app background private by default.
+    profileBgImagePublic: false,
     // Store example facts that appear on Noah's profile.
     profileFacts: ['Remembers everyone’s coffee order.', 'Calls after hard weeks instead of texting.'],
     // Store Noah's profile creation timestamp.
@@ -49,6 +57,10 @@ export const seedUsers: AppUser[] = [
     friendCode: 'MNS8T3LK',
     // Store Mina's avatar accent color.
     avatarColor: '#AEBFAD',
+    // Store Mina's birthday for calendar seed data.
+    birthday: null,
+    // Keep Mina's app background private by default.
+    profileBgImagePublic: false,
     // Store example facts that appear on Mina's profile.
     profileFacts: ['Sends voice notes from Sunday walks.', 'Finds vintage photo booths in every city.'],
     // Store Mina's profile creation timestamp.
@@ -66,6 +78,10 @@ export const seedUsers: AppUser[] = [
     friendCode: 'LNP7H5WX',
     // Store Lina's avatar accent color.
     avatarColor: '#8A6D7D',
+    // Store Lina's birthday for calendar seed data.
+    birthday: null,
+    // Keep Lina's app background private by default.
+    profileBgImagePublic: false,
     // Store example facts that appear on Lina's profile.
     profileFacts: ['Leaves annotated books as gifts.', 'Never forgets an anniversary dinner.'],
     // Store Lina's profile creation timestamp.
@@ -99,6 +115,8 @@ export const seedContacts: Contact[] = [
     backText: null,
     // Leave the optional profile background empty.
     profileBg: null,
+    // Leave the optional profile background image empty.
+    profileBgImagePath: null,
     // Keep the contact unpinned by default.
     pinned: false,
     // No pin timestamp until the contact is pinned.
@@ -130,6 +148,8 @@ export const seedContacts: Contact[] = [
     backText: null,
     // Leave the optional profile background empty.
     profileBg: null,
+    // Leave the optional profile background image empty.
+    profileBgImagePath: null,
     // Keep the contact unpinned by default.
     pinned: false,
     // No pin timestamp until the contact is pinned.
@@ -183,6 +203,7 @@ export const seedWallPosts: WallPost[] = [
     subjectContactId: null,
     // Make the post visible to the subject.
     visibility: 'visible_to_subject',
+    postType: 'note',
     // Store the memory text itself.
     body: 'She mentioned she likes the beach more than the mountains.',
     // Leave the image empty because this seed memory has no photo.
@@ -192,6 +213,7 @@ export const seedWallPosts: WallPost[] = [
     backText: null,
     filter: null,
     dateStamp: false,
+    song: null,
     // Store the creation timestamp.
     createdAt: '2025-11-01T14:20:00.000Z',
   },
@@ -207,6 +229,7 @@ export const seedWallPosts: WallPost[] = [
     subjectContactId: null,
     // Make the post visible to the subject.
     visibility: 'visible_to_subject',
+    postType: 'note',
     // Store the memory text itself.
     body: 'Brought homemade lemon cake to the housewarming. Still the best one I ever had.',
     // Leave the image empty because this seed memory has no photo.
@@ -216,6 +239,7 @@ export const seedWallPosts: WallPost[] = [
     backText: null,
     filter: null,
     dateStamp: false,
+    song: null,
     // Store the creation timestamp.
     createdAt: '2025-11-28T09:00:00.000Z',
   },
@@ -231,6 +255,7 @@ export const seedWallPosts: WallPost[] = [
     subjectContactId: null,
     // Make the post visible to the subject.
     visibility: 'visible_to_subject',
+    postType: 'note',
     // Store the memory text itself.
     body: 'Always picks the window seat on trains and takes photos of passing stations.',
     // Leave the image empty because this seed memory has no photo.
@@ -240,6 +265,7 @@ export const seedWallPosts: WallPost[] = [
     backText: null,
     filter: null,
     dateStamp: false,
+    song: null,
     // Store the creation timestamp.
     createdAt: '2026-01-15T17:45:00.000Z',
   },
@@ -255,6 +281,7 @@ export const seedWallPosts: WallPost[] = [
     subjectContactId: null,
     // Make the post visible to the subject.
     visibility: 'visible_to_subject',
+    postType: 'note',
     // Store the memory text itself.
     body: 'Remembers everyone\'s coffee order. Even mine from three years ago.',
     // Leave the image empty because this seed memory has no photo.
@@ -264,6 +291,7 @@ export const seedWallPosts: WallPost[] = [
     backText: null,
     filter: null,
     dateStamp: false,
+    song: null,
     // Store the creation timestamp.
     createdAt: '2026-02-10T08:30:00.000Z',
   },
@@ -279,6 +307,7 @@ export const seedWallPosts: WallPost[] = [
     subjectContactId: null,
     // Keep this post private so only Avery can see it.
     visibility: 'private',
+    postType: 'note',
     // Store the memory text itself.
     body: 'Called right after I had the worst week at work. Didn\'t even have to ask.',
     // Leave the image empty because this seed memory has no photo.
@@ -288,6 +317,7 @@ export const seedWallPosts: WallPost[] = [
     backText: null,
     filter: null,
     dateStamp: false,
+    song: null,
     // Store the creation timestamp.
     createdAt: '2026-03-05T21:00:00.000Z',
   },
@@ -303,6 +333,7 @@ export const seedWallPosts: WallPost[] = [
     subjectContactId: 'contact_rosa',
     // Keep this post private because it is about a contact.
     visibility: 'private',
+    postType: 'note',
     // Store the memory text itself.
     body: 'She always smells like lavender and old paper. Brings apricot jam every July without fail.',
     // Leave the image empty because this seed memory has no photo.
@@ -312,6 +343,7 @@ export const seedWallPosts: WallPost[] = [
     backText: null,
     filter: null,
     dateStamp: false,
+    song: null,
     // Store the creation timestamp.
     createdAt: '2026-03-18T10:00:00.000Z',
   },

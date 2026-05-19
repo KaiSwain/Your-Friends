@@ -6,6 +6,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
 import { MemoryTextStylePicker } from '../../../src/components/MemoryTextStylePicker';
+import { SongSearchPicker } from '../../../src/components/SongSearchPicker';
 import { WallPostCard } from '../../../src/components/WallPostCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
 import { usePremium } from '../../../src/features/premium/PremiumContext';
@@ -13,6 +14,7 @@ import { useSocialGraph } from '../../../src/features/social/SocialGraphContext'
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
 import { AI_CAPTION_TONES, AiCaptionContext, AiCaptionTone, generateAiCaptions } from '../../../src/lib/aiCaptions';
+import { backOnce, pushOnce } from '../../../src/lib/navigationGuard';
 import { getCureProgress } from '../../../src/lib/polaroidCure';
 import { showAiCaptionPaywall } from '../../../src/lib/premiumGates';
 import {
@@ -24,10 +26,11 @@ import {
   resolveWallPostTextColor,
   resolveWallPostTextStyle,
 } from '../../../src/lib/wallPostTextStyle';
+import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import type { FontSet } from '../../../src/theme/typography';
 import { ThemedGlyph } from '../../../src/components/ThemedGlyph';
 import { radius, spacing } from '../../../src/theme/tokens';
-import { WallPost, WallPostTextColor, WallPostTextEffect, WallPostTextFont, WallPostTextSize, WallPostVisibility } from '../../../src/types/domain';
+import { SongAttachment, WallPost, WallPostTextColor, WallPostTextEffect, WallPostTextFont, WallPostTextSize, WallPostVisibility } from '../../../src/types/domain';
 
 export default function EditMemoryScreen() {
   const router = useRouter();
@@ -60,6 +63,9 @@ export default function EditMemoryScreen() {
   const [textSize, setTextSize] = useState<WallPostTextSize>(post?.textSize ?? defaultWallPostTextSize);
   const [textEffect, setTextEffect] = useState<WallPostTextEffect>(post?.textEffect ?? defaultWallPostTextEffect);
   const [textColor, setTextColor] = useState<WallPostTextColor>(post?.textColor ?? defaultWallPostTextColor);
+  const [selectedSong, setSelectedSong] = useState<SongAttachment | null>(post?.song ?? null);
+  const [songPreviewRequestKey, setSongPreviewRequestKey] = useState<string | null>(null);
+  const [videoMuted, setVideoMuted] = useState(post?.videoMuted ?? false);
   const [captionTone, setCaptionTone] = useState<AiCaptionTone>('witty');
   const [captionSuggestions, setCaptionSuggestions] = useState<string[]>([]);
   const [isGeneratingCaption, setIsGeneratingCaption] = useState(false);
@@ -69,7 +75,7 @@ export default function EditMemoryScreen() {
 
   // Live developing progress
   const [now, setNow] = useState(Date.now());
-  const developing = post ? getCureProgress(post.createdAt, now) < 1 : false;
+  const developing = post?.imageUri ? getCureProgress(post.createdAt, now) < 1 : false;
 
   useEffect(() => {
     if (!developing) return;
@@ -81,10 +87,16 @@ export default function EditMemoryScreen() {
     setCaptionSuggestions([]);
   }, [post?.id, post?.imageUri]);
 
+  useEffect(() => {
+    setSelectedSong(post?.song ?? null);
+    setSongPreviewRequestKey(null);
+    setVideoMuted(post?.videoMuted ?? false);
+  }, [post?.id]);
+
   const onFlip = useCallback((back: boolean) => setShowingBack(back), []);
   const textInputTypography = useMemo(
-    () => (!post?.imageUri ? resolveWallPostTextStyle(fonts, textFont, textSize) : null),
-    [fonts, post?.imageUri, textFont, textSize],
+    () => (post?.postType === 'note' && !post?.imageUri ? resolveWallPostTextStyle(fonts, textFont, textSize) : null),
+    [fonts, post?.imageUri, post?.postType, textFont, textSize],
   );
   const selectedTextColor = useMemo(() => resolveWallPostTextColor(textColor, colors), [colors, textColor]);
 
@@ -95,6 +107,9 @@ export default function EditMemoryScreen() {
   const editablePost = post;
   const authenticatedUser = currentUser;
   const authorName = getUserById(editablePost.authorUserId)?.displayName ?? 'Unknown';
+  const isSongPost = editablePost.postType === 'song';
+  const isNotePost = editablePost.postType === 'note' && !editablePost.imageUri;
+  const canEditAttachedSong = !isSongPost;
 
   function buildCaptionContext(): AiCaptionContext {
     const linkedContact = editablePost.subjectUserId
@@ -138,7 +153,7 @@ export default function EditMemoryScreen() {
       return;
     }
     if (!isPremium) {
-      showAiCaptionPaywall(() => router.push('/(app)/store'));
+      showAiCaptionPaywall(() => pushOnce(router, '/(app)/store'));
       return;
     }
 
@@ -161,23 +176,25 @@ export default function EditMemoryScreen() {
   }
 
   function handleBack() {
-    router.back();
+    backOnce(router);
   }
 
   async function handleSave() {
-    if (!body.trim() && !post!.imageUri) { setError('Add some text.'); return; }
+    if (!body.trim() && !editablePost.imageUri && !isSongPost) { setError('Add some text.'); return; }
     setSaving(true);
     try {
       await updateWallPost(
-        post!.id,
+        editablePost.id,
         body.trim(),
         undefined,
         undefined,
-        backText.trim() || null,
-        post!.imageUri ? undefined : encodeWallPostTextStyle(textFont, textSize, textEffect, textColor),
+        editablePost.imageUri ? (backText.trim() || null) : undefined,
+        isNotePost ? encodeWallPostTextStyle(textFont, textSize, textEffect, textColor) : undefined,
         visibility,
+        canEditAttachedSong ? selectedSong : undefined,
+        editablePost.videoUri ? videoMuted : undefined,
       );
-      router.back();
+      backOnce(router);
     } catch (err: any) {
       setError(err.message ?? 'Something went wrong.');
     }
@@ -192,7 +209,7 @@ export default function EditMemoryScreen() {
         style: 'destructive',
         onPress: async () => {
           await deleteWallPost(post!.id);
-          router.back();
+          backOnce(router);
         },
       },
     ]);
@@ -203,6 +220,19 @@ export default function EditMemoryScreen() {
       <Text style={styles.backLabel}>‹ Back</Text>
     </Pressable>
   );
+
+  const inputLabel = isSongPost
+    ? 'Song Note'
+    : showingBack
+      ? 'Back of Card'
+      : editablePost.imageUri
+        ? 'Front Caption'
+        : 'Memory Note';
+  const inputPlaceholder = isSongPost
+    ? 'Why does this song belong here?'
+    : showingBack
+      ? 'Write something on the back...'
+      : 'What do you want to remember?';
 
   return (
     <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={saving ? 'Saving…' : 'Save Changes'} onPress={handleSave} disabled={saving} />}>
@@ -219,13 +249,15 @@ export default function EditMemoryScreen() {
         />
       </View>
 
-      {(body.trim() || backText.trim() || post.imageUri) && (
+      {(body.trim() || backText.trim() || post.imageUri || (canEditAttachedSong ? selectedSong : post.song)) && (
         <View style={styles.previewSection}>
           <WallPostCard
             authorName={authorName}
             cardColor={post.cardColor}
-            onFlip={onFlip}
-            post={{ ...post, body: body.trim(), backText: backText.trim() || null, textFont, textSize, textEffect, textColor }}
+            onFlip={post.imageUri ? onFlip : undefined}
+            autoPlaySongPreviewKey={songPreviewRequestKey}
+            livePolaroidForcePlayback={!!post.videoUri}
+            post={{ ...post, body: body.trim(), backText: backText.trim() || null, textFont, textSize, textEffect, textColor, song: canEditAttachedSong ? selectedSong : post.song, videoMuted }}
           />
           {developing && (
             <View style={styles.developingRow}>
@@ -233,13 +265,43 @@ export default function EditMemoryScreen() {
               <Text style={styles.developingHint}>Still developing… your photo will appear shortly</Text>
             </View>
           )}
-          <Text style={styles.previewHint}>Tap card to flip</Text>
+          {post.imageUri ? <Text style={styles.previewHint}>Tap card to flip</Text> : null}
         </View>
       )}
 
+      {editablePost.videoUri ? (
+        <View style={styles.videoAudioRow}>
+          <View style={styles.videoAudioCopy}>
+            <Text style={styles.videoAudioLabel}>Video Audio</Text>
+            <Text style={styles.videoAudioHint}>Turn this off if the Live Memory Card should always play silently.</Text>
+          </View>
+          <Switch
+            value={!videoMuted}
+            onValueChange={(enabled) => setVideoMuted(!enabled)}
+            trackColor={{ false: colors.line, true: colors.accent }}
+            thumbColor={colors.white}
+          />
+        </View>
+      ) : null}
+
+      {canEditAttachedSong ? (
+        <SongSearchPicker
+          selectedSong={selectedSong}
+          onSelect={(song) => {
+            setSelectedSong(song);
+            setSongPreviewRequestKey(`${song.provider}:${song.providerTrackId}:${Date.now()}`);
+            setError('');
+          }}
+          onRemove={() => {
+            setSelectedSong(null);
+            setSongPreviewRequestKey(null);
+          }}
+        />
+      ) : null}
+
       <View style={styles.inputSection}>
         <View style={styles.inputHeaderRow}>
-          <Text style={styles.inputLabel}>{showingBack ? 'Back of Card' : 'Front Caption'}</Text>
+          <Text style={styles.inputLabel}>{inputLabel}</Text>
           {post.imageUri && !showingBack ? (
             <Pressable onPress={handleGenerateCaption} disabled={isGeneratingCaption} style={[styles.aiButton, isGeneratingCaption && styles.aiButtonDisabled]}>
               <Ionicons name="sparkles-outline" size={16} color={colors.accent} />
@@ -262,9 +324,9 @@ export default function EditMemoryScreen() {
         <TextInput
           multiline
           onChangeText={showingBack ? setBackText : setBody}
-          placeholder={showingBack ? 'Write something on the back…' : 'What do you want to remember?'}
+          placeholder={inputPlaceholder}
           placeholderTextColor={colors.inkMuted}
-          style={[styles.textInput, !post.imageUri && !showingBack && textInputTypography, !post.imageUri && !showingBack && { color: selectedTextColor }]}
+          style={[styles.textInput, isNotePost && !showingBack && textInputTypography, isNotePost && !showingBack && { color: selectedTextColor }]}
           value={showingBack ? backText : body}
         />
         {post.imageUri && !showingBack && captionSuggestions.length > 0 ? (
@@ -278,7 +340,7 @@ export default function EditMemoryScreen() {
         ) : null}
       </View>
 
-      {!post.imageUri ? (
+      {isNotePost ? (
         <MemoryTextStylePicker
           selectedFont={textFont}
           selectedSize={textSize}
@@ -304,7 +366,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
     backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
     backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
-    title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink },
+    title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 28) },
     textInput: {
       minHeight: 100, borderRadius: radius.md, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line,
       padding: spacing.md, fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.ink, textAlignVertical: 'top',
@@ -353,6 +415,20 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     previewHint: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted, textAlign: 'center' as const },
     developingRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: spacing.xs },
     developingHint: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft, textAlign: 'center' as const },
+    videoAudioRow: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      justifyContent: 'space-between' as const,
+      gap: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+      padding: spacing.md,
+    },
+    videoAudioCopy: { flex: 1, gap: 3 },
+    videoAudioLabel: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.ink },
+    videoAudioHint: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkSoft },
     visibilityRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const },
     visibilityLabel: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.ink },
     deleteButton: { alignSelf: 'center', paddingVertical: spacing.md },

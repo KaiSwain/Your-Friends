@@ -1,6 +1,7 @@
 import type { TextStyle } from 'react-native';
 
 import type { FontSet } from '../theme/typography';
+import { protectTextFromFontClipping } from '../theme/fontProtection';
 import { colors as paletteColors } from '../theme/tokens';
 import type { ColorTokens } from '../theme/tokens';
 import type { WallPostTextColor, WallPostTextEffect, WallPostTextFont, WallPostTextSize } from '../types/domain';
@@ -144,16 +145,18 @@ export function resolveWallPostTextStyle(
   fonts: FontSet,
   font: WallPostTextFont | null | undefined,
   size: WallPostTextSize | null | undefined,
-): Pick<TextStyle, 'fontFamily' | 'fontSize' | 'lineHeight' | 'letterSpacing'> {
+): TextStyle {
   const resolvedFont = font ?? defaultWallPostTextFont;
   const resolvedSize = normalizeWallPostTextSize(size) ?? defaultWallPostTextSize;
   const scale = getWallPostTextSizeScale(resolvedSize);
+  const fontFamily = getWallPostTextFontFamily(fonts, resolvedFont);
 
   return {
-    fontFamily: getWallPostTextFontFamily(fonts, resolvedFont),
+    fontFamily,
     fontSize: scale.fontSize,
     lineHeight: scale.lineHeight,
     letterSpacing: resolvedFont === 'modern' ? 0.2 : resolvedFont === 'editorial' ? 0.1 : 0,
+    ...protectTextFromFontClipping(fontFamily, scale.fontSize),
   };
 }
 

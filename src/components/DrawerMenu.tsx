@@ -1,12 +1,14 @@
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { useMemo, useRef, useEffect } from 'react';
 import { Animated, Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../features/auth/AuthContext';
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
+import { protectTextFromFontClipping } from '../theme/fontProtection';
 import type { FontSet } from '../theme/typography';
 import { spacing } from '../theme/tokens';
+import { pushOnce } from '../lib/navigationGuard';
 import { ThemedGlyph } from './ThemedGlyph';
 
 const DRAWER_WIDTH = Dimensions.get('window').width * 0.75;
@@ -41,9 +43,9 @@ export function DrawerMenu({ visible, onClose }: DrawerMenuProps) {
 
   if (!visible && (translateX as any)._value === -DRAWER_WIDTH) return null;
 
-  function navigate(href: string) {
+  function navigate(href: Href) {
     onClose();
-    setTimeout(() => router.push(href as any), 260);
+    setTimeout(() => pushOnce(router, href), 260);
   }
 
   return (
@@ -56,15 +58,15 @@ export function DrawerMenu({ visible, onClose }: DrawerMenuProps) {
         {currentUser && <Text style={styles.userName}>{currentUser.displayName}</Text>}
 
         <View style={styles.links}>
-          <Pressable onPress={() => navigate('/(app)/friends')} style={styles.linkRow}>
+          <Pressable onPress={() => navigate('/friends')} style={styles.linkRow}>
             <ThemedGlyph name="home" size={20} color={colors.accent} />
             <Text style={styles.linkLabel}>Home</Text>
           </Pressable>
-          <Pressable onPress={() => navigate('/(app)/profiles/me')} style={styles.linkRow}>
+          <Pressable onPress={() => navigate('/profiles/me')} style={styles.linkRow}>
             <ThemedGlyph name="profile" size={20} color={colors.accent} />
             <Text style={styles.linkLabel}>Your Profile</Text>
           </Pressable>
-          <Pressable onPress={() => navigate('/(app)/calendar')} style={styles.linkRow}>
+          <Pressable onPress={() => navigate('/calendar')} style={styles.linkRow}>
             <ThemedGlyph name="calendar" size={20} color={colors.accent} />
             <Text style={styles.linkLabel}>Calendar</Text>
           </Pressable>
@@ -94,7 +96,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       position: 'absolute', top: 0, left: 0, bottom: 0, width: DRAWER_WIDTH,
       backgroundColor: colors.canvas, paddingTop: 60, paddingHorizontal: spacing.lg,
     },
-    appName: { fontFamily: fonts.heading, fontSize: 24, color: colors.ink, marginBottom: spacing.xs },
+    appName: { fontFamily: fonts.heading, fontSize: 24, color: colors.ink, marginBottom: spacing.xs, ...protectTextFromFontClipping(fonts.heading, 24) },
     userName: { fontFamily: fonts.body, fontSize: 14, color: colors.inkSoft, marginBottom: spacing.lg },
     links: { gap: spacing.xs },
     linkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md },

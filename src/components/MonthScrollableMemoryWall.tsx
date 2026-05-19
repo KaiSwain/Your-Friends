@@ -6,6 +6,7 @@ import type { ColorTokens } from '../features/theme/themes';
 import type { FontSet } from '../theme/typography';
 import { radius, spacing } from '../theme/tokens';
 import type { WallPost } from '../types/domain';
+import { getWallPostMemoryDate } from '../lib/memoryDate';
 
 export interface DayGroup {
   label: string;
@@ -31,7 +32,7 @@ function groupPostsByMonth(posts: WallPost[]): MonthGroup[] {
   let currentDayLabel = '';
 
   for (const post of posts) {
-    const date = new Date(post.createdAt);
+    const date = getWallPostMemoryDate(post);
     const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
     const monthLabel = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     const dayLabel = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });

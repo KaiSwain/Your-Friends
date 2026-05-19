@@ -1,3 +1,5 @@
+import 'react-native-gesture-handler';
+
 import { Ionicons } from '@expo/vector-icons';
 import { Caveat_400Regular, Caveat_700Bold } from '@expo-google-fonts/caveat';
 import { Manrope_400Regular, Manrope_500Medium, Manrope_700Bold } from '@expo-google-fonts/manrope';
@@ -12,14 +14,18 @@ import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AuthProvider } from '../src/features/auth/AuthContext';
+import { PendingMemorySyncProvider } from '../src/features/memories/PendingMemorySyncProvider';
+import { MusicPreferenceProvider } from '../src/features/music/MusicPreferenceContext';
 import { OnboardingProvider } from '../src/features/onboarding/OnboardingContext';
 import { PremiumProvider } from '../src/features/premium/PremiumContext';
 import { ThemeProvider, useTheme } from '../src/features/theme/ThemeContext';
 import { initializeMobileAds } from '../src/lib/initializeMobileAds';
 import { asyncStoragePersister, queryClient } from '../src/lib/queryClient';
-import { extractFriendCode } from '../src/lib/friendCode';
+import { parseAppDeepLink } from '../src/lib/appDeepLinks';
+import { replaceOnce } from '../src/lib/navigationGuard';
 import { storeIncomingReferralCode } from '../src/lib/referrals';
 import { colors as fallbackColors } from '../src/theme/tokens';
 
@@ -33,7 +39,7 @@ export function ErrorBoundary({ error, retry }: { error: Error; retry: () => voi
       <Pressable style={errorStyles.button} onPress={retry}>
         <Text style={errorStyles.buttonLabel}>Try Again</Text>
       </Pressable>
-      <Pressable style={errorStyles.linkButton} onPress={() => router.replace('/')}>
+      <Pressable style={errorStyles.linkButton} onPress={() => replaceOnce(router, '/')}>
         <Text style={errorStyles.linkLabel}>Go Home</Text>
       </Pressable>
     </View>
@@ -77,17 +83,23 @@ export default function RootLayout() {
   }
 
   return (
-    <PersistQueryClientProvider client={queryClient} persistOptions={{ persister: asyncStoragePersister }}>
-      <ThemeProvider>
-        <AuthProvider>
-          <OnboardingProvider>
-            <PremiumProvider>
-              <ThemedStack />
-            </PremiumProvider>
-          </OnboardingProvider>
-        </AuthProvider>
-      </ThemeProvider>
-    </PersistQueryClientProvider>
+    <GestureHandlerRootView style={styles.gestureRoot}>
+      <PersistQueryClientProvider client={queryClient} persistOptions={{ persister: asyncStoragePersister }}>
+        <ThemeProvider>
+          <MusicPreferenceProvider>
+            <AuthProvider>
+              <OnboardingProvider>
+                <PremiumProvider>
+                  <PendingMemorySyncProvider>
+                    <ThemedStack />
+                  </PendingMemorySyncProvider>
+                </PremiumProvider>
+              </OnboardingProvider>
+            </AuthProvider>
+          </MusicPreferenceProvider>
+        </ThemeProvider>
+      </PersistQueryClientProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -115,26 +127,34 @@ function ThemedStack() {
 }
 
 function ReferralLinkCapture() {
+  const router = useRouter();
+
   useEffect(() => {
     function captureReferralCode(event: { url: string | null }) {
-      const url = event.url ?? '';
-      const looksLikeInvite = /[?&]code=/i.test(url) || /\/add-friend(?:[/?#]|$)/i.test(url);
-      if (!looksLikeInvite) return;
-      const code = extractFriendCode(url);
-      if (code && /^[A-Z0-9]{6,12}$/.test(code)) {
-        storeIncomingReferralCode(code).catch(() => {});
+      const link = parseAppDeepLink(event.url);
+      if (link.type === 'password-recovery') {
+        replaceOnce(router, {
+          pathname: '/(auth)/reset-password',
+          params: { recoveryUrl: encodeURIComponent(link.recoveryUrl) },
+        });
+        return;
+      }
+      if (link.type === 'friend-invite') {
+        storeIncomingReferralCode(link.code).catch(() => {});
       }
     }
 
     const sub = Linking.addEventListener('url', captureReferralCode);
     Linking.getInitialURL().then((url) => captureReferralCode({ url }));
     return () => sub.remove();
-  }, []);
+  }, [router]);
 
   return null;
 }
-
 const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
   loadingScreen: {
     flex: 1,
     alignItems: 'center',

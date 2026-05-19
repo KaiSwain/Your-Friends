@@ -4,5 +4,5 @@ import { Redirect } from 'expo-router';
 // Export the index route for the signed-in app group.
 export default function AppIndexRoute() {
   // Always send users to the friends screen as the app landing page.
-  return <Redirect href="/(app)/friends" />;
+  return <Redirect href="/friends" />;
 } // End AppIndexRoute after returning the redirect.

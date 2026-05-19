@@ -8,6 +8,8 @@ import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
 import { useOnboarding } from '../../src/features/onboarding/OnboardingContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
+import { pushOnce } from '../../src/lib/navigationGuard';
+import { protectTextFromFontClipping } from '../../src/theme/fontProtection';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
 
@@ -22,14 +24,14 @@ interface TutorialSlide {
 const SLIDES: TutorialSlide[] = [
   {
     eyebrow: 'Capture',
-    title: 'Snap a polaroid memory.',
-    body: 'Photos develop right in the app — give them a moment to come to life, just like the real thing.',
+    title: 'Snap a memory card.',
+    body: 'Photos develop right in the app — and you can gently shake your phone to help them come to life faster.',
     preview: 'develop',
   },
   {
     eyebrow: 'A timeline',
     title: 'Watch your friendship take shape.',
-    body: 'Your memory wall is a running timeline of polaroids and notes. Tap any card to flip it over and write the why behind the moment.',
+    body: 'Your memory wall is a running timeline of memory cards and notes. Tap any card to flip it over and write the why behind the moment.',
     preview: 'wall',
   },
   {
@@ -61,15 +63,13 @@ export default function OnboardingTutorialScreen() {
       setIndex(index + 1);
       return;
     }
-    // After the final tutorial slide, continue into the personalize-your-profile
-    // steps (photo → fact → paywall). Onboarding only completes at the paywall.
-    router.push('/(onboarding)/profile-photo');
+    pushOnce(router, '/(onboarding)/private-notes');
   }
 
   return (
     <OnboardingFrame
-      step={3}
-      totalSteps={7}
+      step={5}
+      totalSteps={12}
       eyebrow={slide.eyebrow}
       title={slide.title}
       subtitle={slide.body}
@@ -134,6 +134,7 @@ function PolaroidTape({ rotate = '-2deg' }: { rotate?: string }) {
 
 function DevelopAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontSet }) {
   const reveal = useRef(new Animated.Value(0)).current;
+  const shake = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const loop = () => {
@@ -148,13 +149,28 @@ function DevelopAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontS
     loop();
   }, [reveal]);
 
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.delay(650),
+        Animated.timing(shake, { toValue: 1, duration: 70, easing: Easing.linear, useNativeDriver: true }),
+        Animated.timing(shake, { toValue: -1, duration: 80, easing: Easing.linear, useNativeDriver: true }),
+        Animated.timing(shake, { toValue: 0.65, duration: 75, easing: Easing.linear, useNativeDriver: true }),
+        Animated.spring(shake, { toValue: 0, friction: 5, tension: 140, useNativeDriver: true }),
+        Animated.delay(950),
+      ]),
+    ).start();
+  }, [shake]);
+
   const overlayOpacity = reveal.interpolate({ inputRange: [0, 1], outputRange: [0.85, 0] });
   const photoOpacity = reveal.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] });
+  const shakeTranslateX = shake.interpolate({ inputRange: [-1, 0, 1], outputRange: [-9, 0, 9] });
+  const shakeRotate = shake.interpolate({ inputRange: [-1, 0, 1], outputRange: ['-8deg', '-3deg', '5deg'] });
 
   return (
     <View style={animStyles.polaroidStage}>
       <PolaroidTape rotate="-3deg" />
-      <View style={[animStyles.polaroidCard, { transform: [{ rotate: '-3deg' }] }]}>
+      <Animated.View style={[animStyles.polaroidCard, { transform: [{ translateX: shakeTranslateX }, { rotate: shakeRotate }] }]}>
         <View style={[animStyles.photoArea, { backgroundColor: '#1F1B17' }]}>
           <Animated.View
             style={[animStyles.photoFill, { opacity: photoOpacity, backgroundColor: colors.accent }]}
@@ -164,9 +180,13 @@ function DevelopAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontS
           />
           <Ionicons name="image" size={36} color="#FAF6EC" style={animStyles.photoGlyph} />
         </View>
-        <Text style={[animStyles.polaroidCaption, { fontFamily: fonts.handwritten }]}>
+        <Text style={[animStyles.polaroidCaption, { fontFamily: fonts.handwritten }, protectTextFromFontClipping(fonts.handwritten, 14)]}>
           A new memory…
         </Text>
+      </Animated.View>
+      <View style={animStyles.shakeHint}>
+        <Ionicons name="phone-portrait-outline" size={14} color="#FAF6EC" />
+        <Text style={[animStyles.shakeHintText, { fontFamily: fonts.bodyBold }]}>Shake to develop faster</Text>
       </View>
     </View>
   );
@@ -239,7 +259,7 @@ function WallAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontSet 
           <View style={[animStyles.timelinePhoto, { backgroundColor: colors.accent }]}>
             <Ionicons name="image" size={14} color="#FAF6EC" />
           </View>
-          <Text style={[animStyles.timelinePolaroidCaption, { fontFamily: fonts.handwritten }]}>
+          <Text style={[animStyles.timelinePolaroidCaption, { fontFamily: fonts.handwritten }, protectTextFromFontClipping(fonts.handwritten, 10)]}>
             beach day
           </Text>
         </View>
@@ -254,7 +274,7 @@ function WallAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontSet 
           </Text>
         </View>
         <View style={animStyles.timelineNote}>
-          <Text style={[animStyles.timelineNoteText, { fontFamily: fonts.handwritten, color: colors.ink }]}>
+          <Text style={[animStyles.timelineNoteText, { fontFamily: fonts.handwritten, color: colors.ink }, protectTextFromFontClipping(fonts.handwritten, 17)]}>
             “you remembered the salt”
           </Text>
         </View>
@@ -288,6 +308,7 @@ function WallAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontSet 
                   style={[
                     animStyles.timelinePolaroidCaption,
                     { fontFamily: fonts.handwritten, marginTop: 4, textAlign: 'center' },
+                    protectTextFromFontClipping(fonts.handwritten, 10),
                   ]}
                 >
                   first hike
@@ -318,6 +339,7 @@ function WallAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontSet 
                   style={[
                     animStyles.timelinePolaroidCaption,
                     { fontFamily: fonts.handwritten, marginTop: 4, textAlign: 'center', opacity: 0 },
+                    protectTextFromFontClipping(fonts.handwritten, 10),
                   ]}
                 >
                   first hike
@@ -390,7 +412,7 @@ function ShuffleAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontS
           <View style={[animStyles.shufflePolaroidPhoto, { backgroundColor: card.photoColor }]}>
             <Ionicons name="person" size={28} color="#FAF6EC" />
           </View>
-          <Text style={[animStyles.shufflePolaroidName, { fontFamily: fonts.handwritten, color: FRAME_INK }]}>
+          <Text style={[animStyles.shufflePolaroidName, { fontFamily: fonts.handwritten, color: FRAME_INK }, protectTextFromFontClipping(fonts.handwritten, 15)]}>
             {card.name}
           </Text>
         </Animated.View>
@@ -469,7 +491,7 @@ function ShareAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontSet
             <View style={[animStyles.journalPolaroidPhoto, { backgroundColor: colors.accent }]}>
               <Ionicons name="image" size={11} color="#FAF6EC" />
             </View>
-            <Text style={[animStyles.journalPolaroidCaption, { fontFamily: fonts.handwritten }]}>us</Text>
+            <Text style={[animStyles.journalPolaroidCaption, { fontFamily: fonts.handwritten }, protectTextFromFontClipping(fonts.handwritten, 9)]}>us</Text>
           </Animated.View>
         </View>
 
@@ -484,7 +506,7 @@ function ShareAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontSet
               },
             ]}
           >
-            <Text style={[animStyles.journalNoteText, { fontFamily: fonts.handwritten, color: FRAME_INK }]}>
+            <Text style={[animStyles.journalNoteText, { fontFamily: fonts.handwritten, color: FRAME_INK }, protectTextFromFontClipping(fonts.handwritten, 18)]}>
               proud of you
             </Text>
             <View style={[animStyles.journalNoteUnderline, { backgroundColor: FRAME_INK_SOFT }]} />
@@ -570,6 +592,17 @@ const animStyles = StyleSheet.create({
   photoOverlay: { ...StyleSheet.absoluteFillObject },
   photoGlyph: { opacity: 0.85 },
   polaroidCaption: { fontSize: 14, color: FRAME_INK },
+  shakeHint: {
+    marginTop: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(0,0,0,0.22)',
+  },
+  shakeHintText: { fontSize: 11, color: '#FAF6EC' },
 
   // ── Wall (vertical timeline) ──
   timelineStage: {

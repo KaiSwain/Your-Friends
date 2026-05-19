@@ -1,4 +1,4 @@
-import type { CalendarEvent, CalendarEventInput, UpdateCalendarEventInput } from '../../types/domain';
+import type { CalendarEvent, CalendarEventInput, CalendarEventShare, UpdateCalendarEventInput } from '../../types/domain';
 
 export function rowToCalendarEvent(row: any): CalendarEvent {
   return {
@@ -6,7 +6,7 @@ export function rowToCalendarEvent(row: any): CalendarEvent {
     ownerUserId: row.owner_user_id,
     subjectUserId: row.subject_user_id ?? null,
     subjectContactId: row.subject_contact_id ?? null,
-    type: row.event_type ?? 'custom',
+    type: row.event_type ?? 'reminder',
     title: row.title ?? '',
     eventDate: row.event_date,
     eventTime: row.event_time ?? null,
@@ -17,6 +17,34 @@ export function rowToCalendarEvent(row: any): CalendarEvent {
     note: row.note ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? row.created_at,
+    shareId: row.shareId ?? row.share_id ?? null,
+    sharedByUserId: row.sharedByUserId ?? row.shared_by_user_id ?? null,
+    sharedWithUserId: row.sharedWithUserId ?? row.shared_with_user_id ?? null,
+    sharedRemindersEnabled: row.sharedRemindersEnabled ?? row.shared_reminders_enabled ?? undefined,
+  };
+}
+
+export function rowToCalendarEventShare(row: any): CalendarEventShare {
+  return {
+    id: row.id,
+    eventId: row.event_id,
+    ownerUserId: row.owner_user_id,
+    recipientUserId: row.recipient_user_id,
+    remindersEnabled: row.reminders_enabled ?? true,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
+  };
+}
+
+export function rowToSharedCalendarEvent(row: any): CalendarEvent | null {
+  const eventRow = row.calendar_events;
+  if (!eventRow) return null;
+  return {
+    ...rowToCalendarEvent(eventRow),
+    shareId: row.id,
+    sharedByUserId: row.owner_user_id,
+    sharedWithUserId: row.recipient_user_id,
+    sharedRemindersEnabled: row.reminders_enabled ?? true,
   };
 }
 

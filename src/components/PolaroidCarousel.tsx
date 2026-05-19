@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   FlatList,
@@ -13,15 +13,19 @@ import {
   ViewToken,
   useWindowDimensions,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
 import { contrastText, contrastTextSoft } from '../lib/contrastText';
 import { PeopleListItem } from '../types/domain';
+import { protectTextFromFontClipping } from '../theme/fontProtection';
 import type { FontSet } from '../theme/typography';
 import { spacing } from '../theme/tokens';
 import { CardFlourish } from './CardFlourish';
+import { LivePolaroidLayer } from './LivePolaroidLayer';
+import { AvatarInitials, MemoryPhotoEffects, MemoryPhotoGhost } from './memory-card';
+
+const PIN_CAROUSEL_IMAGE = require('../../assets/icons/pin_carosel.png');
 
 interface PolaroidCarouselProps {
   activeIndex: number;
@@ -31,6 +35,7 @@ interface PolaroidCarouselProps {
   onLongPressItem?: (item: PeopleListItem) => void;
   getUnreadCount?: (item: PeopleListItem) => number;
   loop?: boolean;
+  livePolaroidScope?: string;
 }
 
 // Triplicate — just enough to scroll left/right and teleport back to centre copy.
@@ -49,6 +54,7 @@ const BOTTOM_STRIP_PAD_TOP = 6;
 const BOTTOM_STRIP_PAD_BOTTOM = 28;
 const CAROUSEL_NOTE_LINES = 2;
 const CAROUSEL_NOTE_LINE_HEIGHT = 18;
+const PIN_OVERHANG_SPACE = 36;
 
 // Deterministic "random" tilt from item id so it's stable across re-renders.
 function stableTilt(id: string, range: number): number {
@@ -57,18 +63,65 @@ function stableTilt(id: string, range: number): number {
   return ((((h >>> 0) % 1000) / 1000) - 0.5) * range;
 }
 
+function getCarouselImageKey(item: PeopleListItem) {
+  return `${item.id}:${item.imageUri ?? 'none'}`;
+}
+
+function getCarouselCellKey(item: PeopleListItem, index: number) {
+  return `${index}:${item.pinned ? 'pinned' : 'unpinned'}:${getCarouselImageKey(item)}`;
+}
+
+function itemBadgeReservedSpace(items: PeopleListItem[]) {
+  return items.some((item) => item.isPremium) ? 74 : 40;
+}
+
+type ProfileLoadEntry = { key: string; uri?: string };
+
+function buildProfileLoadBatches(items: PeopleListItem[]) {
+  const batches: ProfileLoadEntry[][] = [];
+  const seenKeys = new Set<string>();
+
+  const getEntry = (index: number) => {
+    const item = items[index];
+    if (!item) return null;
+    const key = getCarouselImageKey(item);
+    if (seenKeys.has(key)) return null;
+    seenKeys.add(key);
+    return { key, uri: item.imageUri ?? undefined };
+  };
+
+  const pushBatch = (indexes: number[]) => {
+    const batch: ProfileLoadEntry[] = [];
+    for (const index of indexes) {
+      const entry = getEntry(index);
+      if (entry) batch.push(entry);
+    }
+    if (batch.length > 0) batches.push(batch);
+  };
+
+  pushBatch([0]);
+  for (let distance = 1; distance < items.length; distance++) {
+    pushBatch([distance, items.length - distance]);
+  }
+
+  return batches;
+}
+
 const AnimatedFlatList = Animated.createAnimatedComponent(
   FlatList<PeopleListItem>,
 );
 
-export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressItem, onLongPressItem, getUnreadCount, loop = true }: PolaroidCarouselProps) {
+export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressItem, onLongPressItem, getUnreadCount, loop = true, livePolaroidScope }: PolaroidCarouselProps) {
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
   const [readyImages, setReadyImages] = useState<Record<string, true>>({});
   const [failedImages, setFailedImages] = useState<Record<string, true>>({});
+  const [loadableProfiles, setLoadableProfiles] = useState<Record<string, true>>({});
+  const prefetchedImageKeysRef = useRef(new Set<string>());
   const { width } = useWindowDimensions();
   const flatListRef = useRef<FlatList<PeopleListItem>>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
+  const progressAnim = useRef(new Animated.Value(activeIndex)).current;
 
   const compact = width < 390;
   const cardWidth = Math.min(width * 0.5, 230);
@@ -82,18 +135,65 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
   const noteSlotHeight = CAROUSEL_NOTE_LINES * CAROUSEL_NOTE_LINE_HEIGHT;
   const bottomStripMinHeight = compact ? 92 : 98;
   const cardMinHeight = photoSize + CARD_PAD_TOP + bottomStripMinHeight;
-  const aboveCardSpace = spacing.md;
+  const aboveCardSpace = spacing.md + PIN_OVERHANG_SPACE;
   // Reserve only enough room for the status row / caption without pushing the profile meta too far down.
-  const belowCardSpace = 26;
-  const listHeight = aboveCardSpace + cardMinHeight + belowCardSpace + spacing.xl;
+  const belowCardSpace = itemBadgeReservedSpace(items);
+  const listHeight = aboveCardSpace + cardMinHeight + belowCardSpace;
   const initialsSize = compact ? 44 : 54;
   const nameSize = compact ? 20 : 24;
+  const railWidth = Math.min(width - spacing.xl * 2, 260);
+  const pointerSize = 22;
 
   const count = items.length;
   // Looping only makes sense with more than one card. When disabled (e.g. during
   // a search that has already narrowed the list), render items once so the same
   // card doesn't appear to repeat forever.
   const shouldLoop = loop && count > 1;
+  const profileLoadBatches = useMemo(() => buildProfileLoadBatches(items), [items]);
+
+  useEffect(() => {
+    Animated.spring(progressAnim, {
+      toValue: activeIndex,
+      damping: 18,
+      stiffness: 180,
+      mass: 0.45,
+      useNativeDriver: false,
+    }).start();
+  }, [activeIndex, progressAnim]);
+
+  useEffect(() => {
+    const nextBatch = profileLoadBatches.find((batch) => (
+      !batch.every(({ key, uri }) => loadableProfiles[key] && (!uri || readyImages[key] || failedImages[key]))
+    ));
+    if (!nextBatch || nextBatch.every(({ key }) => loadableProfiles[key])) return;
+
+    setLoadableProfiles((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const { key } of nextBatch) {
+        if (next[key]) continue;
+        next[key] = true;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [failedImages, loadableProfiles, profileLoadBatches, readyImages]);
+
+  useEffect(() => {
+    const imagesToPrefetch: { key: string; uri: string }[] = [];
+
+    for (const batch of profileLoadBatches) {
+      for (const { key, uri } of batch) {
+        if (!uri || !loadableProfiles[key] || readyImages[key] || failedImages[key] || prefetchedImageKeysRef.current.has(key)) continue;
+        imagesToPrefetch.push({ key, uri });
+      }
+    }
+
+    for (const image of imagesToPrefetch) {
+      prefetchedImageKeysRef.current.add(image.key);
+      Image.prefetch(image.uri).catch(() => undefined);
+    }
+  }, [failedImages, loadableProfiles, profileLoadBatches, readyImages]);
 
   // 3 copies of the list when looping: [copy0 | copy1 (centre) | copy2]. When
   // not looping, just the items once.
@@ -146,22 +246,216 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
     },
   ).current;
 
+  const renderCarouselItem = useCallback(({ item, index }: { item: PeopleListItem; index: number }) => {
+    const imageKey = getCarouselImageKey(item);
+    const cardRenderKey = `${item.pinned ? 'pinned' : 'unpinned'}:${imageKey}`;
+    const profileLoadAllowed = !!loadableProfiles[imageKey];
+    const hasRemoteImage = !!item.imageUri && !failedImages[imageKey];
+    const imageReady = !!readyImages[imageKey];
+    const isPolaroidGhost = hasRemoteImage && (!profileLoadAllowed || !imageReady);
+    const showImage = hasRemoteImage && profileLoadAllowed;
+    const inputRange = [
+      (index - 1) * snapInterval,
+      index * snapInterval,
+      (index + 1) * snapInterval,
+    ];
+    const scale = scrollX.interpolate({
+      inputRange,
+      outputRange: [0.85, 1, 0.85],
+      extrapolate: 'clamp',
+    });
+    const cardOpacity = scrollX.interpolate({
+      inputRange,
+      outputRange: [0.65, 1, 0.65],
+      extrapolate: 'clamp',
+    });
+
+    const frameDefault = !item.cardColor;
+    const ct = frameDefault ? FRAME_INK : contrastText(item.cardColor);
+    const ctSoft = frameDefault ? FRAME_INK_SOFT : contrastTextSoft(item.cardColor);
+    const bg = item.cardColor || POLAROID_FRAME;
+    const unread = getUnreadCount?.(item) ?? 0;
+    const isConnected = item.entityType === 'user' || !!item.linkedUserId;
+    const needsLink = !isConnected && !!item.suggestedLinkedUserId;
+    const realIndex = count > 0 ? ((index % count) + count) % count : index;
+    const isFocusedCarouselItem = realIndex === activeIndex;
+
+    const tilt = stableTilt(item.id, 5);
+
+    return (
+      <Animated.View
+        style={{
+          width: snapInterval,
+          alignItems: 'center' as const,
+          transform: [{ scale }],
+          opacity: cardOpacity,
+        }}
+      >
+        <View style={[styles.ambientShadow, item.isPremium && styles.premiumGlow]}>
+          {item.pinned ? (
+            <View style={styles.pinSlot} pointerEvents="none">
+              <Image source={PIN_CAROUSEL_IMAGE} style={styles.carouselPinImage} resizeMode="contain" />
+            </View>
+          ) : (
+            <View style={[styles.tape, isPolaroidGhost && styles.tapeGhost]} />
+          )}
+          <Pressable
+            key={cardRenderKey}
+            renderToHardwareTextureAndroid
+            shouldRasterizeIOS
+            onPress={() => onPressItem(item)}
+            onLongPress={onLongPressItem ? () => onLongPressItem(item) : undefined}
+            style={({ pressed }) => [
+              styles.card,
+              isPolaroidGhost && styles.cardGhost,
+              {
+                width: cardWidth,
+                height: cardMinHeight,
+                backgroundColor: bg,
+                transform: [{ rotate: `${tilt}deg` }, ...(pressed ? [{ scale: 0.985 }] : [])],
+              },
+            ]}
+          >
+            {unread > 0 ? (
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeText}>{unread > 9 ? '9+' : unread}</Text>
+              </View>
+            ) : null}
+            <View style={[styles.photoFrame, isPolaroidGhost && styles.photoFrameGhost, { width: photoSize, height: photoSize }]}> 
+              {showImage ? (
+                <>
+                  {isPolaroidGhost ? (
+                    <MemoryPhotoGhost style={styles.photoGhostSurface} />
+                  ) : null}
+                  <Image
+                    key={imageKey}
+                    source={{ uri: item.imageUri! }}
+                    style={[styles.photoImage, isPolaroidGhost && styles.photoImageLoading]}
+                    fadeDuration={0}
+                    onLoad={() => setReadyImages((prev) => (prev[imageKey] ? prev : { ...prev, [imageKey]: true }))}
+                    onError={() => setFailedImages((prev) => (prev[imageKey] ? prev : { ...prev, [imageKey]: true }))}
+                  />
+                  {!isPolaroidGhost ? (
+                    <>
+                      {item.avatarVideoPath ? (
+                        <LivePolaroidLayer
+                          videoUri={item.avatarVideoPath}
+                          colors={colors}
+                          scope={livePolaroidScope}
+                          playbackEnabled={isFocusedCarouselItem}
+                          forceMuted={item.avatarVideoMuted}
+                        />
+                      ) : null}
+                      <MemoryPhotoEffects />
+                    </>
+                  ) : null}
+                </>
+              ) : isPolaroidGhost ? (
+                <MemoryPhotoGhost style={styles.photoGhostSurface} />
+              ) : (
+                <View style={[styles.photoSurface, { backgroundColor: item.avatarColor }]}> 
+                  <AvatarInitials name={item.title} size={initialsSize * 0.82} />
+                </View>
+              )}
+            </View>
+            <View style={[styles.bottomStrip, { minHeight: bottomStripMinHeight }]}> 
+              {isPolaroidGhost ? (
+                <>
+                  <View style={[styles.ghostTextLine, { width: Math.min(cardWidth * 0.58, 120) }]} />
+                  <View style={styles.ghostNoteSlot}>
+                    <View style={[styles.ghostTextLineSoft, { width: Math.min(cardWidth * 0.72, 150) }]} />
+                    <View style={[styles.ghostTextLineSoft, { width: Math.min(cardWidth * 0.46, 98) }]} />
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={[styles.name, { fontSize: nameSize, color: ct }, protectTextFromFontClipping(fonts.handwrittenBold, nameSize)]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                    {item.title}
+                  </Text>
+                  <View style={[styles.noteSlot, { minHeight: noteSlotHeight }]}> 
+                    {item.note ? (
+                      <Text style={[styles.note, { color: ctSoft }]} numberOfLines={CAROUSEL_NOTE_LINES} adjustsFontSizeToFit minimumFontScale={0.8}>{item.note}</Text>
+                    ) : null}
+                  </View>
+                </>
+              )}
+            </View>
+            {!isPolaroidGhost ? <CardFlourish size={14} color={ctSoft} opacity={0.28} inset={10} /> : null}
+          </Pressable>
+        </View>
+        {isConnected || needsLink ? (
+          <View style={styles.statusRow}>
+            <View style={[styles.statusDot, isConnected ? styles.statusDotOn : styles.statusDotReview]} />
+            <Text style={[styles.statusLabel, needsLink && styles.statusLabelReview]}>
+              {isConnected ? 'Connected' : 'Needs link'}
+            </Text>
+          </View>
+        ) : null}
+        {item.isPremium ? (
+          <View style={styles.premiumBadge}>
+            <Ionicons name="star" size={10} color="#7A5A1A" />
+            <Text style={styles.premiumBadgeText}>PREMIUM</Text>
+          </View>
+        ) : null}
+        {!item.note && item.caption ? (
+          <Text style={styles.caption}>{item.caption}</Text>
+        ) : null}
+      </Animated.View>
+    );
+  }, [
+    bottomStripMinHeight,
+    cardMinHeight,
+    cardWidth,
+    activeIndex,
+    count,
+    failedImages,
+    getUnreadCount,
+    initialsSize,
+    loadableProfiles,
+    nameSize,
+    noteSlotHeight,
+    onLongPressItem,
+    onPressItem,
+    photoSize,
+    readyImages,
+    scrollX,
+    snapInterval,
+    styles,
+  ]);
+
   if (count === 0) return null;
+
+  const progressInputMax = Math.max(count - 1, 1);
+  const fillWidth = progressAnim.interpolate({
+    inputRange: [0, progressInputMax],
+    outputRange: [pointerSize / 2, railWidth],
+    extrapolate: 'clamp',
+  });
+  const pointerTranslateX = progressAnim.interpolate({
+    inputRange: [0, progressInputMax],
+    outputRange: [0, railWidth - pointerSize],
+    extrapolate: 'clamp',
+  });
 
   return (
     <View style={styles.wrapper}>
-      {/* Scroll position indicator — above cards so it's always visible */}
+      {/* Fixed progress rail stays readable even with a large friend list. */}
       <View style={styles.positionRow}>
-        <View style={styles.dotRow}>
-          {items.map((_, i) => (
-            <View
-              key={i}
-              style={[
-                styles.dot,
-                i === activeIndex ? styles.dotActive : styles.dotInactive,
-              ]}
-            />
-          ))}
+        <View style={[styles.progressRail, { width: railWidth }]}>
+          <Animated.View style={[styles.progressFill, { width: fillWidth }]} />
+          <Animated.View
+            style={[
+              styles.progressPointer,
+              {
+                width: pointerSize,
+                height: pointerSize,
+                borderRadius: pointerSize / 2,
+                transform: [{ translateX: pointerTranslateX }],
+              },
+            ]}
+          >
+            <View style={styles.progressPointerCore} />
+          </Animated.View>
         </View>
         <Text style={styles.positionText}>
           {activeIndex + 1} of {count}
@@ -173,7 +467,7 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
         horizontal
         data={loopedData}
         style={[styles.list, { height: listHeight }]}
-        keyExtractor={(_: PeopleListItem, index: number) => String(index)}
+        keyExtractor={getCarouselCellKey}
         getItemLayout={getItemLayout}
         initialScrollIndex={shouldLoop ? count + activeIndex : Math.min(activeIndex, Math.max(0, count - 1))}
         snapToInterval={snapInterval}
@@ -182,136 +476,26 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
         directionalLockEnabled
         nestedScrollEnabled
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: sideInset, paddingTop: aboveCardSpace }}
+        contentContainerStyle={{ paddingHorizontal: sideInset, paddingTop: aboveCardSpace, paddingBottom: belowCardSpace }}
         onMomentumScrollEnd={handleMomentumEnd}
         onViewableItemsChanged={handleViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
+        // Keep every loop cell mounted so the seam teleport (e.g. #1 ↔ last)
+        // is a pure scroll-offset change. With a tight window, the destination
+        // copy's cells were unmounted before the teleport and had to remount in
+        // the same frame, briefly exposing neighbor cells (#2) inside the
+        // current frame as they were torn down. Loop data is bounded
+        // (3 × items) so mounting all of it is cheap.
+        initialNumToRender={loopedData.length}
+        maxToRenderPerBatch={loopedData.length}
+        windowSize={Math.max(3, loopedData.length)}
+        removeClippedSubviews={false}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { x: scrollX } } }],
           { useNativeDriver: true },
         )}
         scrollEventThrottle={16}
-        renderItem={({ item, index }: { item: PeopleListItem; index: number }) => {
-          const imageKey = `${item.id}:${item.imageUri ?? 'none'}`;
-          const imageReady = !item.imageUri || !!readyImages[imageKey] || !!failedImages[imageKey];
-          const showImage = !!item.imageUri && !failedImages[imageKey];
-          const inputRange = [
-            (index - 1) * snapInterval,
-            index * snapInterval,
-            (index + 1) * snapInterval,
-          ];
-          const scale = scrollX.interpolate({
-            inputRange,
-            outputRange: [0.85, 1, 0.85],
-            extrapolate: 'clamp',
-          });
-          const cardOpacity = scrollX.interpolate({
-            inputRange,
-            outputRange: [0.65, 1, 0.65],
-            extrapolate: 'clamp',
-          });
-
-          const frameDefault = !item.cardColor;
-          const ct = frameDefault ? FRAME_INK : contrastText(item.cardColor);
-          const ctSoft = frameDefault ? FRAME_INK_SOFT : contrastTextSoft(item.cardColor);
-          const bg = item.cardColor || POLAROID_FRAME;
-          const unread = getUnreadCount?.(item) ?? 0;
-          const isConnected = item.entityType === 'user' || !!item.linkedUserId;
-
-          // Stable per-card random tilt and subtle photo micro-tilt.
-          const tilt = stableTilt(item.id, 5);
-          const photoTilt = stableTilt(item.id + '_p', 0.8);
-
-          return (
-            <Animated.View
-              style={{
-                width: snapInterval,
-                alignItems: 'center' as const,
-                transform: [{ scale }],
-                opacity: imageReady ? cardOpacity : 0,
-              }}
-            >
-              <View style={[styles.ambientShadow, item.isPremium && styles.premiumGlow]}>
-                <View style={styles.tape} />
-                <Pressable
-                  onPress={() => onPressItem(item)}
-                  onLongPress={onLongPressItem ? () => onLongPressItem(item) : undefined}
-                  style={({ pressed }) => [
-                    styles.card,
-                    { width: cardWidth, height: cardMinHeight, backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] },
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  {item.pinned && (
-                    <View style={styles.pinBadge}>
-                      <Ionicons name="pin" size={16} color="#E74C3C" />
-                    </View>
-                  )}
-                  {unread > 0 ? (
-                    <View style={styles.notifBadge}>
-                      <Text style={styles.notifBadgeText}>{unread > 9 ? '9+' : unread}</Text>
-                    </View>
-                  ) : null}
-                  <View style={[styles.photoFrame, { width: photoSize, height: photoSize, transform: [{ rotate: `${photoTilt}deg` }] }]}>
-                    {showImage ? (
-                      <>
-                        <Image
-                          source={{ uri: item.imageUri! }}
-                          style={styles.photoImage}
-                          fadeDuration={0}
-                          onLoad={() => setReadyImages((prev) => (prev[imageKey] ? prev : { ...prev, [imageKey]: true }))}
-                          onError={() => setFailedImages((prev) => (prev[imageKey] ? prev : { ...prev, [imageKey]: true }))}
-                        />
-                        <View style={styles.warmBaseTint} />
-                        <LinearGradient
-                          colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0)', 'rgba(255,255,255,0.06)']}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 1 }}
-                          style={styles.photoSheen}
-                        />
-                        <View style={styles.insetShadowTop} />
-                        <View style={styles.insetShadowLeft} />
-                      </>
-                    ) : (
-                      <View style={[styles.photoSurface, { backgroundColor: item.avatarColor }]}>
-                        <Text style={[styles.photoInitials, { fontSize: initialsSize }]}>
-                          {getInitials(item.title)}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                  <View style={[styles.bottomStrip, { minHeight: bottomStripMinHeight }]}>
-                    <Text style={[styles.name, { fontSize: nameSize, color: ct }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                      {item.title}
-                    </Text>
-                    <View style={[styles.noteSlot, { minHeight: noteSlotHeight }]}> 
-                      {item.note ? (
-                        <Text style={[styles.note, { color: ctSoft }]} numberOfLines={CAROUSEL_NOTE_LINES} adjustsFontSizeToFit minimumFontScale={0.8}>{item.note}</Text>
-                      ) : null}
-                    </View>
-                  </View>
-                  <CardFlourish size={14} color={ctSoft} opacity={0.28} inset={10} />
-                </Pressable>
-              </View>
-              {/* Status row — only shown when actually connected */}
-              {isConnected ? (
-                <View style={styles.statusRow}>
-                  <View style={[styles.statusDot, styles.statusDotOn]} />
-                  <Text style={styles.statusLabel}>Connected</Text>
-                </View>
-              ) : null}
-              {item.isPremium ? (
-                <View style={styles.premiumBadge}>
-                  <Ionicons name="star" size={10} color="#7A5A1A" />
-                  <Text style={styles.premiumBadgeText}>PREMIUM</Text>
-                </View>
-              ) : null}
-              {!item.note && item.caption ? (
-                <Text style={styles.caption}>{item.caption}</Text>
-              ) : null}
-            </Animated.View>
-          );
-        }}
+        renderItem={renderCarouselItem}
       />
     </View>
   );
@@ -335,24 +519,39 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       alignItems: 'center',
       gap: spacing.xs,
     },
-    dotRow: {
-      flexDirection: 'row',
-      gap: 8,
-      alignItems: 'center',
+    progressRail: {
+      height: 22,
+      borderRadius: 999,
+      backgroundColor: colors.inkMuted + '24',
+      borderWidth: 1,
+      borderColor: colors.line,
+      justifyContent: 'center',
+      overflow: 'visible',
     },
-    dot: {
+    progressFill: {
+      position: 'absolute',
+      left: 0,
+      height: 6,
+      borderRadius: 999,
+      backgroundColor: colors.accent,
+    },
+    progressPointer: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.paper,
+      borderWidth: 2,
+      borderColor: colors.accent,
+      shadowColor: colors.accent,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.28,
+      shadowRadius: 5,
+      elevation: 4,
+    },
+    progressPointerCore: {
       width: 8,
       height: 8,
       borderRadius: 4,
-    },
-    dotActive: {
       backgroundColor: colors.accent,
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-    },
-    dotInactive: {
-      backgroundColor: colors.inkMuted,
     },
     positionText: {
       fontFamily: fonts.bodyMedium,
@@ -376,8 +575,15 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       shadowOpacity: 0.25,
       shadowRadius: 3,
       elevation: 5,
+      backfaceVisibility: 'hidden',
     },
-    pressed: { transform: [{ scale: 0.985 }] },
+    cardGhost: {
+      backgroundColor: 'rgba(245,242,234,0.58)',
+      borderColor: 'rgba(180,170,155,0.22)',
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      opacity: 0.82,
+    },
     tape: {
       width: 48,
       height: 14,
@@ -386,6 +592,28 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       alignSelf: 'center',
       marginBottom: -7,
       zIndex: 1,
+    },
+    tapeGhost: {
+      backgroundColor: 'rgba(255,255,220,0.18)',
+    },
+    pinSlot: {
+      width: 48,
+      height: 14,
+      alignSelf: 'center',
+      alignItems: 'center',
+      marginBottom: -7,
+      zIndex: 4,
+      overflow: 'visible' as const,
+    },
+    carouselPinImage: {
+      position: 'absolute' as const,
+      top: -28,
+      width: 58,
+      height: 58,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.16,
+      shadowRadius: 4,
     },
     ambientShadow: {
       shadowColor: '#000',
@@ -423,7 +651,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       letterSpacing: 1.4,
       color: '#7A5A1A',
     },
-    pinBadge: { position: 'absolute', top: 6, right: 6, zIndex: 1 },
     notifBadge: {
       position: 'absolute',
       top: -13,
@@ -455,6 +682,34 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       overflow: 'hidden',
       borderWidth: 1,
       borderColor: 'rgba(0,0,0,0.045)',
+      backfaceVisibility: 'hidden',
+    },
+    photoFrameGhost: {
+      borderColor: 'rgba(0,0,0,0.025)',
+      backgroundColor: 'rgba(237,232,221,0.58)',
+    },
+    photoGhostSurface: {
+      ...StyleSheet.absoluteFillObject,
+      overflow: 'hidden',
+      backgroundColor: '#DCD7CC',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    photoGhostBloom: {
+      position: 'absolute' as const,
+      width: '74%',
+      height: '74%',
+      borderRadius: 999,
+      backgroundColor: 'rgba(255,255,255,0.22)',
+      transform: [{ rotate: '-8deg' }],
+    },
+    photoGhostBand: {
+      position: 'absolute' as const,
+      left: -18,
+      right: -18,
+      height: '38%',
+      backgroundColor: 'rgba(255,255,255,0.12)',
+      transform: [{ rotate: '-12deg' }],
     },
     photoSurface: {
       flex: 1,
@@ -467,6 +722,10 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: '100%',
       height: '100%',
       transform: [{ scale: 1.01 }],
+      backfaceVisibility: 'hidden',
+    },
+    photoImageLoading: {
+      opacity: 0,
     },
     warmBaseTint: {
       ...StyleSheet.absoluteFillObject,
@@ -508,8 +767,9 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       shadowRadius: 3,
     },
     photoInitials: {
-      fontFamily: fonts.heading,
+      fontFamily: fonts.bodyBold,
       color: colors.white,
+      textAlign: 'center',
     },
     bottomStrip: {
       alignSelf: 'stretch',
@@ -520,6 +780,24 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       gap: 4,
       overflow: 'visible' as const,
       justifyContent: 'flex-start',
+    },
+    ghostTextLine: {
+      height: 12,
+      borderRadius: 999,
+      backgroundColor: 'rgba(83,74,62,0.12)',
+      marginTop: 5,
+    },
+    ghostNoteSlot: {
+      minHeight: 36,
+      gap: 7,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingTop: 4,
+    },
+    ghostTextLineSoft: {
+      height: 8,
+      borderRadius: 999,
+      backgroundColor: 'rgba(83,74,62,0.08)',
     },
     noteSlot: {
       width: '100%',
@@ -538,6 +816,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontSize: 13,
       color: colors.accent,
       letterSpacing: 0.3,
+      ...protectTextFromFontClipping(fonts.handwritten, 13),
     },
     note: {
       fontFamily: fonts.handwritten,
@@ -548,6 +827,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: '100%',
       paddingHorizontal: 8,
       overflow: 'visible' as const,
+      ...protectTextFromFontClipping(fonts.handwritten, 14),
     },
     statusRow: {
       flexDirection: 'row',
@@ -563,6 +843,9 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     statusDotOn: {
       backgroundColor: '#34C759',
     },
+    statusDotReview: {
+      backgroundColor: colors.accent,
+    },
     statusDotOff: {
       backgroundColor: '#8E8E93',
     },
@@ -572,13 +855,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       color: colors.inkSoft,
       letterSpacing: 0.3,
     },
+    statusLabelReview: {
+      color: colors.accent,
+    },
   });
 
-function getInitials(value: string) {
-  return value
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase())
-    .join('');
-}

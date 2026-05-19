@@ -7,6 +7,7 @@ import { ActionButton } from '../../src/components/ActionButton';
 import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
+import { pushOnce } from '../../src/lib/navigationGuard';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
 
@@ -47,12 +48,12 @@ export default function OnboardingPrivacyScreen() {
   return (
     <OnboardingFrame
       step={2}
-      totalSteps={7}
+      totalSteps={12}
       eyebrow="Your data is yours"
       title="A quiet, private corner of the internet."
       subtitle="Before we go further, here's how Your Friends treats what you put in it."
       footer={
-        <ActionButton label="I get it — keep going" onPress={() => router.push('/(onboarding)/tutorial')} />
+        <ActionButton label="I get it — keep going" onPress={() => pushOnce(router, '/(onboarding)/calendar-intro')} />
       }
     >
       <View style={styles.list}>

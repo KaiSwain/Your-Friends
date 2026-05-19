@@ -6,7 +6,7 @@ import { useOnboarding } from '../src/features/onboarding/OnboardingContext';
 import { useTheme } from '../src/features/theme/ThemeContext';
 
 export default function IndexRoute() {
-  const { isAuthenticated, loading } = useAuth();
+  const { currentUser, isAuthenticated, loading } = useAuth();
   const { loaded: onboardingLoaded, hasCompletedOnboarding } = useOnboarding();
   const { colors } = useTheme();
 
@@ -20,7 +20,8 @@ export default function IndexRoute() {
 
   if (!isAuthenticated) return <Redirect href="/(auth)/sign-in" />;
   if (!hasCompletedOnboarding) return <Redirect href="/(onboarding)/welcome" />;
-  return <Redirect href="/(app)/friends" />;
+  if (!currentUser?.birthday) return <Redirect href="/(onboarding)/birthday" />;
+  return <Redirect href="/friends" />;
 }
 
 const styles = StyleSheet.create({
