@@ -2,18 +2,20 @@ import { Ionicons } from '@expo/vector-icons';
 import Slider from '@react-native-community/slider';
 import { Redirect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../src/components/ActionButton';
 import { AppScreen } from '../../src/components/AppScreen';
+import { CustomThemeVisualizer } from '../../src/components/CustomThemeVisualizer';
 import { SectionCard } from '../../src/components/SectionCard';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { MusicOpenPreference, useMusicPreference } from '../../src/features/music/MusicPreferenceContext';
 import { usePremium } from '../../src/features/premium/PremiumContext';
 import { DEFAULT_BACKGROUND_BLUR, MAX_BACKGROUND_BLUR, MIN_BACKGROUND_BLUR, useTheme } from '../../src/features/theme/ThemeContext';
+import { createCustomThemePair, type CustomThemeFontKey, type CustomThemeSettings } from '../../src/features/theme/customTheme';
 import type { ThemeMode } from '../../src/features/theme/themes';
-import { themeNames, themes } from '../../src/features/theme/themes';
+import { featuredThemeNames, legacyThemeNames, themes } from '../../src/features/theme/themes';
 import { backOnce, pushOnce, replaceOnce } from '../../src/lib/navigationGuard';
 import { showErrorAlert } from '../../src/lib/alertUtils';
 import { showProfileBackgroundPaywall } from '../../src/lib/premiumGates';
@@ -24,11 +26,11 @@ import type { ColorTokens } from '../../src/features/theme/themes';
 import { protectTextFromFontClipping } from '../../src/theme/fontProtection';
 import type { FontSet } from '../../src/theme/typography';
 import { fontSets } from '../../src/theme/typography';
-import { radius, spacing } from '../../src/theme/tokens';
+import { radius, semanticColors, spacing } from '../../src/theme/tokens';
 
 const modeOptions: { label: string; value: ThemeMode; recommended?: boolean; notRecommended?: boolean }[] = [
   { label: 'Light', value: 'light', recommended: true },
-  { label: 'Dark', value: 'dark', notRecommended: true },
+  { label: 'Dark', value: 'dark' },
   { label: 'System', value: 'system' },
 ];
 
@@ -37,21 +39,33 @@ const musicOpenOptions: { label: string; value: MusicOpenPreference; icon: keyof
   { label: 'Spotify', value: 'spotify', icon: 'radio' },
 ];
 
-function capitalize(s: string) {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
+const customFontOptions: { label: string; value: CustomThemeFontKey; sampleTheme: string }[] = [
+  { label: 'Classic', value: 'classic', sampleTheme: 'default' },
+  { label: 'Modern', value: 'modern', sampleTheme: 'neon' },
+  { label: 'Playful', value: 'playful', sampleTheme: 'bubblegum' },
+  { label: 'Editorial', value: 'editorial', sampleTheme: 'vintage' },
+];
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { currentUser, signOut, updateProfile, deleteAccount } = useAuth();
   const { hasTheme, isPremium } = usePremium();
-  const { backgroundBlur, colors, fonts, themeName, themeMode, setBackgroundBlur, setThemeName, setThemeMode } = useTheme();
+  const { backgroundBlur, colors, customTheme, fonts, resolvedMode, themeName, themeMode, setBackgroundBlur, setCustomTheme, setThemeName, setThemeMode } = useTheme();
   const { musicOpenPreference, setMusicOpenPreference } = useMusicPreference();
-  const availableThemeNames = useMemo(() => themeNames.filter((name) => hasTheme(name)), [hasTheme]);
+  const availableFeaturedThemeNames = useMemo(() => featuredThemeNames.filter((name) => hasTheme(name)), [hasTheme]);
+  const availableLegacyThemeNames = useMemo(() => legacyThemeNames.filter((name) => hasTheme(name)), [hasTheme]);
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
+  const [draftCustomTheme, setDraftCustomTheme] = useState(customTheme);
+  const customThemePair = useMemo(() => createCustomThemePair(draftCustomTheme), [draftCustomTheme]);
+  const customThemePreviewColors = customThemePair[resolvedMode];
   const [profileBgImageUri, setProfileBgImageUri] = useState<string | null>(null);
   const [backgroundSaving, setBackgroundSaving] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [showCustomThemeFineTune, setShowCustomThemeFineTune] = useState(false);
+
+  useEffect(() => {
+    setDraftCustomTheme(customTheme);
+  }, [customTheme]);
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   const profileBackgroundUri = profileBgImageUri ?? currentUser.profileBgImagePath ?? null;
@@ -100,6 +114,17 @@ export default function SettingsScreen() {
     } finally {
       setBackgroundSaving(false);
     }
+  }
+
+  function previewCustomTheme(updates: Partial<CustomThemeSettings>) {
+    setDraftCustomTheme((current) => ({ ...current, ...updates }));
+  }
+
+  function commitCustomTheme(updates: Partial<CustomThemeSettings> = {}) {
+    const next = { ...draftCustomTheme, ...updates };
+    setDraftCustomTheme(next);
+    setCustomTheme(next);
+    if (themeName !== 'custom') setThemeName('custom');
   }
 
   function confirmDeleteAccount() {
@@ -158,6 +183,18 @@ export default function SettingsScreen() {
       <Text style={styles.title}>Settings</Text>
       <Text style={styles.subtitle}>Signed in as {currentUser.displayName}</Text>
 
+      {currentUser.isOfficial && currentUser.isTeamAdmin ? (
+        <SectionCard eyebrow="Team" title="Admin">
+          <LegalRow
+            colors={colors}
+            fonts={fonts}
+            icon="megaphone-outline"
+            label="Broadcast from Your Friends"
+            onPress={() => pushOnce(router, '/(app)/admin/broadcast')}
+          />
+        </SectionCard>
+      ) : null}
+
       <SectionCard eyebrow="Appearance" title="Color Mode">
         <View style={styles.optionRow}>
           {modeOptions.map((opt) => (
@@ -166,7 +203,7 @@ export default function SettingsScreen() {
                 {opt.recommended ? (
                   <Text style={styles.recommendedTag}>Recommended</Text>
                 ) : opt.notRecommended ? (
-                  <Text style={styles.notRecommendedTag}>Not recommended</Text>
+                  <Text style={styles.notRecommendedTag}></Text>
                 ) : null}
               </View>
               <Pressable
@@ -186,21 +223,113 @@ export default function SettingsScreen() {
       </SectionCard>
 
       <SectionCard eyebrow="Appearance" title="Theme">
+        <Text style={styles.themeGroupLabel}>Featured themes</Text>
         <View style={styles.themeGrid}>
-          {availableThemeNames.map((name) => (
+          {availableFeaturedThemeNames.map((name) => (
             <Pressable
               key={name}
               onPress={() => setThemeName(name)}
               style={[styles.themeTile, themeName === name && styles.themeTileActive]}
               accessibilityRole="radio"
               accessibilityState={{ selected: themeName === name }}
-              accessibilityLabel={`${capitalize(name)} theme`}
+              accessibilityLabel={`${themes[name].label} theme`}
             >
-              <View style={[styles.themeSwatch, { backgroundColor: themes[name].swatch }]} />
-              <Text style={[styles.themeTileLabel, { fontFamily: (fontSets[name] ?? fontSets.default).heading }, protectTextFromFontClipping((fontSets[name] ?? fontSets.default).heading, 13)]}>{capitalize(name)}</Text>
+              <View style={[styles.themeSwatch, { backgroundColor: name === 'custom' ? customThemePreviewColors.accent : themes[name].swatch }]} />
+              <Text style={[styles.themeTileLabel, themeName === name && styles.themeTileLabelActive, { fontFamily: (fontSets[name] ?? fontSets.default).heading }, protectTextFromFontClipping((fontSets[name] ?? fontSets.default).heading, 13)]}>{themes[name].label}</Text>
             </Pressable>
           ))}
         </View>
+        <View style={[styles.customThemePreview, { backgroundColor: customThemePreviewColors.canvas, borderColor: themeName === 'custom' ? customThemePreviewColors.accent : colors.line }]}>
+          <View style={styles.customThemePreviewCopy}>
+            <Text style={[styles.customThemePreviewTitle, { color: customThemePreviewColors.ink, fontFamily: fontSets[customFontOptions.find((option) => option.value === draftCustomTheme.fontKey)?.sampleTheme ?? 'default'].heading }]}>
+              Your custom theme
+            </Text>
+            <Text style={[styles.customThemePreviewSubtitle, { color: customThemePreviewColors.inkSoft }]}>
+              Tune colors and typography. Text colors are generated for readability.
+            </Text>
+          </View>
+          <View style={[styles.customThemeAccentOrb, { backgroundColor: customThemePreviewColors.accent }]} />
+        </View>
+        <CustomThemeVisualizer
+          colors={colors}
+          fonts={fonts}
+          onSelectAccentHue={(accentHue) => commitCustomTheme({ accentHue })}
+          onSelectBackgroundHue={(backgroundHue) => commitCustomTheme({ backgroundHue })}
+          previewColors={customThemePreviewColors}
+          settings={draftCustomTheme}
+        />
+        <View style={styles.customThemeFontGrid}>
+          {customFontOptions.map((option) => {
+            const active = draftCustomTheme.fontKey === option.value;
+            const optionFonts = fontSets[option.sampleTheme] ?? fontSets.default;
+            return (
+              <Pressable
+                key={option.value}
+                onPress={() => commitCustomTheme({ fontKey: option.value })}
+                style={[styles.customThemeFontPill, active && styles.customThemeFontPillActive]}
+              >
+                <Text style={[styles.customThemeFontLabel, active && styles.customThemeFontLabelActive, { fontFamily: optionFonts.heading }, protectTextFromFontClipping(optionFonts.heading, 13)]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Pressable onPress={() => setShowCustomThemeFineTune((open) => !open)} style={styles.fineTuneToggle} accessibilityRole="button">
+          <Text style={styles.fineTuneToggleLabel}>Fine tune</Text>
+          <Ionicons name={showCustomThemeFineTune ? 'chevron-up' : 'chevron-down'} size={16} color={colors.inkSoft} />
+        </Pressable>
+        {showCustomThemeFineTune ? (
+          <View style={styles.customThemeSliderPanel}>
+            <CustomThemeSlider
+              colors={colors}
+              fonts={fonts}
+              label="Accent color"
+              maximumValue={359}
+              value={draftCustomTheme.accentHue}
+              onSlidingComplete={(accentHue) => commitCustomTheme({ accentHue })}
+              onValueChange={(accentHue) => previewCustomTheme({ accentHue })}
+            />
+            <CustomThemeSlider
+              colors={colors}
+              fonts={fonts}
+              label="Background hue"
+              maximumValue={359}
+              value={draftCustomTheme.backgroundHue}
+              onSlidingComplete={(backgroundHue) => commitCustomTheme({ backgroundHue })}
+              onValueChange={(backgroundHue) => previewCustomTheme({ backgroundHue })}
+            />
+            <CustomThemeSlider
+              colors={colors}
+              fonts={fonts}
+              label="Background intensity"
+              maximumValue={100}
+              value={draftCustomTheme.backgroundIntensity}
+              onSlidingComplete={(backgroundIntensity) => commitCustomTheme({ backgroundIntensity })}
+              onValueChange={(backgroundIntensity) => previewCustomTheme({ backgroundIntensity })}
+            />
+          </View>
+        ) : null}
+        {availableLegacyThemeNames.length > 0 ? (
+          <>
+            <Text style={styles.themeGroupLabel}>Advanced / legacy themes</Text>
+            <View style={styles.themeGrid}>
+              {availableLegacyThemeNames.map((name) => (
+                <Pressable
+                  key={name}
+                  onPress={() => setThemeName(name)}
+                  style={[styles.themeTile, styles.themeTileLegacy, themeName === name && styles.themeTileActive]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: themeName === name }}
+                  accessibilityLabel={`${themes[name].label} theme`}
+                >
+                  <View style={[styles.themeSwatch, { backgroundColor: themes[name].swatch }]} />
+                  <Text style={[styles.themeTileLabel, themeName === name && styles.themeTileLabelActive, { fontFamily: (fontSets[name] ?? fontSets.default).heading }, protectTextFromFontClipping((fontSets[name] ?? fontSets.default).heading, 13)]}>{themes[name].label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </>
+        ) : null}
       </SectionCard>
 
       <SectionCard eyebrow="Appearance" title="Background Photo">
@@ -210,7 +339,7 @@ export default function SettingsScreen() {
             <Image source={{ uri: profileBackgroundUri }} style={styles.backgroundPhotoPreview} resizeMode="cover" />
           ) : (
             <View style={styles.backgroundPhotoEmpty}>
-              <Ionicons name="image-outline" size={28} color={colors.inkMuted} />
+              <Ionicons name="image-outline" size={28} color={colors.ink} />
               <Text style={styles.backgroundPhotoEmptyText}>No background photo</Text>
             </View>
           )}
@@ -290,16 +419,17 @@ export default function SettingsScreen() {
         <View style={styles.optionRow}>
           {musicOpenOptions.map((opt) => {
             const active = musicOpenPreference === opt.value;
+            const serviceColor = getMusicPreferenceColor(opt.value);
             return (
               <Pressable
                 key={opt.value}
                 onPress={() => setMusicOpenPreference(opt.value)}
-                style={[styles.musicOption, active && styles.optionPillActive]}
+                style={[styles.musicOption, active && { backgroundColor: serviceColor, borderColor: serviceColor }]}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: active }}
                 accessibilityLabel={`Open songs in ${opt.label}`}
               >
-                <Ionicons name={opt.icon} size={17} color={active ? colors.white : colors.inkSoft} />
+                <Ionicons name={opt.icon} size={17} color={active ? colors.white : serviceColor} />
                 <Text style={[styles.optionLabel, active && styles.optionLabelActive]}>{opt.label}</Text>
               </Pressable>
             );
@@ -312,7 +442,7 @@ export default function SettingsScreen() {
           colors={colors}
           fonts={fonts}
           icon="mail-outline"
-          label="Support Email"
+          label="Support"
           onPress={() => void openExternalLink(LEGAL_LINKS.supportEmail)}
         />
         <LegalRow
@@ -365,10 +495,10 @@ function LegalRow({
   return (
     <Pressable onPress={onPress} style={styles.row} accessibilityRole="link">
       <View style={styles.rowLeft}>
-        <Ionicons name={icon} size={19} color={colors.inkSoft} />
+        <Ionicons name={icon} size={19} color={colors.ink} />
         <Text style={styles.rowLabel}>{label}</Text>
       </View>
-      <Ionicons name="chevron-forward" size={18} color={colors.inkMuted} />
+      <Ionicons name="chevron-forward" size={18} color={colors.ink} />
     </Pressable>
   );
 }
@@ -396,10 +526,54 @@ const makeLegalRowStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
   });
 
+function getMusicPreferenceColor(preference: MusicOpenPreference) {
+  return preference === 'spotify' ? semanticColors.spotifyGreen : semanticColors.appleMusicOrange;
+}
+
+function CustomThemeSlider({
+  colors,
+  fonts,
+  label,
+  maximumValue,
+  onSlidingComplete,
+  onValueChange,
+  value,
+}: {
+  colors: ColorTokens;
+  fonts: FontSet;
+  label: string;
+  maximumValue: number;
+  onSlidingComplete: (value: number) => void;
+  onValueChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <View style={{ gap: spacing.xs }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text style={{ fontFamily: fonts.bodyBold, fontSize: 13, color: colors.ink }}>{label}</Text>
+        <Text style={{ fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent }}>{Math.round(value)}</Text>
+      </View>
+      <Slider
+        value={value}
+        minimumValue={0}
+        maximumValue={maximumValue}
+        step={1}
+        onSlidingComplete={onSlidingComplete}
+        onValueChange={onValueChange}
+        minimumTrackTintColor={colors.accent}
+        maximumTrackTintColor={colors.line}
+        thumbTintColor={colors.accent}
+        accessibilityLabel={label}
+        accessibilityValue={{ min: 0, max: maximumValue, now: Math.round(value) }}
+      />
+    </View>
+  );
+}
+
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
-    backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     title: { fontFamily: fonts.heading, fontSize: 32, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 32) },
     subtitle: { fontFamily: fonts.body, fontSize: 15, color: colors.inkSoft },
     optionRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-end' },
@@ -440,14 +614,73 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       gap: spacing.xs,
     },
     themeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    themeGroupLabel: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 11,
+      letterSpacing: 0.7,
+      textTransform: 'uppercase',
+      color: colors.inkMuted,
+      marginTop: spacing.xs,
+    },
     themeTile: {
       flexDirection: 'row', alignItems: 'center',
       paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md,
       borderWidth: 1, borderColor: colors.line,
     },
+    themeTileLegacy: { opacity: 0.82 },
     themeTileActive: { backgroundColor: colors.accent, borderColor: colors.accent },
     themeSwatch: { width: 10, height: 10, borderRadius: 5, marginRight: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.15)' },
     themeTileLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.ink },
+    themeTileLabelActive: { color: colors.white },
+    customThemePreview: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.md,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      padding: spacing.md,
+    },
+    customThemePreviewCopy: { flex: 1, gap: 3 },
+    customThemePreviewTitle: { fontSize: 18, ...protectTextFromFontClipping(fonts.heading, 18) },
+    customThemePreviewSubtitle: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17 },
+    customThemeAccentOrb: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      borderWidth: 3,
+      borderColor: colors.white,
+    },
+    customThemeFontGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    customThemeFontPill: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+    },
+    customThemeFontPillActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    customThemeFontLabel: { fontSize: 13, color: colors.ink },
+    customThemeFontLabelActive: { color: colors.white },
+    fineTuneToggle: {
+      minHeight: 40,
+      borderRadius: radius.pill,
+      backgroundColor: colors.paperMuted,
+      paddingHorizontal: spacing.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    fineTuneToggleLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.inkSoft },
+    customThemeSliderPanel: {
+      gap: spacing.md,
+      borderRadius: radius.lg,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.line,
+      backgroundColor: colors.paperMuted,
+      padding: spacing.md,
+    },
     backgroundHint: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.inkSoft },
     backgroundPhotoCard: {
       width: '58%',

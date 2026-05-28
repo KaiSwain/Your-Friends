@@ -1,8 +1,9 @@
 import { createNotification } from '../../lib/notifications';
+import { getPromptExpiresAt, isPromptExpired } from '../../lib/promptExpiration';
 import { supabase } from '../../lib/supabase';
 import type { CompleteMovieReviewRequestInput, CreateMovieReviewRequestInput, MovieReviewRequest, WallPost } from '../../types/domain';
 import { rowToWallPost } from '../social/mappers';
-import { movieToDbColumns, rowToMovieReviewRequest } from './mappers';
+import { moviePromptVoiceToDbColumns, movieReviewVoiceToDbColumns, movieReviewVoiceToWallPostDbColumns, movieToDbColumns, rowToMovieReviewRequest } from './mappers';
 
 export const movieQueryKeys = {
   requests: ['movies', 'requests'] as const,
@@ -18,6 +19,7 @@ export async function fetchMovieReviewRequests(): Promise<MovieReviewRequest[]> 
 }
 
 export async function createMovieReviewRequest(requesterUserId: string, input: CreateMovieReviewRequestInput): Promise<MovieReviewRequest> {
+  const now = new Date().toISOString();
   const { data, error } = await supabase
     .from('movie_review_requests')
     .insert({
@@ -25,7 +27,9 @@ export async function createMovieReviewRequest(requesterUserId: string, input: C
       recipient_user_id: input.recipientUserId,
       ...movieToDbColumns(input.movie),
       prompt: cleanOptionalText(input.prompt),
+      ...moviePromptVoiceToDbColumns(input.promptVoice),
       status: 'pending',
+      expires_at: getPromptExpiresAt(now),
     })
     .select()
     .single();
@@ -67,9 +71,9 @@ export async function cancelMovieReviewRequest(requestId: string, requesterUserI
 }
 
 export async function completeMovieReviewRequest(reviewerUserId: string, input: CompleteMovieReviewRequestInput): Promise<{ request: MovieReviewRequest; wallPost: WallPost }> {
-  const body = input.body.trim();
+  const body = cleanOptionalText(input.body, 1200) ?? '';
+  const reviewVoice = input.voice ?? null;
   const rating = Math.round(input.rating * 2) / 2;
-  if (!body) throw new Error('Write a quick review before sending.');
   if (rating < 0.5 || rating > 5 || Math.abs(rating - input.rating) > 0.001) throw new Error('Choose a rating from half a star to 5 stars.');
 
   const { data: requestRow, error: requestError } = await supabase
@@ -82,6 +86,7 @@ export async function completeMovieReviewRequest(reviewerUserId: string, input: 
 
   if (requestError || !requestRow) throw new Error(requestError?.message ?? 'Movie request is no longer available.');
   const request = rowToMovieReviewRequest(requestRow);
+  if (isPromptExpired(request)) throw new Error('This movie prompt has expired.');
 
   const { data: wallPostRow, error: wallPostError } = await supabase
     .from('wall_posts')
@@ -102,6 +107,10 @@ export async function completeMovieReviewRequest(reviewerUserId: string, input: 
       movie_vote_average: request.movie.voteAverage,
       movie_review_rating: rating,
       movie_review_request_id: request.id,
+      prompt_text: request.prompt ?? (request.promptVoice ? 'Voice prompt' : null),
+      prompt_type: request.prompt || request.promptVoice ? 'text' : null,
+      ...moviePromptVoiceToDbColumns(request.promptVoice),
+      ...movieReviewVoiceToWallPostDbColumns(reviewVoice),
     })
     .select()
     .single();
@@ -115,6 +124,7 @@ export async function completeMovieReviewRequest(reviewerUserId: string, input: 
       status: 'completed',
       review_rating: rating,
       review_body: body,
+      ...movieReviewVoiceToDbColumns(reviewVoice),
       completed_wall_post_id: wallPost.id,
       completed_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -151,9 +161,9 @@ async function getDisplayName(userId: string) {
   return data?.display_name || 'Someone';
 }
 
-function cleanOptionalText(value: string | null | undefined) {
+function cleanOptionalText(value: string | null | undefined, maxLength = 240) {
   const trimmed = value?.trim();
-  return trimmed ? trimmed.slice(0, 240) : null;
+  return trimmed ? trimmed.slice(0, maxLength) : null;
 }
 
 function isMissingTable(message: string, tableName: string) {

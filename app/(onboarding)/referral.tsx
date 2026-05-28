@@ -40,14 +40,14 @@ export default function OnboardingReferralScreen() {
     if (!selected || busy) return;
     setBusy(true);
     await setReferralSource(selected);
-    pushOnce(router, '/(onboarding)/privacy');
+    pushOnce(router, '/(onboarding)/calendar-intro');
     setBusy(false);
   }
 
   return (
     <OnboardingFrame
       step={1}
-      totalSteps={12}
+      totalSteps={13}
       eyebrow="Quick question"
       title="How did you hear about Your Friends?"
       subtitle="No wrong answers — this just helps us understand how people are finding the app."
@@ -78,7 +78,7 @@ export default function OnboardingReferralScreen() {
               <Ionicons
                 name={opt.icon}
                 size={20}
-                color={isActive ? colors.accent : colors.inkSoft}
+                color={isActive ? colors.accent : colors.ink}
               />
               <Text style={[styles.optionLabel, isActive && styles.optionLabelActive]}>
                 {opt.label}
@@ -112,7 +112,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     optionActive: {
       borderColor: colors.accent,
-      backgroundColor: colors.accent + '14',
+      backgroundColor: colors.paper,
     },
     optionPressed: { transform: [{ scale: 0.99 }] },
     optionLabel: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.ink },

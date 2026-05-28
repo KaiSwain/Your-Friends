@@ -4,10 +4,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { usePremium } from '../../src/features/premium/PremiumContext';
 import { postCapturedUri } from '../../src/lib/cameraHandoff';
 import { backOnce, replaceOnce } from '../../src/lib/navigationGuard';
-import { showLivePolaroidPaywall } from '../../src/lib/premiumGates';
 
 const POLAROID_FRAME = '#F5F2EA';
 const LIVE_POLAROID_MAX_SECONDS = 5;
@@ -35,7 +33,6 @@ export default function PolaroidCameraScreen() {
     capturedVideoUri: string;
     thumbnailOnly: string;
   }>();
-  const { isPremium } = usePremium();
   // Handoff mode: emit the captured URI on a side channel and pop, so callers
   // can take a profile photo without losing their form state.
   const isHandoff = params.handoff === '1';
@@ -205,11 +202,6 @@ export default function PolaroidCameraScreen() {
     didStartLiveCaptureRef.current = true;
     if (avatarHandoff || (isHandoff && !liveHandoff) || thumbnailOnly || capturing || recording || !cameraRef.current) return;
 
-    if (!isPremium) {
-      showLivePolaroidPaywall(() => replaceOnce(router, '/(app)/store'));
-      return;
-    }
-
     let nextMicrophonePermission = microphonePermission;
     if (!nextMicrophonePermission?.granted) {
       nextMicrophonePermission = await requestMicrophonePermission();
@@ -266,12 +258,10 @@ export default function PolaroidCameraScreen() {
     avatarHandoff,
     forwardCapture,
     isHandoff,
-    isPremium,
     liveHandoff,
     microphonePermission,
     recording,
     requestMicrophonePermission,
-    router,
     switchCameraMode,
     thumbnailOnly,
   ]);

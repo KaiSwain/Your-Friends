@@ -12,6 +12,7 @@ const owner: AppUser = {
   birthday: null,
   profileBgImagePublic: false,
   profileFacts: [],
+  profilePersonalityTraits: [],
   createdAt: '2024-01-01T00:00:00Z',
 };
 
@@ -24,6 +25,7 @@ const friend: AppUser = {
   birthday: null,
   profileBgImagePublic: false,
   profileFacts: [],
+  profilePersonalityTraits: [],
   createdAt: '2024-01-02T00:00:00Z',
 };
 
@@ -42,6 +44,7 @@ const baseContact: Contact = {
   displayName: 'Avery Hart',
   nickname: null,
   facts: [],
+  personalityTraits: [],
   avatarPath: null,
   avatarVideoPath: null,
   avatarVideoMuted: false,

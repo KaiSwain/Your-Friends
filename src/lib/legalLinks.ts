@@ -1,7 +1,7 @@
 export const LEGAL_LINKS = {
-  privacyPolicy: 'https://viraldevelopment.co/',
+  privacyPolicy: 'https://yourfriendsapp.com/privacypolicy',
   termsOfUse: 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/',
-  supportEmail: 'mailto:highlightedfilms@gmail.com',
+  supportEmail: 'https://yourfriendsapp.com/support',
 } as const;
 
 export const SUBSCRIPTION_LEGAL_COPY =

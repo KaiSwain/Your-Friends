@@ -71,6 +71,12 @@ const OPTIONS: FeatureOption[] = [
     icon: 'musical-notes-outline',
   },
   {
+    value: 'prompts_movies',
+    label: 'Prompts and movie requests',
+    body: 'Ask friends questions, get song/photo answers, or send a movie for them to rate.',
+    icon: 'chatbubbles-outline',
+  },
+  {
     value: 'ai_captions',
     label: 'AI captions',
     body: 'Get caption ideas when you know the feeling but not the words.',
@@ -79,7 +85,7 @@ const OPTIONS: FeatureOption[] = [
   {
     value: 'all_of_the_above',
     label: 'All of the above',
-    body: 'I want the full friendship scrapbook: friends, Live Memory Cards, notes, music, walls, and reminders.',
+    body: 'I want the full friendship scrapbook: friends, prompts, movies, notes, music, walls, and reminders.',
     icon: 'star-outline',
   },
   {
@@ -99,6 +105,7 @@ const CORE_FEATURES: CoreExcitedFeature[] = [
   'private_notes',
   'calendar',
   'music_memories',
+  'prompts_movies',
   'ai_captions',
 ];
 
@@ -144,8 +151,8 @@ export default function OnboardingFeaturesScreen() {
 
   return (
     <OnboardingFrame
-      step={10}
-      totalSteps={12}
+      step={11}
+      totalSteps={13}
       eyebrow="Make it yours"
       title="What are you most excited to use?"
       subtitle="Choose all that sound fun. We'll use this to understand what people love most about YourFriends."
@@ -178,7 +185,7 @@ export default function OnboardingFeaturesScreen() {
               accessibilityLabel={option.label}
             >
               <View style={[styles.iconBubble, isActive && styles.iconBubbleActive]}>
-                <Ionicons name={option.icon} size={20} color={isActive ? colors.accent : colors.inkSoft} />
+                <Ionicons name={option.icon} size={20} color={isActive ? colors.accent : colors.ink} />
               </View>
               <View style={styles.optionBody}>
                 <Text style={styles.optionLabel}>{option.label}</Text>
@@ -214,7 +221,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     optionActive: {
       borderColor: colors.accent,
-      backgroundColor: colors.accent + '14',
+      backgroundColor: colors.paper,
     },
     optionPressed: { transform: [{ scale: 0.99 }] },
     iconBubble: {
@@ -226,10 +233,10 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       justifyContent: 'center',
     },
     iconBubbleActive: {
-      backgroundColor: colors.accent + '18',
+      backgroundColor: colors.paper,
     },
     optionBody: { flex: 1, gap: 2 },
     optionLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
-    optionText: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkSoft },
+    optionText: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.ink },
     checkPlaceholder: { width: 22, height: 22 },
   });

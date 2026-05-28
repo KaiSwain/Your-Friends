@@ -14,6 +14,8 @@ interface AddMemoryInput {
   imageUri: string | null;
   videoUri?: string | null;
   videoMuted?: boolean;
+  audioUri?: string | null;
+  audioDurationMs?: number | null;
   memoryDate?: string | null;
   post?: CreateWallPostInput;
   posts?: CreateWallPostInput[];
@@ -35,12 +37,13 @@ export function useAddMemory() {
     onSuccess: ({ record, posts }) => {
       queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) => [...posts, ...(old ?? [])].sort(compareWallPostsByMemoryDateDesc));
       syncPendingMemoryToCache(queryClient, record).catch((error) => console.warn('[pending memories] immediate sync failed:', error));
-      if (posts.some((newPost) => newPost.imageUri)) {
+      const polaroidPosts = posts.filter((newPost) => newPost.postType === 'polaroid' && newPost.imageUri);
+      if (polaroidPosts.length > 0) {
         setTimeout(() => {
           if (AppState.currentState !== 'active') return;
           showLocal(
-            posts.length > 1 ? 'Your shared memory cards have developed!' : 'Your memory card has developed!',
-            { referenceId: posts[0]?.id },
+            polaroidPosts.length > 1 ? 'Your shared memory cards have developed!' : 'Your memory card has developed!',
+            { referenceId: polaroidPosts[0]?.id },
           );
         }, CURE_DURATION_MS);
       }

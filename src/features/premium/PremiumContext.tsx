@@ -20,16 +20,15 @@ import {
 import { useAuth } from '../auth/AuthContext';
 import { themeNames, type ThemeName } from '../theme/themes';
 import {
-  applyReferralRewardForUser,
-  clearIncomingReferralCode,
+  applyQrPremiumGrantForUser,
   getPremiumDaysRemaining,
   isPremiumUntilActive,
-  peekIncomingReferralCode,
+  maxPremiumUntil,
+  QR_PREMIUM_ACTIVE_GRANT_LIMIT,
+  QR_PREMIUM_GRANT_DAYS,
+  QR_PREMIUM_GRANT_LABEL,
+  qrPremiumGrantCountKey,
   readLocalPremiumUntil,
-  REFERRAL_REWARD_DAYS,
-  REFERRAL_REWARD_LABEL,
-  referralRewardCountKey,
-  referrerCodeKey,
   setLocalPremiumUntil,
 } from '../../lib/referrals';
 import { supabase } from '../../lib/supabase';
@@ -63,9 +62,9 @@ export const PREMIUM_PLANS: PremiumPlan[] = [
   { id: PREMIUM_PRODUCT_IDS.yearly, label: 'Yearly', period: 'year', displayPrice: '$29.99', savingsLabel: 'Best deal: save 50% vs monthly', bestValue: true },
 ];
 export const PREMIUM_SUBSCRIPTION_PRICE = '$29.99 / year';
-export { REFERRAL_REWARD_DAYS, REFERRAL_REWARD_LABEL };
+export { QR_PREMIUM_ACTIVE_GRANT_LIMIT, QR_PREMIUM_GRANT_DAYS, QR_PREMIUM_GRANT_LABEL };
 
-const FREE_THEMES: ReadonlySet<ThemeName> = new Set<ThemeName>(['default']);
+const FREE_THEMES: ReadonlySet<ThemeName> = new Set<ThemeName>(['default', 'yourFriends', 'custom']);
 const IAP_UNAVAILABLE_MESSAGE = 'Premium purchases require a development build or TestFlight build.';
 
 function isIapNativeRuntime() {
@@ -75,6 +74,10 @@ function isIapNativeRuntime() {
 interface PremiumContextValue {
   isPremium: boolean;
   premiumUntil: string | null;
+  premiumPaidUntil: string | null;
+  premiumFreeUntil: string | null;
+  premiumSource: 'paid' | 'free' | null;
+  isPayingPremium: boolean;
   premiumDaysRemaining: number;
   premiumFriendIds: ReadonlySet<string>;
   isUserPremium: (userId: string | null | undefined) => boolean;
@@ -89,10 +92,8 @@ interface PremiumContextValue {
   cancelSubscription: () => Promise<void>;
   recheckPremiumFriends: (friendUserIds: readonly string[]) => Promise<void>;
   restore: () => Promise<void>;
-  referralRewardCount: number;
-  referrerCode: string | null;
-  pendingReferralCode: string | null;
-  applyReferralCode: (code: string) => Promise<{ ok: boolean; error?: string }>;
+  qrPremiumGrantCount: number;
+  applyQrPremiumGrant: (code: string) => Promise<{ ok: boolean; error?: string; granted?: boolean }>;
 }
 
 const PremiumContext = createContext<PremiumContextValue | undefined>(undefined);
@@ -102,12 +103,12 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
   const userId = currentUser?.id ?? null;
   const ownFriendCode = currentUser?.friendCode ?? null;
   const profilePremiumUntil = currentUser?.premiumUntil ?? null;
+  const profilePremiumPaidUntil = currentUser?.premiumPaidUntil ?? null;
+  const profilePremiumFreeUntil = currentUser?.premiumFreeUntil ?? null;
 
   const [premiumUntil, setPremiumUntil] = useState<string | null>(null);
   const [premiumFriendIds, setPremiumFriendIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [referralRewardCount, setReferralRewardCount] = useState(0);
-  const [referrerCode, setReferrerCode] = useState<string | null>(null);
-  const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
+  const [qrPremiumGrantCount, setQrPremiumGrantCount] = useState(0);
   const [storeProducts, setStoreProducts] = useState<Product[]>([]);
   const [storeProductsLoaded, setStoreProductsLoaded] = useState(false);
   const [iapConnected, setIapConnected] = useState(false);
@@ -118,60 +119,36 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
     AsyncStorage.multiRemove(LEGACY_GLOBAL_KEYS).catch(() => {});
   }, []);
 
-  const refreshIncomingReferralCode = useCallback(async () => {
-    try {
-      const code = await peekIncomingReferralCode();
-      setPendingReferralCode(code);
-      return code;
-    } catch {
-      setPendingReferralCode(null);
-      setStoreProductsLoaded(false);
-      return null;
-    }
-  }, []);
-
   const loadPremiumState = useCallback(async () => {
     if (!userId) return;
     try {
       AsyncStorage.removeItem(friendBoostKey(userId)).catch(() => {});
-      const [rawUntil, rawRewardCount, rawReferrer] = await Promise.all([
+      const [rawUntil, rawQrGrantCount] = await Promise.all([
         readLocalPremiumUntil(userId),
-        AsyncStorage.getItem(referralRewardCountKey(userId)),
-        AsyncStorage.getItem(referrerCodeKey(userId)),
+        AsyncStorage.getItem(qrPremiumGrantCountKey(userId)),
       ]);
-      const activeUntil = isPremiumUntilActive(profilePremiumUntil)
-        ? profilePremiumUntil
-        : isPremiumUntilActive(rawUntil)
-          ? rawUntil
-          : null;
+      const activeUntil = maxPremiumUntil(profilePremiumUntil, profilePremiumPaidUntil, profilePremiumFreeUntil, rawUntil);
       setPremiumUntil(activeUntil);
-      if (activeUntil) {
+      if (isPremiumUntilActive(activeUntil)) {
         setLocalPremiumUntil(userId, activeUntil).catch(() => {});
         if (!isPremiumUntilActive(profilePremiumUntil)) {
           supabase.from('profiles').update({ premium_until: activeUntil }).eq('id', userId).then(() => undefined, () => undefined);
         }
       }
-      setReferralRewardCount(rawRewardCount ? Number(rawRewardCount) || 0 : 0);
-      setReferrerCode(rawReferrer ?? null);
-      await refreshIncomingReferralCode();
+      setQrPremiumGrantCount(rawQrGrantCount ? Number(rawQrGrantCount) || 0 : 0);
     } catch {
       // Ignore storage errors and keep defaults.
     }
-  }, [userId, profilePremiumUntil, refreshIncomingReferralCode]);
+  }, [userId, profilePremiumUntil, profilePremiumPaidUntil, profilePremiumFreeUntil]);
 
   useEffect(() => {
     setPremiumUntil(null);
     setPremiumFriendIds(new Set());
-    setReferralRewardCount(0);
-    setReferrerCode(null);
-    setPendingReferralCode(null);
-    if (!userId) {
-      refreshIncomingReferralCode();
-      return;
-    }
+    setQrPremiumGrantCount(0);
+    if (!userId) return;
 
     loadPremiumState();
-  }, [userId, loadPremiumState, refreshIncomingReferralCode]);
+  }, [userId, loadPremiumState]);
 
   const validateAndApplyPurchase = useCallback(async (purchase: Purchase) => {
     if (!userId) throw new Error('Sign in before purchasing Premium.');
@@ -300,11 +277,11 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
         if (friendUserIds.length > 0) {
           const { data, error } = await supabase
             .from('profiles')
-            .select('id, premium_until')
+            .select('id, premium_until, premium_paid_until, premium_free_until')
             .in('id', [...friendUserIds]);
           if (!error && data) {
             for (const row of data) {
-              if (isPremiumUntilActive(row.premium_until)) premiumIds.add(row.id);
+              if (isPremiumUntilActive(maxPremiumUntil(row.premium_until, row.premium_paid_until, row.premium_free_until))) premiumIds.add(row.id);
             }
           }
         }
@@ -316,25 +293,25 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
     [userId],
   );
 
-  const applyReferralCode = useCallback<PremiumContextValue['applyReferralCode']>(
+  const applyQrPremiumGrant = useCallback<PremiumContextValue['applyQrPremiumGrant']>(
     async (rawCode) => {
       if (!userId || !ownFriendCode) return { ok: false, error: 'Sign in first.' };
-      const result = await applyReferralRewardForUser({
-        refereeUserId: userId,
-        refereeFriendCode: ownFriendCode,
-        referrerCode: rawCode,
+      const result = await applyQrPremiumGrantForUser({
+        recipientUserId: userId,
+        recipientFriendCode: ownFriendCode,
+        grantorCode: rawCode,
       });
       if (!result.ok) return result;
-      setPremiumUntil(result.refereePremiumUntil);
-      setReferrerCode(result.code);
-      setPendingReferralCode(null);
-      await clearIncomingReferralCode().catch(() => {});
-      return { ok: true };
+      setPremiumUntil(result.recipientPremiumUntil);
+      return { ok: true, granted: result.granted };
     },
     [userId, ownFriendCode],
   );
 
   const isPremium = isPremiumUntilActive(premiumUntil);
+  const isPayingPremium = isPremiumUntilActive(profilePremiumPaidUntil);
+  const hasFreePremium = isPremiumUntilActive(profilePremiumFreeUntil);
+  const premiumSource = isPayingPremium ? 'paid' : hasFreePremium || isPremium ? 'free' : null;
   const premiumDaysRemaining = getPremiumDaysRemaining(premiumUntil);
 
   const premiumPlans = useMemo<PremiumPlan[]>(() => PREMIUM_PLANS.map((plan) => {
@@ -368,6 +345,10 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
     () => ({
       isPremium,
       premiumUntil,
+      premiumPaidUntil: profilePremiumPaidUntil,
+      premiumFreeUntil: profilePremiumFreeUntil,
+      premiumSource,
+      isPayingPremium,
       premiumDaysRemaining,
       premiumFriendIds,
       isUserPremium,
@@ -382,14 +363,16 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
       cancelSubscription,
       recheckPremiumFriends,
       restore,
-      referralRewardCount,
-      referrerCode,
-      pendingReferralCode,
-      applyReferralCode,
+      qrPremiumGrantCount,
+      applyQrPremiumGrant,
     }),
     [
       isPremium,
       premiumUntil,
+      profilePremiumPaidUntil,
+      profilePremiumFreeUntil,
+      premiumSource,
+      isPayingPremium,
       premiumDaysRemaining,
       premiumFriendIds,
       isUserPremium,
@@ -403,10 +386,8 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
       cancelSubscription,
       recheckPremiumFriends,
       restore,
-      referralRewardCount,
-      referrerCode,
-      pendingReferralCode,
-      applyReferralCode,
+      qrPremiumGrantCount,
+      applyQrPremiumGrant,
     ],
   );
 

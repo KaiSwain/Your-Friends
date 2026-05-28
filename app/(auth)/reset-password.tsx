@@ -109,8 +109,8 @@ export default function ResetPasswordScreen() {
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
     hero: { gap: spacing.sm, paddingTop: spacing.xl },
-    backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     eyebrow: {
       fontFamily: fonts.bodyBold,
       fontSize: 12,

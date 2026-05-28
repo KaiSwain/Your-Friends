@@ -80,13 +80,13 @@ Deno.serve(async (req) => {
         role: 'user',
         content: [
           { type: 'text', text: buildPrompt(context, tone) },
-          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: 'high' } },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: 'low' } },
         ],
       },
     ],
   };
 
-  openAiBody[usesCompletionTokens ? 'max_completion_tokens' : 'max_tokens'] = usesCompletionTokens ? 1800 : 240;
+  openAiBody[usesCompletionTokens ? 'max_completion_tokens' : 'max_tokens'] = usesCompletionTokens ? 900 : 160;
   if (!usesCompletionTokens) openAiBody.temperature = 0.9;
 
   const openAiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -123,7 +123,7 @@ function buildPrompt(context: Record<string, unknown>, tone: string) {
   const relationshipTags = Array.isArray(context.relationshipTags) ? context.relationshipTags : [];
   return [
     `Tone: ${tone}. ${toneInstructions[tone]}`,
-    'Write 5 distinct caption options for this photo memory.',
+    'Write 3 distinct caption options for this photo memory.',
     'First, look closely at the visible photo: people, faces, pose, setting, action, colors, mood, objects, and composition.',
     'Make the captions feel grounded in what is visibly happening in the photo.',
     'Make the captions sharper and more memorable than generic lines like "making memories" or "good times".',
@@ -132,8 +132,9 @@ function buildPrompt(context: Record<string, unknown>, tone: string) {
     'Use those relationship tags strongly to choose the emotional angle, closeness, wording, and humor level.',
     'A New Friend caption should feel different from Best Friend, Partner, Sibling, Coworker, or Online Friend.',
     'It is okay to naturally say friend, best friend, partner, sibling, or similar if the tag supports it, but do not output hashtags or a literal tag list.',
-    'Treat facts, notes, and previous memories as secondary flavor only.',
-    'Do not force facts into the captions unless they clearly match the visible photo.',
+    'Treat personality traits, facts, notes, and previous memories as secondary flavor only.',
+    'Use personality traits to tune the voice and emotional angle without naming them like labels.',
+    'Do not force facts or traits into the captions unless they clearly match the visible photo.',
     'Do not invent specific visual details that are not visible in the photo.',
     `Secondary context JSON: ${JSON.stringify(context)}`,
   ].join('\n');
@@ -147,6 +148,7 @@ function normalizeContext(value: Record<string, unknown>) {
     memoryDate: cleanString(value.memoryDate, 60),
     draftCaption: cleanString(value.draftCaption, 180),
     relationshipTags: cleanList(value.relationshipTags, 6, 80),
+    personalityTraits: cleanList(value.personalityTraits, 6, 80),
     facts: cleanList(value.facts, 3, 120),
     notes: cleanList(value.notes, 2, 120),
     previousCaptions: cleanList(value.previousCaptions, 4, 120),

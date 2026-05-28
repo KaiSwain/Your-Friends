@@ -32,6 +32,7 @@ export interface AiCaptionContext {
   memoryDate: string;
   draftCaption?: string | null;
   relationshipTags: string[];
+  personalityTraits: string[];
   facts: string[];
   notes: string[];
   previousCaptions: string[];
@@ -51,6 +52,10 @@ interface AiCaptionResponse {
 
 const MAX_LIST_ITEMS = 10;
 const MAX_ITEM_LENGTH = 180;
+const AI_IMAGE_MAX_DIMENSION = 768;
+const AI_IMAGE_QUALITY = 0.58;
+const preparedImageCache = new Map<string, Promise<string>>();
+const captionCache = new Map<string, Promise<string[]>>();
 
 export function normalizeAiCaptionContext(context: AiCaptionContext): AiCaptionContext {
   return {
@@ -60,6 +65,7 @@ export function normalizeAiCaptionContext(context: AiCaptionContext): AiCaptionC
     memoryDate: cleanText(context.memoryDate, 60) || new Date().toISOString(),
     draftCaption: context.draftCaption ? cleanText(context.draftCaption, 180) : null,
     relationshipTags: cleanList(context.relationshipTags),
+    personalityTraits: cleanList(context.personalityTraits),
     facts: cleanList(context.facts),
     notes: cleanList(context.notes),
     previousCaptions: cleanList(context.previousCaptions),
@@ -68,12 +74,24 @@ export function normalizeAiCaptionContext(context: AiCaptionContext): AiCaptionC
 }
 
 export async function generateAiCaptions({ context, imageUri, tone }: GenerateAiCaptionsInput) {
-  const localImageUri = await getLocalImageUriForAi(imageUri);
-  const compressedUri = await compressImage(localImageUri);
-  const base64 = await FileSystem.readAsStringAsync(compressedUri, { encoding: FileSystem.EncodingType.Base64 });
+  const normalizedContext = normalizeAiCaptionContext(context);
+  const cacheKey = makeCaptionCacheKey(imageUri, tone, normalizedContext);
+  const cachedCaptions = captionCache.get(cacheKey);
+  if (cachedCaptions) return cachedCaptions;
+
+  const captionRequest = requestAiCaptions(imageUri, normalizedContext, tone).catch((error) => {
+    captionCache.delete(cacheKey);
+    throw error;
+  });
+  captionCache.set(cacheKey, captionRequest);
+  return captionRequest;
+}
+
+async function requestAiCaptions(imageUri: string, context: AiCaptionContext, tone: AiCaptionTone) {
+  const base64 = await getPreparedImageBase64(imageUri);
   const { data, error } = await supabase.functions.invoke<AiCaptionResponse>('generate-ai-caption', {
     body: {
-      context: normalizeAiCaptionContext(context),
+      context,
       image: { base64, mimeType: 'image/jpeg' },
       tone,
     },
@@ -88,6 +106,31 @@ export async function generateAiCaptions({ context, imageUri, tone }: GenerateAi
 
   if (captions.length === 0) throw new Error('No captions came back. Try again in a moment.');
   return captions.slice(0, 5);
+}
+
+async function getPreparedImageBase64(imageUri: string) {
+  const cachedImage = preparedImageCache.get(imageUri);
+  if (cachedImage) return cachedImage;
+
+  const preparedImage = prepareImageBase64(imageUri).catch((error) => {
+    preparedImageCache.delete(imageUri);
+    throw error;
+  });
+  preparedImageCache.set(imageUri, preparedImage);
+  return preparedImage;
+}
+
+async function prepareImageBase64(imageUri: string) {
+  const localImageUri = await getLocalImageUriForAi(imageUri);
+  const compressedUri = await compressImage(localImageUri, {
+    maxDimension: AI_IMAGE_MAX_DIMENSION,
+    quality: AI_IMAGE_QUALITY,
+  });
+  return FileSystem.readAsStringAsync(compressedUri, { encoding: FileSystem.EncodingType.Base64 });
+}
+
+function makeCaptionCacheKey(imageUri: string, tone: AiCaptionTone, context: AiCaptionContext) {
+  return JSON.stringify({ imageUri, tone, context });
 }
 
 function cleanList(items: string[]) {

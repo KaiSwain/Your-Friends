@@ -18,11 +18,14 @@ create table public.profiles ( -- Create the profiles table in the public schema
   profile_bg_image_public boolean not null default false, -- Let users explicitly choose whether their background appears on their public profile.
   push_token text, -- Store the Expo push notification token for server-side sends.
   profile_facts text[] not null default '{}', -- Store profile facts as a text array.
+  profile_personality_traits text[] not null default '{}', -- Store profile personality trait chips as a text array.
   premium_until timestamptz, -- Store the active Premium expiry for compatibility with existing checks.
   premium_paid_until timestamptz, -- Store paid subscription Premium expiry separately from free grants.
   premium_free_until timestamptz, -- Store QR-granted free Premium expiry separately from paid access.
   premium_free_granted_by_user_id uuid references public.profiles(id) on delete set null, -- Track who granted the current free Premium window.
   premium_free_granted_at timestamptz, -- Track when the current free Premium window was granted.
+  is_official boolean not null default false, -- Mark the official Your Friends team account.
+  is_team_admin boolean not null default false, -- Allow this profile to access team-only admin tools.
   created_at timestamptz not null default now() -- Store when the profile row was created.
 ); -- End the profiles table definition.
 
@@ -30,11 +33,57 @@ alter table public.profiles enable row level security; -- Turn on row-level secu
 
 alter table public.profiles add column if not exists profile_bg_image_path text;
 alter table public.profiles add column if not exists profile_bg_image_public boolean not null default false;
+alter table public.profiles add column if not exists profile_personality_traits text[] not null default '{}';
 alter table public.profiles add column if not exists birthday date;
 alter table public.profiles add column if not exists premium_paid_until timestamptz;
 alter table public.profiles add column if not exists premium_free_until timestamptz;
 alter table public.profiles add column if not exists premium_free_granted_by_user_id uuid references public.profiles(id) on delete set null;
 alter table public.profiles add column if not exists premium_free_granted_at timestamptz;
+alter table public.profiles add column if not exists is_official boolean not null default false;
+alter table public.profiles add column if not exists is_team_admin boolean not null default false;
+
+create unique index if not exists profiles_single_official_account
+  on public.profiles (is_official)
+  where is_official = true;
+
+create or replace function public.prevent_profile_role_self_escalation()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' and not (new.is_official or new.is_team_admin) then
+    return new;
+  end if;
+
+  if tg_op = 'UPDATE' and not (
+    old.is_official is distinct from new.is_official
+    or old.is_team_admin is distinct from new.is_team_admin
+  ) then
+    return new;
+  end if;
+
+  if tg_op in ('INSERT', 'UPDATE') then
+    if auth.uid() is not null and not exists (
+      select 1
+      from public.profiles p
+      where p.id = auth.uid()
+        and p.is_team_admin = true
+    ) then
+      raise exception 'Only team admins can update official account flags.';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_prevent_role_self_escalation on public.profiles;
+create trigger profiles_prevent_role_self_escalation
+  before insert or update of is_official, is_team_admin on public.profiles
+  for each row
+  execute function public.prevent_profile_role_self_escalation();
 
 create policy "Users can read any profile" -- Name the policy that allows profile reads.
   on public.profiles for select using (true); -- Allow all authenticated users to select any profile.
@@ -87,6 +136,7 @@ create policy "Users can read own premium QR grants"
 
 create index if not exists idx_premium_qr_grants_grantor on public.premium_qr_grants(grantor_user_id);
 create index if not exists idx_premium_qr_grants_recipient on public.premium_qr_grants(recipient_user_id);
+create index if not exists idx_premium_qr_grants_grantor_active on public.premium_qr_grants(grantor_user_id, recipient_premium_until);
 
 create or replace function public.apply_premium_qr_grant(recipient_id uuid, grantor_code text)
 returns table (
@@ -108,6 +158,7 @@ declare
   current_recipient_premium_until timestamptz;
   current_recipient_paid_until timestamptz;
   current_recipient_free_until timestamptz;
+  active_grant_count integer;
 begin
   if auth.uid() is null or auth.uid() <> recipient_id then
     raise exception 'Premium QR grants can only be applied by the scanning user.';
@@ -140,6 +191,15 @@ begin
     raise exception 'This QR code belongs to someone without active Premium.';
   end if;
 
+  if not exists (
+    select 1
+    from public.friendships f
+    where f.user_low_id = least(matched_grantor_id, recipient_id)
+      and f.user_high_id = greatest(matched_grantor_id, recipient_id)
+  ) then
+    raise exception 'You need to be friends before this Premium QR can unlock free Premium.';
+  end if;
+
   select * into existing_grant
   from public.premium_qr_grants qr_grant
   where qr_grant.grantor_user_id = matched_grantor_id
@@ -161,6 +221,15 @@ begin
     granted := false;
     return next;
     return;
+  end if;
+
+  select count(*) into active_grant_count
+  from public.premium_qr_grants qr_grant
+  where qr_grant.grantor_user_id = matched_grantor_id
+    and qr_grant.recipient_premium_until > now();
+
+  if active_grant_count >= 3 then
+    raise exception 'This Premium friend already has 3 active free Premium grants. Try again after one expires.';
   end if;
 
   select p.premium_until, p.premium_paid_until, p.premium_free_until
@@ -301,6 +370,7 @@ create table public.contacts ( -- Create the contacts table in the public schema
   display_name text not null, -- Store the contact's display name.
   nickname text, -- Optionally store a private nickname for the contact.
   facts text[] not null default '{}', -- Store contact facts as a text array.
+  personality_traits text[] not null default '{}', -- Store contact personality trait chips as a text array.
   avatar_path text, -- Optionally store a path to an uploaded avatar image.
   avatar_video_path text, -- Optionally store a hero card video URL.
   avatar_video_muted boolean not null default false, -- Optionally force the hero card video to play without audio.
@@ -325,6 +395,7 @@ create policy "Linked users can read their contact" -- Let users see the contact
 
 alter table public.contacts add column if not exists pinned boolean not null default false;
 alter table public.contacts add column if not exists pinned_at timestamptz;
+alter table public.contacts add column if not exists personality_traits text[] not null default '{}';
 alter table public.contacts add column if not exists profile_bg_image_path text;
 alter table public.contacts add column if not exists avatar_video_path text;
 alter table public.contacts add column if not exists avatar_video_muted boolean not null default false;
@@ -371,6 +442,49 @@ create policy "Users can manage own private note blocks"
 create index idx_private_notes_owner_contact on public.contact_private_notes(owner_user_id, contact_id);
 create index idx_private_notes_updated on public.contact_private_notes(updated_at desc);
 create index idx_private_note_blocks_note_order on public.contact_private_note_blocks(note_id, sort_order);
+
+-- Public memory media bucket. Stores Memory Cards, regular media, voice notes,
+-- profile images, and other public wall assets used by the app.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'Memories',
+  'Memories',
+  true,
+  52428800,
+  array[
+    'image/jpg',
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+    'image/heif',
+    'video/mp4',
+    'video/quicktime',
+    'video/webm',
+    'audio/mp4',
+    'audio/mpeg',
+    'audio/aac',
+    'audio/wav',
+    'audio/x-caf'
+  ]
+)
+on conflict (id) do update set
+  public = true,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "Authenticated users can read memory media" on storage.objects;
+drop policy if exists "Authenticated users can upload memory media" on storage.objects;
+drop policy if exists "Authenticated users can update memory media" on storage.objects;
+drop policy if exists "Authenticated users can delete memory media" on storage.objects;
+
+create policy "Authenticated users can read memory media"
+  on storage.objects for select to authenticated
+  using (bucket_id = 'Memories');
+
+create policy "Authenticated users can upload memory media"
+  on storage.objects for insert to authenticated
+  with check (bucket_id = 'Memories');
 
 -- Private note media bucket. Object paths start with the owner's user id:
 -- <owner_user_id>/<note_id>/<filename>.jpg
@@ -467,6 +581,101 @@ create policy "Requesters can resend declined friend requests"
 create index idx_friend_requests_recipient on public.friend_requests(recipient_user_id, status);
 create index idx_friend_requests_requester on public.friend_requests(requester_user_id, status);
 
+-- Official Your Friends account connection helpers.
+create or replace function public.connect_official_account_pair(user_id uuid, official_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if user_id is null or official_user_id is null or user_id = official_user_id then
+    return;
+  end if;
+
+  insert into public.friendships (
+    user_low_id,
+    user_high_id,
+    created_by_user_id
+  ) values (
+    least(user_id, official_user_id),
+    greatest(user_id, official_user_id),
+    official_user_id
+  )
+  on conflict (user_low_id, user_high_id) do nothing;
+
+  insert into public.contacts (
+    owner_user_id,
+    linked_user_id,
+    display_name,
+    facts,
+    avatar_path,
+    tags,
+    note,
+    card_color,
+    back_text,
+    profile_bg
+  )
+  select
+    user_id,
+    p.id,
+    p.display_name,
+    '{}',
+    p.avatar_path,
+    '{}',
+    'Official updates from the Your Friends team.',
+    p.avatar_color,
+    'Team updates, product notes, and little surprises from Your Friends.',
+    null
+  from public.profiles p
+  where p.id = official_user_id
+  on conflict (owner_user_id, linked_user_id) do nothing;
+end;
+$$;
+
+create or replace function public.sync_official_account_connections()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  official_user_id uuid;
+  profile_row record;
+begin
+  if new.is_official then
+    for profile_row in
+      select id from public.profiles where id <> new.id
+    loop
+      perform public.connect_official_account_pair(profile_row.id, new.id);
+    end loop;
+    return new;
+  end if;
+
+  select id into official_user_id
+  from public.profiles
+  where is_official = true
+  order by created_at asc
+  limit 1;
+
+  perform public.connect_official_account_pair(new.id, official_user_id);
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_sync_official_account_connections on public.profiles;
+drop trigger if exists profiles_sync_official_account_connections_on_update on public.profiles;
+create trigger profiles_sync_official_account_connections
+  after insert on public.profiles
+  for each row
+  execute function public.sync_official_account_connections();
+
+create trigger profiles_sync_official_account_connections_on_update
+  after update of is_official on public.profiles
+  for each row
+  when (old.is_official is distinct from new.is_official)
+  execute function public.sync_official_account_connections();
+
 -- Mark the start of the wall posts section.
 -- Explain that wall posts are memories written about either a user or a contact.
 create table public.wall_posts ( -- Create the wall_posts table in the public schema.
@@ -475,13 +684,14 @@ create table public.wall_posts ( -- Create the wall_posts table in the public sc
   subject_user_id uuid references public.profiles(id) on delete cascade, -- Optionally store the subject as a real user.
   subject_contact_id uuid references public.contacts(id) on delete cascade, -- Optionally store the subject as a private contact.
   visibility text not null default 'private' check (visibility in ('private', 'visible_to_subject')), -- Restrict visibility to the supported values.
-  post_type text not null default 'note' check (post_type in ('note', 'polaroid', 'song', 'movie')), -- Store which wall presentation this memory uses.
+  post_type text not null default 'note' check (post_type in ('note', 'polaroid', 'media', 'song', 'movie', 'voice')), -- Store which wall presentation this memory uses.
   body text not null, -- Store the main memory text.
   image_path text, -- Optionally store an uploaded image path or URL.
-  video_path text, -- Optionally store an uploaded Live Polaroid video URL.
-  video_muted boolean not null default false, -- Optionally force the Live Polaroid video to play without audio.
-  card_color text, -- Optionally store a custom card color for the polaroid frame.
-  back_text text, -- Optionally store text written on the back of the polaroid.
+  image_thumb_path text, -- Optionally store a lightweight image thumbnail URL for fast wall rendering.
+  video_path text, -- Optionally store an uploaded Live Memory Card video URL.
+  video_muted boolean not null default false, -- Optionally force the Live Memory Card video to play without audio.
+  card_color text, -- Optionally store a custom card color for the memory card frame.
+  back_text text, -- Optionally store text written on the back of the memory card.
   filter text, -- Optionally store a photo filter key (e.g. vintage, warm, cool).
   date_stamp boolean not null default false, -- Optionally store whether to show a date stamp overlay on the photo.
   memory_date date, -- Optionally store when the memory happened, separate from when it was posted.
@@ -493,6 +703,8 @@ create table public.wall_posts ( -- Create the wall_posts table in the public sc
   song_artwork_url text, -- Optionally store album artwork for a song memory.
   song_preview_url text, -- Optionally store a short playable preview URL.
   song_external_url text, -- Optionally store the provider URL for the track.
+  audio_path text, -- Optionally store an uploaded voice memory audio URL.
+  audio_duration_ms integer, -- Optionally store the recorded voice memory duration.
   movie_tmdb_id text, -- Optionally store the TMDb movie ID for a movie review memory.
   movie_title text, -- Optionally store the movie title snapshot.
   movie_year text, -- Optionally store the movie release year snapshot.
@@ -503,9 +715,11 @@ create table public.wall_posts ( -- Create the wall_posts table in the public sc
   movie_review_rating numeric check (movie_review_rating between 0.5 and 5 and movie_review_rating * 2 = floor(movie_review_rating * 2)), -- Optionally store the friend's half-step star rating.
   movie_review_request_id uuid, -- Optionally link back to the request that produced this review.
   memory_prompt_request_id uuid, -- Optionally link back to the generic prompt that produced this memory.
-  referenced_wall_post_id uuid references public.wall_posts(id) on delete set null, -- Optionally reference an existing polaroid selected for a prompt.
+  referenced_wall_post_id uuid references public.wall_posts(id) on delete set null, -- Optionally reference an existing Memory Card selected for a prompt.
   prompt_text text, -- Optionally store the prompt text that produced this memory.
-  prompt_type text check (prompt_type in ('song', 'text', 'photo_reference')), -- Optionally store the prompt category that produced this memory.
+  prompt_type text check (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice')), -- Optionally store the prompt category that produced this memory.
+  prompt_audio_path text, -- Optionally store the recorded prompt question audio URL.
+  prompt_audio_duration_ms integer, -- Optionally store the recorded prompt question duration.
   created_at timestamptz not null default now(), -- Store when the wall post row was created.
   constraint wall_posts_has_subject check ( -- Enforce that exactly one kind of subject is set.
     (subject_user_id is not null and subject_contact_id is null) or -- Allow a real-user subject with no contact subject.
@@ -517,6 +731,18 @@ alter table public.wall_posts enable row level security; -- Turn on row-level se
 
 create policy "Authors can manage own wall posts" -- Name the policy that gives authors full control of their own posts.
   on public.wall_posts for all using (auth.uid() = author_user_id) with check (auth.uid() = author_user_id); -- Only allow the author to manage their own posts.
+
+create policy "Prompt requesters can delete completed response posts"
+  on public.wall_posts for delete
+  using (
+    auth.uid() = subject_user_id
+    and (
+      memory_prompt_request_id is not null
+      or movie_review_request_id is not null
+      or prompt_text is not null
+      or prompt_type is not null
+    )
+  );
 
 create policy "Subjects can read visible posts about them" -- Name the policy that lets subjects read visible posts.
   on public.wall_posts for select -- Apply the policy to SELECT queries.
@@ -543,6 +769,8 @@ create table public.memory_replies (
   wall_post_id uuid not null references public.wall_posts(id) on delete cascade,
   author_user_id uuid not null references public.profiles(id) on delete cascade,
   body text not null,
+  audio_path text,
+  audio_duration_ms integer,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -844,11 +1072,16 @@ create table public.movie_review_requests (
   movie_release_date date,
   movie_vote_average numeric,
   prompt text,
+  prompt_audio_path text,
+  prompt_audio_duration_ms integer,
   status text not null default 'pending' check (status in ('pending', 'completed', 'cancelled')),
   review_rating numeric check (review_rating between 0.5 and 5 and review_rating * 2 = floor(review_rating * 2)),
   review_body text,
+  review_audio_path text,
+  review_audio_duration_ms integer,
   completed_wall_post_id uuid references public.wall_posts(id) on delete set null,
   created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '7 days'),
   updated_at timestamptz not null default now(),
   completed_at timestamptz,
   constraint movie_review_requests_no_self check (requester_user_id <> recipient_user_id)
@@ -892,8 +1125,10 @@ create table public.memory_prompt_requests (
   id uuid primary key default uuid_generate_v4(),
   requester_user_id uuid not null references public.profiles(id) on delete cascade,
   recipient_user_id uuid not null references public.profiles(id) on delete cascade,
-  prompt_type text not null check (prompt_type in ('song', 'text', 'photo_reference')),
+  prompt_type text not null check (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice')),
   prompt_text text not null,
+  prompt_audio_path text,
+  prompt_audio_duration_ms integer,
   status text not null default 'pending' check (status in ('pending', 'completed', 'cancelled')),
   response_body text,
   response_song_provider text check (response_song_provider in ('apple', 'spotify')),
@@ -903,9 +1138,12 @@ create table public.memory_prompt_requests (
   response_song_artwork_url text,
   response_song_preview_url text,
   response_song_external_url text,
+  response_audio_path text,
+  response_audio_duration_ms integer,
   referenced_wall_post_id uuid references public.wall_posts(id) on delete set null,
   completed_wall_post_id uuid references public.wall_posts(id) on delete set null,
   created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '7 days'),
   updated_at timestamptz not null default now(),
   completed_at timestamptz,
   constraint memory_prompt_requests_no_self check (requester_user_id <> recipient_user_id)
@@ -1091,9 +1329,11 @@ create index idx_gift_notes_unlock on public.gift_notes(status, unlock_date);
 create index idx_movie_review_requests_requester on public.movie_review_requests(requester_user_id, status, created_at desc);
 create index idx_movie_review_requests_recipient on public.movie_review_requests(recipient_user_id, status, created_at desc);
 create index idx_movie_review_requests_wall_post on public.movie_review_requests(completed_wall_post_id);
+create index idx_movie_review_requests_expires on public.movie_review_requests(recipient_user_id, status, expires_at);
 create index idx_memory_prompt_requests_requester on public.memory_prompt_requests(requester_user_id, status, created_at desc);
 create index idx_memory_prompt_requests_recipient on public.memory_prompt_requests(recipient_user_id, status, created_at desc);
 create index idx_memory_prompt_requests_wall_post on public.memory_prompt_requests(completed_wall_post_id);
+create index idx_memory_prompt_requests_expires on public.memory_prompt_requests(recipient_user_id, status, expires_at);
 create index idx_memory_prompt_requests_reference on public.memory_prompt_requests(referenced_wall_post_id);
 create index idx_wall_posts_memory_prompt_request on public.wall_posts(memory_prompt_request_id);
 create index idx_wall_posts_referenced_wall_post on public.wall_posts(referenced_wall_post_id);
@@ -1252,7 +1492,7 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS premium_until timestamptz;
 ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS metadata jsonb not null default '{}'::jsonb;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS post_type text not null default 'note';
 ALTER TABLE public.wall_posts DROP CONSTRAINT IF EXISTS wall_posts_post_type_check;
-ALTER TABLE public.wall_posts ADD CONSTRAINT wall_posts_post_type_check CHECK (post_type in ('note', 'polaroid', 'song', 'movie'));
+ALTER TABLE public.wall_posts ADD CONSTRAINT wall_posts_post_type_check CHECK (post_type in ('note', 'polaroid', 'media', 'song', 'movie', 'voice'));
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS date_stamp boolean not null default false;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS filter text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS back_text text;
@@ -1267,6 +1507,8 @@ ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_artist text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_artwork_url text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_preview_url text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS song_external_url text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS audio_path text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS audio_duration_ms integer;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_tmdb_id text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_title text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS movie_year text;
@@ -1280,12 +1522,34 @@ ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS memory_prompt_request_id 
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS referenced_wall_post_id uuid references public.wall_posts(id) on delete set null;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS prompt_text text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS prompt_type text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS prompt_audio_path text;
+ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS prompt_audio_duration_ms integer;
 ALTER TABLE public.wall_posts DROP CONSTRAINT IF EXISTS wall_posts_prompt_type_check;
-ALTER TABLE public.wall_posts ADD CONSTRAINT wall_posts_prompt_type_check CHECK (prompt_type is null or prompt_type in ('song', 'text', 'photo_reference'));
+ALTER TABLE public.wall_posts ADD CONSTRAINT wall_posts_prompt_type_check CHECK (prompt_type is null or prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice'));
+ALTER TABLE public.memory_prompt_requests DROP CONSTRAINT IF EXISTS memory_prompt_requests_prompt_type_check;
+ALTER TABLE public.memory_prompt_requests ADD CONSTRAINT memory_prompt_requests_prompt_type_check CHECK (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice'));
+ALTER TABLE public.memory_replies ADD COLUMN IF NOT EXISTS audio_path text;
+ALTER TABLE public.memory_replies ADD COLUMN IF NOT EXISTS audio_duration_ms integer;
+ALTER TABLE public.memory_prompt_requests ADD COLUMN IF NOT EXISTS prompt_audio_path text;
+ALTER TABLE public.memory_prompt_requests ADD COLUMN IF NOT EXISTS prompt_audio_duration_ms integer;
+ALTER TABLE public.memory_prompt_requests ADD COLUMN IF NOT EXISTS response_audio_path text;
+ALTER TABLE public.memory_prompt_requests ADD COLUMN IF NOT EXISTS response_audio_duration_ms integer;
+ALTER TABLE public.movie_review_requests ADD COLUMN IF NOT EXISTS prompt_audio_path text;
+ALTER TABLE public.movie_review_requests ADD COLUMN IF NOT EXISTS prompt_audio_duration_ms integer;
+ALTER TABLE public.movie_review_requests ADD COLUMN IF NOT EXISTS review_rating numeric;
+ALTER TABLE public.movie_review_requests ADD COLUMN IF NOT EXISTS review_audio_path text;
+ALTER TABLE public.movie_review_requests ADD COLUMN IF NOT EXISTS review_audio_duration_ms integer;
+ALTER TABLE public.wall_posts ALTER COLUMN movie_review_rating TYPE numeric USING movie_review_rating::numeric;
 ALTER TABLE public.wall_posts DROP CONSTRAINT IF EXISTS wall_posts_movie_review_rating_check;
 ALTER TABLE public.wall_posts ADD CONSTRAINT wall_posts_movie_review_rating_check CHECK (
   movie_review_rating is null
   or (movie_review_rating between 0.5 and 5 and movie_review_rating * 2 = floor(movie_review_rating * 2))
+);
+ALTER TABLE public.movie_review_requests DROP CONSTRAINT IF EXISTS movie_review_requests_review_rating_check;
+ALTER TABLE public.movie_review_requests ALTER COLUMN review_rating TYPE numeric USING review_rating::numeric;
+ALTER TABLE public.movie_review_requests ADD CONSTRAINT movie_review_requests_review_rating_check CHECK (
+  review_rating is null
+  or (review_rating between 0.5 and 5 and review_rating * 2 = floor(review_rating * 2))
 );
 UPDATE public.wall_posts SET post_type = 'polaroid' WHERE image_path IS NOT NULL AND post_type = 'note';
 

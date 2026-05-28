@@ -9,7 +9,10 @@ import { AppScreen } from '../../../src/components/AppScreen';
 import { MemoryLocationPicker } from '../../../src/components/MemoryLocationPicker';
 import { MemoryPromptPicker } from '../../../src/components/MemoryPromptPicker';
 import { MemoryTextStylePicker } from '../../../src/components/MemoryTextStylePicker';
+import { PolaroidIcon } from '../../../src/components/PolaroidIcon';
 import { SongSearchPicker } from '../../../src/components/SongSearchPicker';
+import { TextOrVoiceComposer } from '../../../src/components/TextOrVoiceComposer';
+import { DEFAULT_VOICE_RECORDING_MAX_MS } from '../../../src/components/VoiceRecorder';
 import { WallPostCard } from '../../../src/components/WallPostCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
 import { usePremium } from '../../../src/features/premium/PremiumContext';
@@ -21,9 +24,9 @@ import { isCardColorUnlocked, getCardColorLockMessage } from '../../../src/featu
 import { useAddMemory } from '../../../src/hooks/useAddMemory';
 import { AI_CAPTION_TONES, AiCaptionContext, AiCaptionTone, generateAiCaptions } from '../../../src/lib/aiCaptions';
 import { normalizeLocationName } from '../../../src/lib/memoryLocation';
-import { memoryImagePickerOptions } from '../../../src/lib/imagePickerPresets';
+import { memoryImagePickerOptions, memoryMediaPickerOptions } from '../../../src/lib/imagePickerPresets';
 import { backOnce, dismissToOnce, pushOnce, replaceOnce } from '../../../src/lib/navigationGuard';
-import { showAiCaptionPaywall, showGalleryPaywall } from '../../../src/lib/premiumGates';
+import { showAiCaptionPaywall, showGalleryPaywall, showMediaMemoryPaywall } from '../../../src/lib/premiumGates';
 import { showPhotoSourceSheet } from '../../../src/lib/photoSourceSheet';
 import {
   defaultWallPostTextColor,
@@ -37,20 +40,16 @@ import { polaroidFilters } from '../../../src/lib/polaroidFilters';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import type { FontSet } from '../../../src/theme/typography';
 import { accentPalette, radius, spacing } from '../../../src/theme/tokens';
-import { CreateWallPostInput, PeopleListItem, SongAttachment, WallPost, WallPostTextColor, WallPostTextEffect, WallPostTextFont, WallPostTextSize, WallPostVisibility } from '../../../src/types/domain';
+import { Contact, CreateWallPostInput, PeopleListItem, SongAttachment, VoiceAttachment, WallPost, WallPostTextColor, WallPostTextEffect, WallPostTextFont, WallPostTextSize, WallPostVisibility } from '../../../src/types/domain';
 
-type MemoryKind = 'note' | 'photo' | 'song';
+type MemoryKind = 'note' | 'media' | 'photo' | 'song';
 type PhotoSource = 'camera' | 'gallery' | null;
 
-const MEMORY_KIND_OPTIONS: { id: MemoryKind; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { id: 'note', label: 'Note', icon: 'create-outline' },
-  { id: 'photo', label: 'Photo', icon: 'camera-outline' },
-  { id: 'song', label: 'Song', icon: 'musical-notes-outline' },
-];
+const REGULAR_VIDEO_MAX_DURATION_MS = 5000;
 
 export default function AddMemoryScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ subjectId: string | string[]; subjectType: string | string[]; targetKeys: string | string[]; capturedUri: string | string[]; capturedVideoUri: string | string[]; returnTo: string | string[]; backTo: string | string[] }>();
+  const params = useLocalSearchParams<{ subjectId: string | string[]; subjectType: string | string[]; targetKeys: string | string[]; capturedUri: string | string[]; capturedVideoUri: string | string[]; mediaUri: string | string[]; mediaType: string | string[]; returnTo: string | string[]; backTo: string | string[]; kind: string | string[] }>();
   const { currentUser } = useAuth();
   const { contacts, getUserById, getContactById, getWallPostsForSubject, getPrivateNotesForContact, getPrivateNoteBlocks, getFriendFactsFor, getPeopleListForUser } = useSocialGraph();
   const { colors, fonts, themeName } = useTheme();
@@ -70,6 +69,8 @@ export default function AddMemoryScreen() {
   const [photoSource, setPhotoSource] = useState<PhotoSource>(null);
   const [memoryDateInput, setMemoryDateInput] = useState(() => getDateKey(new Date()));
   const [selectedSong, setSelectedSong] = useState<SongAttachment | null>(null);
+  const [selectedVoice, setSelectedVoice] = useState<VoiceAttachment | null>(null);
+  const [composerMode, setComposerMode] = useState<'text' | 'voice'>('text');
   const [songPreviewRequestKey, setSongPreviewRequestKey] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<WallPostVisibility>('visible_to_subject');
   const [locationNameInput, setLocationNameInput] = useState('');
@@ -91,22 +92,61 @@ export default function AddMemoryScreen() {
   const onFlip = useCallback((back: boolean) => setShowingBack(back), []);
 
   const textInputTypography = useMemo(
-    () => (memoryKind === 'note' && !imageUri ? resolveWallPostTextStyle(fonts, textFont, textSize) : null),
-    [fonts, imageUri, memoryKind, textFont, textSize],
+    () => (memoryKind === 'note' && !imageUri && !videoUri ? resolveWallPostTextStyle(fonts, textFont, textSize) : null),
+    [fonts, imageUri, memoryKind, textFont, textSize, videoUri],
   );
   const selectedTextColor = useMemo(() => resolveWallPostTextColor(textColor, colors), [colors, textColor]);
   // Pick up photo from Polaroid camera screen
   const capturedUri = Array.isArray(params.capturedUri) ? params.capturedUri[0] : params.capturedUri;
   const capturedVideoUri = Array.isArray(params.capturedVideoUri) ? params.capturedVideoUri[0] : params.capturedVideoUri;
+  const mediaUri = Array.isArray(params.mediaUri) ? params.mediaUri[0] : params.mediaUri;
+  const mediaType = Array.isArray(params.mediaType) ? params.mediaType[0] : params.mediaType;
+  const initialKind = Array.isArray(params.kind) ? params.kind[0] : params.kind;
   useEffect(() => {
     if (capturedUri) {
       setImageUri(capturedUri);
       setVideoUri(capturedVideoUri ?? null);
       if (capturedVideoUri) setVideoMuted(false);
+      setSelectedVoice(null);
+      setSelectedSong(null);
+      setSongPreviewRequestKey(null);
       setPhotoSource('camera');
       setMemoryKind('photo');
     }
   }, [capturedUri, capturedVideoUri]);
+
+  useEffect(() => {
+    if (mediaUri) {
+      if (!isPremium) {
+        showMediaMemoryPaywall(() => pushOnce(router, '/(app)/store'));
+        replaceOnce(router, backTo ? (backTo as any) : '/friends');
+        return;
+      }
+      const isVideo = mediaType === 'video';
+      setImageUri(isVideo ? null : mediaUri);
+      setVideoUri(isVideo ? mediaUri : null);
+      setVideoMuted(false);
+      setSelectedVoice(null);
+      setSelectedSong(null);
+      setSongPreviewRequestKey(null);
+      setPhotoSource('camera');
+      setMemoryKind('media');
+      setShowingBack(false);
+      setFilter(null);
+      setDateStamp(false);
+      setBackText('');
+      return;
+    }
+
+    if (initialKind === 'media' && !isPremium) {
+      showMediaMemoryPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
+
+    if (initialKind === 'media' || initialKind === 'photo' || initialKind === 'note' || initialKind === 'song') {
+      setMemoryKind(initialKind);
+    }
+  }, [backTo, initialKind, isPremium, mediaType, mediaUri, router]);
 
   useEffect(() => {
     setCaptionSuggestions([]);
@@ -192,25 +232,6 @@ export default function AddMemoryScreen() {
     });
   }
 
-  function selectMemoryKind(nextKind: MemoryKind) {
-    setError('');
-    setShowingBack(false);
-    setMemoryKind(nextKind);
-    if (nextKind !== 'photo') {
-      setImageUri(null);
-      setVideoUri(null);
-      setVideoMuted(false);
-      setPhotoSource(null);
-      setFilter(null);
-      setDateStamp(false);
-      setBackText('');
-      setCaptionSuggestions([]);
-    }
-    if (nextKind === 'note') {
-      setBackText('');
-    }
-  }
-
   function applyMemoryPrompt(prompt: MemoryPrompt) {
     setError('');
     setShowingBack(false);
@@ -218,6 +239,7 @@ export default function AddMemoryScreen() {
     setImageUri(null);
     setVideoUri(null);
     setVideoMuted(false);
+    setSelectedVoice(null);
     setPhotoSource(null);
     setFilter(null);
     setDateStamp(false);
@@ -240,6 +262,7 @@ export default function AddMemoryScreen() {
     const friendFacts = user ? getFriendFactsFor(authenticatedUser.id, user.id).map((fact) => fact.body) : [];
     return {
       facts: [...(contact?.facts ?? []), ...(user?.profileFacts ?? []), ...friendFacts],
+      personalityTraits: [...(contact?.personalityTraits ?? []), ...(user?.profilePersonalityTraits ?? [])],
       relationshipTags: contact?.tags ?? [],
       previousMemoryCount,
     };
@@ -261,6 +284,50 @@ export default function AddMemoryScreen() {
       setMemoryKind('photo');
       setShowingBack(false);
     }
+  }
+
+  async function pickRegularMedia(source: 'camera' | 'gallery') {
+    if (!isPremium) {
+      showMediaMemoryPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
+
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync(memoryMediaPickerOptions)
+        : await ImagePicker.launchImageLibraryAsync(memoryMediaPickerOptions);
+    } catch {
+      Alert.alert('Camera unavailable', 'The camera is not available on this device. Try this on a real phone or choose from your gallery.');
+      return;
+    }
+    const asset = result.canceled ? null : result.assets[0];
+    if (!asset?.uri) return;
+
+    if (asset.type === 'video') {
+      const durationMs = asset.duration ?? null;
+      if (durationMs && durationMs > REGULAR_VIDEO_MAX_DURATION_MS + 250) {
+        Alert.alert('Video too long', 'Regular video memories can be up to 5 seconds.');
+        return;
+      }
+      setImageUri(null);
+      setVideoUri(asset.uri);
+      setVideoMuted(false);
+    } else {
+      setImageUri(asset.uri);
+      setVideoUri(null);
+      setVideoMuted(false);
+    }
+    setSelectedSong(null);
+    setSongPreviewRequestKey(null);
+    setPhotoSource(source);
+    setMemoryDateInput(getDateKey(new Date()));
+    setMemoryKind('media');
+    setShowingBack(false);
+    setFilter(null);
+    setDateStamp(false);
+    setBackText('');
+    setError('');
   }
 
   function openPhotoSourcePicker() {
@@ -301,6 +368,7 @@ export default function AddMemoryScreen() {
       memoryDate: canChooseMemoryDate ? (parseMemoryDateInput(memoryDateInput) ?? new Date().toISOString()) : new Date().toISOString(),
       draftCaption: body.trim() || null,
       relationshipTags: contact?.tags ?? [],
+      personalityTraits: [...(contact?.personalityTraits ?? []), ...(user?.profilePersonalityTraits ?? [])],
       facts: [...(contact?.facts ?? []), ...(user?.profileFacts ?? []), ...friendFacts],
       notes: [contact?.note ?? '', ...privateNoteText],
       previousCaptions: previousPosts.map((post) => post.body),
@@ -348,14 +416,21 @@ export default function AddMemoryScreen() {
 
   async function handleSave() {
     const isSongMemory = memoryKind === 'song';
+    const isMediaMemory = memoryKind === 'media';
+    const isPolaroidMemory = memoryKind === 'photo';
     if (isSongMemory && !selectedSong) { setError('Choose a song to add to the wall.'); return; }
-    if (!isSongMemory && !body.trim() && !imageUri) { setError('Add a photo or write something to remember.'); return; }
+    if (!isSongMemory && !body.trim() && !imageUri && !videoUri && !selectedVoice) { setError('Add media, write something, or record voice.'); return; }
+    if (isMediaMemory && !isPremium) {
+      showMediaMemoryPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
+    if (isMediaMemory && !imageUri && !videoUri) { setError('Add a photo or video.'); return; }
     if (selectedTargets.length === 0) { setError('Choose at least one wall.'); return; }
     const selectedMemoryDate = canChooseMemoryDate ? parseMemoryDateInput(memoryDateInput) : null;
     if (canChooseMemoryDate && !selectedMemoryDate) { setError('Choose a valid memory date like 2026-05-15.'); return; }
     if (selectedMemoryDate && isFutureDateKey(selectedMemoryDate)) { setError('Memory dates cannot be in the future.'); return; }
     setError('');
-    const postType = isSongMemory ? 'song' : imageUri ? 'polaroid' : 'note';
+    const postType = isSongMemory ? 'song' : isMediaMemory ? 'media' : isPolaroidMemory && imageUri ? 'polaroid' : 'note';
     const locationName = normalizeLocationName(locationNameInput);
 
     const posts: CreateWallPostInput[] = selectedTargets.map((target) => {
@@ -383,15 +458,16 @@ export default function AddMemoryScreen() {
         imageUri: null,
         videoUri: null,
         videoMuted: !!videoUri && videoMuted,
-        cardColor: imageUri ? cardColor : null,
-        backText: imageUri ? (backText.trim() || null) : null,
-        filter: imageUri ? filter : null,
+        cardColor: isPolaroidMemory && imageUri ? cardColor : null,
+        backText: isPolaroidMemory && imageUri ? (backText.trim() || null) : null,
+        filter: isPolaroidMemory && imageUri ? filter : null,
         textFont: postType === 'note' ? textFont : null,
         textSize: postType === 'note' ? textSize : null,
         textEffect: postType === 'note' ? textEffect : null,
         textColor: postType === 'note' ? textColor : null,
-        dateStamp: !!imageUri && dateStamp,
+        dateStamp: isPolaroidMemory && !!imageUri && dateStamp,
         song: selectedSong,
+        voice: selectedVoice,
         memoryDate: selectedMemoryDate,
         locationName,
       };
@@ -403,6 +479,8 @@ export default function AddMemoryScreen() {
         imageUri: isSongMemory ? null : imageUri,
         videoUri: isSongMemory ? null : videoUri,
         videoMuted: !!videoUri && videoMuted,
+        audioUri: selectedVoice?.uri ?? null,
+        audioDurationMs: selectedVoice?.durationMs ?? null,
         memoryDate: selectedMemoryDate,
         posts,
       });
@@ -414,24 +492,31 @@ export default function AddMemoryScreen() {
       }
 
       const target = selectedTargets[0];
-      if (target.entityType === 'user') {
-        replaceOnce(router, { pathname: '/(app)/profiles/user/[userId]', params: { userId: target.id } });
-      } else {
-        replaceOnce(router, { pathname: '/(app)/profiles/contact/[contactId]', params: { contactId: target.id } });
-      }
+      replaceOnce(router, getPostSaveProfileDestination(target, contacts, authenticatedUser.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     }
   }
 
-  const previewPostType = memoryKind === 'song' ? 'song' : imageUri ? 'polaroid' : 'note';
-  const hasPreview = memoryKind === 'song' ? !!selectedSong : !!(body.trim() || imageUri || selectedSong);
+  const isMediaMemory = memoryKind === 'media';
+  const isPolaroidMemory = memoryKind === 'photo';
+  const hasMediaAsset = !!(imageUri || videoUri);
+  const isMediaChoiceAwaitingSource = (isPolaroidMemory || isMediaMemory) && !hasMediaAsset;
+  const previewPostType = memoryKind === 'song' ? 'song' : isMediaMemory ? 'media' : isPolaroidMemory && imageUri ? 'polaroid' : 'note';
+  const hasPreview = isMediaChoiceAwaitingSource
+    ? false
+    : memoryKind === 'song'
+      ? !!selectedSong || !!selectedVoice || !!body.trim()
+      : !!(body.trim() || imageUri || videoUri || selectedSong || selectedVoice);
+  const hasPolaroidInState = memoryKind === 'photo' && !!imageUri;
   const inputLabel = memoryKind === 'song'
     ? 'Song Note'
     : showingBack
       ? 'Back of Card'
-      : imageUri
+      : isPolaroidMemory && imageUri
         ? 'Front Caption'
+        : isMediaMemory
+          ? 'Caption'
         : 'Memory Note';
   const inputPlaceholder = memoryKind === 'song'
     ? 'Why does this song belong here?'
@@ -439,7 +524,11 @@ export default function AddMemoryScreen() {
       ? 'Write something on the back...'
       : 'What do you want to remember?';
   const showSongPicker = memoryKind === 'song' || memoryKind === 'note' || (memoryKind === 'photo' && !!imageUri);
-  const canChooseMemoryDate = isPremium && memoryKind === 'photo' && !!imageUri && photoSource === 'gallery' && !videoUri;
+  const showMemoryPromptPicker = memoryKind === 'note' && composerMode === 'text' && !showingBack && !hasPolaroidInState;
+  const showComposer = !isMediaChoiceAwaitingSource;
+  const canChooseMemoryDate = isPremium
+    && ((memoryKind === 'photo' && !!imageUri && photoSource === 'gallery' && !videoUri)
+      || (memoryKind === 'media' && !!(imageUri || videoUri) && photoSource === 'gallery'));
 
   return (
     <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={addMemory.isPending ? 'Saving…' : 'Save Memory'} onPress={handleSave} disabled={addMemory.isPending} />}>
@@ -499,7 +588,7 @@ export default function AddMemoryScreen() {
           <View style={styles.memoryDateCopy}>
             <Text style={styles.memoryDateLabel}>Memory Date</Text>
             <Text style={styles.memoryDateHint}>
-              Choose when this gallery photo happened.
+              Choose when this memory happened.
             </Text>
           </View>
         </View>
@@ -521,7 +610,7 @@ export default function AddMemoryScreen() {
           value={memoryDateInput}
           onChangeText={setMemoryDateInput}
           placeholder="YYYY-MM-DD"
-          placeholderTextColor={colors.inkMuted}
+          placeholderTextColor={colors.ink}
           autoCapitalize="none"
           keyboardType="numbers-and-punctuation"
           style={styles.memoryDateInput}
@@ -529,25 +618,7 @@ export default function AddMemoryScreen() {
       </View>
       ) : null}
 
-      <View style={styles.kindTabs}>
-        {MEMORY_KIND_OPTIONS.map((option) => {
-          const active = memoryKind === option.id;
-          return (
-            <Pressable
-              key={option.id}
-              onPress={() => selectMemoryKind(option.id)}
-              style={[styles.kindTab, active && styles.kindTabActive]}
-              accessibilityRole="button"
-              accessibilityLabel={`Create ${option.label.toLowerCase()} memory`}
-            >
-              <Ionicons name={option.icon} size={18} color={active ? colors.accent : colors.inkSoft} />
-              <Text style={[styles.kindTabLabel, active && styles.kindTabLabelActive]}>{option.label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {!showingBack ? (
+      {showMemoryPromptPicker ? (
         <MemoryPromptPicker prompts={memoryPrompts} onSelectPrompt={applyMemoryPrompt} />
       ) : null}
 
@@ -556,6 +627,7 @@ export default function AddMemoryScreen() {
           selectedSong={selectedSong}
           onSelect={(song) => {
             setSelectedSong(song);
+            if (memoryKind === 'note' || memoryKind === 'song') setMemoryKind('song');
             setSongPreviewRequestKey(`${song.provider}:${song.providerTrackId}:${Date.now()}`);
             if (memoryKind === 'song') {
               setImageUri(null);
@@ -566,6 +638,7 @@ export default function AddMemoryScreen() {
           onRemove={() => {
             setSelectedSong(null);
             setSongPreviewRequestKey(null);
+            if (memoryKind === 'song') setMemoryKind('note');
           }}
         />
       ) : null}
@@ -574,9 +647,9 @@ export default function AddMemoryScreen() {
         <View style={styles.previewSection}>
           <WallPostCard
             authorName={authenticatedUser.displayName}
-            cardColor={imageUri ? cardColor : null}
+            cardColor={isPolaroidMemory && imageUri ? cardColor : null}
             preview
-            onFlip={imageUri ? onFlip : undefined}
+            onFlip={isPolaroidMemory && imageUri ? onFlip : undefined}
             autoPlaySongPreviewKey={songPreviewRequestKey}
             post={{
               id: 'preview',
@@ -586,26 +659,29 @@ export default function AddMemoryScreen() {
               visibility,
               postType: previewPostType,
               body: body.trim(),
-              cardColor: imageUri ? cardColor : null,
-              backText: imageUri ? (backText.trim() || null) : null,
+              cardColor: isPolaroidMemory && imageUri ? cardColor : null,
+              backText: isPolaroidMemory && imageUri ? (backText.trim() || null) : null,
               imageUri: memoryKind === 'song' ? null : imageUri,
               videoUri: memoryKind === 'song' ? null : videoUri,
               videoMuted: memoryKind === 'song' ? false : !!videoUri && videoMuted,
               memoryDate: canChooseMemoryDate ? parseMemoryDateInput(memoryDateInput) : null,
               createdAt: new Date().toISOString(),
-              filter: imageUri ? filter : null,
+              filter: isPolaroidMemory && imageUri ? filter : null,
               textFont: previewPostType === 'note' ? textFont : null,
               textSize: previewPostType === 'note' ? textSize : null,
               textEffect: previewPostType === 'note' ? textEffect : null,
               textColor: previewPostType === 'note' ? textColor : null,
-              dateStamp: !!imageUri && dateStamp,
+              dateStamp: isPolaroidMemory && !!imageUri && dateStamp,
               song: selectedSong,
+              voice: selectedVoice,
               locationName: normalizeLocationName(locationNameInput),
             }}
           />
-          {imageUri ? (
+          {(imageUri || videoUri) ? (
             <Text style={styles.previewHint}>
-              {normalizeLocationName(locationNameInput)
+              {isMediaMemory
+                ? 'Regular media will appear as a clean photo/video memory, not a Memory Card.'
+                : normalizeLocationName(locationNameInput)
                 ? 'Tap the card to flip — location is on the back'
                 : videoUri
                   ? 'Preview the Live Memory Card, retake its cover, or add a photo filter below.'
@@ -615,48 +691,69 @@ export default function AddMemoryScreen() {
         </View>
       )}
 
-      <View style={styles.inputSection}>
-        <View style={styles.inputHeaderRow}>
-          <Text style={styles.inputLabel}>{inputLabel}</Text>
+      {showComposer ? (
+        <View style={styles.inputSection}>
+          <View style={styles.inputHeaderRow}>
+            <Text style={styles.inputLabel}>{inputLabel}</Text>
+            {memoryKind === 'photo' && imageUri && !showingBack ? (
+              <Pressable onPress={handleGenerateCaption} disabled={isGeneratingCaption} style={[styles.aiButton, isGeneratingCaption && styles.aiButtonDisabled]}>
+                <Ionicons name="sparkles-outline" size={16} color={colors.accent} />
+                <Text style={styles.aiButtonText}>{isGeneratingCaption ? 'Writing…' : 'AI Caption'}</Text>
+              </Pressable>
+            ) : null}
+          </View>
           {memoryKind === 'photo' && imageUri && !showingBack ? (
-            <Pressable onPress={handleGenerateCaption} disabled={isGeneratingCaption} style={[styles.aiButton, isGeneratingCaption && styles.aiButtonDisabled]}>
-              <Ionicons name="sparkles-outline" size={16} color={colors.accent} />
-              <Text style={styles.aiButtonText}>{isGeneratingCaption ? 'Writing…' : 'AI Caption'}</Text>
-            </Pressable>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.toneScroll}>
+              {AI_CAPTION_TONES.map((tone) => {
+                const active = captionTone === tone.id;
+                return (
+                  <Pressable key={tone.id} onPress={() => setCaptionTone(tone.id)} style={[styles.toneChip, active && styles.toneChipActive]}>
+                    <Text style={[styles.toneChipText, active && styles.toneChipTextActive]}>{tone.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          ) : null}
+          {showingBack ? (
+            <TextInput
+              multiline
+              onChangeText={setBackText}
+              placeholder={inputPlaceholder}
+              placeholderTextColor={colors.ink}
+              style={styles.textInput}
+              value={backText}
+            />
+          ) : (
+            <TextOrVoiceComposer
+              text={body}
+              onTextChange={setBody}
+              voice={selectedVoice}
+              onVoiceChange={(voice) => {
+                setSelectedVoice(voice);
+                setError('');
+              }}
+              placeholder={inputPlaceholder}
+              previewAuthorName={authenticatedUser.displayName}
+              voiceLabel="Voice note"
+              voiceHelperText="Record voice instead of typing."
+              maxVoiceMs={DEFAULT_VOICE_RECORDING_MAX_MS}
+              textInputStyle={[styles.textInput, memoryKind === 'note' && !imageUri && !videoUri && textInputTypography, memoryKind === 'note' && !imageUri && !videoUri && { color: selectedTextColor }]}
+              onModeChange={setComposerMode}
+            />
+          )}
+          {memoryKind === 'photo' && imageUri && !showingBack && captionSuggestions.length > 0 ? (
+            <View style={styles.captionSuggestionList}>
+              {captionSuggestions.map((caption) => (
+                <Pressable key={caption} onPress={() => setBody(caption)} style={[styles.captionSuggestion, body.trim() === caption && styles.captionSuggestionActive]}>
+                  <Text style={styles.captionSuggestionText}>{caption}</Text>
+                </Pressable>
+              ))}
+            </View>
           ) : null}
         </View>
-        {memoryKind === 'photo' && imageUri && !showingBack ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.toneScroll}>
-            {AI_CAPTION_TONES.map((tone) => {
-              const active = captionTone === tone.id;
-              return (
-                <Pressable key={tone.id} onPress={() => setCaptionTone(tone.id)} style={[styles.toneChip, active && styles.toneChipActive]}>
-                  <Text style={[styles.toneChipText, active && styles.toneChipTextActive]}>{tone.label}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        ) : null}
-        <TextInput
-          multiline
-          onChangeText={showingBack ? setBackText : setBody}
-          placeholder={inputPlaceholder}
-          placeholderTextColor={colors.inkMuted}
-          style={[styles.textInput, memoryKind === 'note' && !imageUri && !showingBack && textInputTypography, memoryKind === 'note' && !imageUri && !showingBack && { color: selectedTextColor }]}
-          value={showingBack ? backText : body}
-        />
-        {memoryKind === 'photo' && imageUri && !showingBack && captionSuggestions.length > 0 ? (
-          <View style={styles.captionSuggestionList}>
-            {captionSuggestions.map((caption) => (
-              <Pressable key={caption} onPress={() => setBody(caption)} style={[styles.captionSuggestion, body.trim() === caption && styles.captionSuggestionActive]}>
-                <Text style={styles.captionSuggestionText}>{caption}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-      </View>
+      ) : null}
 
-      {memoryKind === 'note' && !imageUri ? (
+      {memoryKind === 'note' && !imageUri && !videoUri ? (
         <MemoryTextStylePicker
           selectedFont={textFont}
           selectedSize={textSize}
@@ -669,11 +766,38 @@ export default function AddMemoryScreen() {
         />
       ) : null}
 
+      {memoryKind === 'media' ? <View style={styles.photoRow}>
+        {!imageUri && !videoUri ? (
+          <>
+            <Pressable onPress={() => pickRegularMedia('camera')} style={styles.photoOption}>
+              <Ionicons name="camera-outline" size={28} color={colors.ink} />
+              <Text style={styles.photoOptionLabel}>Camera</Text>
+            </Pressable>
+            <Pressable onPress={() => pickRegularMedia('gallery')} style={[styles.photoOption, !isPremium && styles.photoOptionLocked]}>
+              <Ionicons name={isPremium ? 'images-outline' : 'lock-closed-outline'} size={28} color={colors.ink} />
+              <Text style={styles.photoOptionLabel}>Gallery</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <Pressable onPress={() => { setImageUri(null); setVideoUri(null); setVideoMuted(false); setPhotoSource(null); }} style={styles.changePhotoButton}>
+              <Text style={styles.changePhotoLabel}>{videoUri ? 'Remove Video' : 'Remove Photo'}</Text>
+            </Pressable>
+            <Pressable onPress={() => pickRegularMedia('camera')} style={styles.changePhotoButton}>
+              <Text style={styles.changePhotoLabel}>Retake</Text>
+            </Pressable>
+            <Pressable onPress={() => pickRegularMedia('gallery')} style={styles.changePhotoButton}>
+              <Text style={styles.changePhotoLabel}>Choose Different</Text>
+            </Pressable>
+          </>
+        )}
+      </View> : null}
+
       {memoryKind === 'photo' ? <View style={styles.photoRow}>
         {!imageUri && (
           <Pressable onPress={openCamera} style={styles.photoOption}>
-            <Ionicons name="camera-outline" size={28} color={colors.ink} />
-            <Text style={styles.photoOptionLabel}>Camera</Text>
+            <PolaroidIcon size={28} color={colors.ink} />
+            <Text style={styles.photoOptionLabel}>Memory Card Camera</Text>
           </Pressable>
         )}
         {!imageUri && (
@@ -699,25 +823,25 @@ export default function AddMemoryScreen() {
         )}
       </View> : null}
 
-      {imageUri && videoUri ? (
+      {isPolaroidMemory && imageUri && videoUri ? (
         <View style={styles.dateStampSection}>
           <Pressable onPress={() => setVideoMuted((muted) => !muted)} style={styles.dateStampToggle}>
-            <Ionicons name={videoMuted ? 'checkbox' : 'square-outline'} size={20} color={videoMuted ? colors.accent : colors.inkMuted} />
+            <Ionicons name={videoMuted ? 'checkbox' : 'square-outline'} size={20} color={videoMuted ? colors.accent : colors.ink} />
             <Text style={[styles.dateStampLabel, videoMuted && styles.dateStampLabelActive]}>Turn off audio for this Live Memory Card</Text>
           </Pressable>
         </View>
       ) : null}
 
-      {imageUri && (
+      {isPolaroidMemory && imageUri && (
         <View style={styles.dateStampSection}>
           <Pressable onPress={() => setDateStamp((d) => !d)} style={styles.dateStampToggle}>
-            <Ionicons name={dateStamp ? 'checkbox' : 'square-outline'} size={20} color={dateStamp ? colors.accent : colors.inkMuted} />
+            <Ionicons name={dateStamp ? 'checkbox' : 'square-outline'} size={20} color={dateStamp ? colors.accent : colors.ink} />
             <Text style={[styles.dateStampLabel, dateStamp && styles.dateStampLabelActive]}>Add date stamp to photo</Text>
           </Pressable>
         </View>
       )}
 
-      {imageUri && (
+      {isPolaroidMemory && imageUri && (
         <View style={styles.filterSection}>
           <Text style={styles.filterLabel}>Photo Filter</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
@@ -738,7 +862,7 @@ export default function AddMemoryScreen() {
         </View>
       )}
 
-      {imageUri && (
+      {isPolaroidMemory && imageUri && (
       <View style={styles.colorSection}>
         <Text style={styles.colorLabel}>Card Color</Text>
         <View style={styles.colorRow}>
@@ -773,8 +897,8 @@ export default function AddMemoryScreen() {
 
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
-    backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 28) },
     subtitle: { fontFamily: fonts.body, fontSize: 15, color: colors.inkSoft },
     targetSection: { gap: spacing.xs },
@@ -799,7 +923,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     targetChipActive: {
       borderColor: colors.accent,
-      backgroundColor: colors.accent + '12',
+      backgroundColor: colors.paper,
     },
     targetAvatar: {
       width: 30,
@@ -811,21 +935,21 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     targetAvatarImage: { width: '100%', height: '100%' },
     targetInitials: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.white },
-    targetChipText: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    targetChipText: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.ink },
     targetChipTextActive: { fontFamily: fonts.bodyBold, color: colors.ink },
     photoRow: { flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap', justifyContent: 'center' },
     photoOption: {
       width: 100, height: 100, borderRadius: radius.md, backgroundColor: colors.paper,
       borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
     },
-    photoOptionLocked: { opacity: 0.72 },
+    photoOptionLocked: { opacity: 0.9 },
     photoOptionIcon: { fontSize: 28 },
-    photoOptionLabel: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    photoOptionLabel: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.ink },
     changePhotoButton: {
       paddingVertical: spacing.sm, paddingHorizontal: spacing.lg, borderRadius: radius.pill,
       borderWidth: 1, borderColor: colors.line,
     },
-    changePhotoLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft },
+    changePhotoLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.ink },
     textInput: {
       minHeight: 120, borderRadius: radius.md, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line,
       padding: spacing.md, fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.ink, textAlignVertical: 'top',
@@ -863,8 +987,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: spacing.md,
       paddingVertical: 7,
     },
-    memoryDateChipActive: { borderColor: colors.accent, backgroundColor: colors.accent + '14' },
-    memoryDateChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    memoryDateChipActive: { borderColor: colors.accent, backgroundColor: colors.paper },
+    memoryDateChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.ink },
     memoryDateChipTextActive: { fontFamily: fonts.bodyBold, color: colors.accent },
     memoryDateInput: {
       borderRadius: radius.md,
@@ -881,38 +1005,12 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       alignSelf: 'flex-start',
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: colors.accent + '66',
-      backgroundColor: colors.accent + '12',
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
       paddingHorizontal: spacing.md,
       paddingVertical: 8,
     },
     memoryDateLockedText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent },
-    kindTabs: {
-      flexDirection: 'row' as const,
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: colors.line,
-      backgroundColor: colors.paperMuted,
-      padding: 4,
-      gap: 4,
-    },
-    kindTab: {
-      flex: 1,
-      minHeight: 42,
-      borderRadius: 8,
-      flexDirection: 'row' as const,
-      alignItems: 'center' as const,
-      justifyContent: 'center' as const,
-      gap: 6,
-      paddingHorizontal: spacing.sm,
-    },
-    kindTabActive: {
-      backgroundColor: colors.paper,
-      borderWidth: 1,
-      borderColor: colors.accent,
-    },
-    kindTabLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft },
-    kindTabLabelActive: { fontFamily: fonts.bodyBold, color: colors.accent },
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
     colorSection: { gap: spacing.xs },
     colorLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
@@ -936,8 +1034,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingVertical: 7,
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: colors.accent + '66',
-      backgroundColor: colors.accent + '12',
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
     },
     aiButtonDisabled: { opacity: 0.6 },
     aiButtonText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent },
@@ -950,8 +1048,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderColor: colors.line,
       backgroundColor: colors.paper,
     },
-    toneChipActive: { borderColor: colors.accent, backgroundColor: colors.accent + '14' },
-    toneChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    toneChipActive: { borderColor: colors.accent, backgroundColor: colors.paper },
+    toneChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.ink },
     toneChipTextActive: { fontFamily: fonts.bodyBold, color: colors.accent },
     captionSuggestionList: { gap: spacing.xs },
     captionSuggestion: {
@@ -962,7 +1060,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
-    captionSuggestionActive: { borderColor: colors.accent, backgroundColor: colors.accent + '10' },
+    captionSuggestionActive: { borderColor: colors.accent, backgroundColor: colors.paper },
     captionSuggestionText: { fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 19, color: colors.ink },
     filterSection: { gap: spacing.xs },
     filterLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
@@ -998,6 +1096,23 @@ function dedupePosts(posts: WallPost[]) {
 
 function memoryTargetKey(target: Pick<PeopleListItem, 'entityType' | 'id'>) {
   return `${target.entityType}:${target.id}`;
+}
+
+function getPostSaveProfileDestination(
+  target: PeopleListItem,
+  contacts: Contact[],
+  currentUserId: string,
+) {
+  if (target.entityType === 'contact') {
+    return { pathname: '/(app)/profiles/contact/[contactId]', params: { contactId: target.id } } as const;
+  }
+
+  const linkedContact = contacts.find((contact) => contact.ownerUserId === currentUserId && contact.linkedUserId === target.id);
+  if (linkedContact) {
+    return { pathname: '/(app)/profiles/contact/[contactId]', params: { contactId: linkedContact.id } } as const;
+  }
+
+  return { pathname: '/(app)/profiles/user/[userId]', params: { userId: target.id } } as const;
 }
 
 function parseInitialTargetKeys(

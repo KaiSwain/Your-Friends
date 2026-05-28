@@ -25,6 +25,7 @@ export type ExcitedFeature =
   | 'private_notes'
   | 'calendar'
   | 'music_memories'
+  | 'prompts_movies'
   | 'ai_captions'
   | 'all_of_the_above'
   | 'not_sure';
@@ -175,6 +176,7 @@ const VALID_EXCITED_FEATURES = new Set<ExcitedFeature>([
   'private_notes',
   'calendar',
   'music_memories',
+  'prompts_movies',
   'ai_captions',
   'all_of_the_above',
   'not_sure',

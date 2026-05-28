@@ -59,8 +59,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, tint: string) => StyleS
       gap: spacing.sm,
       borderRadius: radius.lg,
       borderWidth: 1,
-      borderColor: tint + '55',
-      backgroundColor: colors.paper + 'F2',
+      borderColor: withAlpha(colors.line, 0.42),
+      backgroundColor: colors.paper,
       padding: spacing.md,
       ...shadow.card,
     },
@@ -75,7 +75,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, tint: string) => StyleS
       borderRadius: 21,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: tint + '18',
+      backgroundColor: colors.paper,
     },
     copy: {
       flex: 1,
@@ -97,14 +97,14 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, tint: string) => StyleS
       fontFamily: fonts.body,
       fontSize: 13,
       lineHeight: 18,
-      color: colors.inkSoft,
+      color: colors.ink,
     },
     cancelButton: {
       alignSelf: 'flex-start',
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: colors.error + '55',
-      backgroundColor: colors.error + '10',
+      borderColor: colors.error,
+      backgroundColor: colors.paper,
       paddingHorizontal: spacing.md,
       paddingVertical: 7,
     },
@@ -114,6 +114,16 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, tint: string) => StyleS
       color: colors.error,
     },
 });
+
+function withAlpha(color: string, alpha: number) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = match[1];
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
 
 function formatUnlockText(dateKey: string, timeKey: string) {
   const [year, month, day] = dateKey.split('-').map(Number);

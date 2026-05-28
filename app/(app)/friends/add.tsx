@@ -11,7 +11,8 @@ import { FormField } from '../../../src/components/FormField';
 import { SectionCard } from '../../../src/components/SectionCard';
 import { useAuth } from '../../../src/features/auth/AuthContext';
 import {
-  REFERRAL_REWARD_LABEL,
+  QR_PREMIUM_ACTIVE_GRANT_LIMIT,
+  QR_PREMIUM_GRANT_LABEL,
   usePremium,
 } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
@@ -29,10 +30,9 @@ export default function AddFriendScreen() {
   const params = useLocalSearchParams<{ code?: string; scan?: string }>();
   const { currentUser } = useAuth();
   const {
-    referralRewardCount,
-    referrerCode,
-    pendingReferralCode,
-    applyReferralCode,
+    applyQrPremiumGrant,
+    isPremium,
+    qrPremiumGrantCount,
   } = usePremium();
   const {
     addFriendByCode,
@@ -58,22 +58,17 @@ export default function AddFriendScreen() {
   const [friendError, setFriendError] = useState('');
   const [friendNotice, setFriendNotice] = useState('');
   const [friendBusy, setFriendBusy] = useState(false);
+  const [premiumGrantCandidateCode, setPremiumGrantCandidateCode] = useState<string | null>(null);
   const [requestBusyId, setRequestBusyId] = useState<string | null>(null);
   const [requestError, setRequestError] = useState('');
   const [linkedProfileBusyId, setLinkedProfileBusyId] = useState<string | null>(null);
   const [linkedProfileError, setLinkedProfileError] = useState('');
-  const [enteredReferralCode, setEnteredReferralCode] = useState('');
-  const [referralError, setReferralError] = useState<string | null>(null);
+  const [qrGrantNotice, setQrGrantNotice] = useState('');
+  const [qrGrantError, setQrGrantError] = useState('');
 
   const [scanning, setScanning] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const scannedRef = useRef(false);
-
-  useEffect(() => {
-    if (pendingReferralCode && !referrerCode) {
-      setEnteredReferralCode((current) => current || pendingReferralCode);
-    }
-  }, [pendingReferralCode, referrerCode]);
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   const authenticatedUser = currentUser;
@@ -135,10 +130,13 @@ export default function AddFriendScreen() {
   }
 
   async function handleAddByCode() {
-    if (!friendCode.trim()) { setFriendError('Enter a friend code.'); return; }
+    const code = extractFriendCode(friendCode);
+    if (!code) { setFriendError('Enter a friend code.'); return; }
     setFriendBusy(true);
     setFriendError('');
     setFriendNotice('');
+    setQrGrantError('');
+    setQrGrantNotice('');
     const result = await addFriendByCode(authenticatedUser.id, friendCode);
     if (!result.ok) { setFriendError(result.error); setFriendBusy(false); return; }
     if (result.requested) {
@@ -147,6 +145,16 @@ export default function AddFriendScreen() {
       setFriendBusy(false);
       setFriendCode('');
       return;
+    }
+    if (premiumGrantCandidateCode === code && result.alreadyFriends) {
+      applyQrPremiumGrant(code).then((grantResult) => {
+        if (!grantResult.ok) return;
+        setQrGrantNotice(grantResult.granted === false
+          ? 'You already received free Premium from this QR.'
+          : `${QR_PREMIUM_GRANT_LABEL} unlocked from this Premium friend.`);
+      }).catch(() => {
+        // Adding the friend is the main action. Premium QR grants should never block it.
+      });
     }
     if (result.contactId) {
       replaceOnce(router, `/(app)/profiles/contact/${result.contactId}`);
@@ -185,16 +193,6 @@ export default function AddFriendScreen() {
     setRequestBusyId(null);
   }
 
-  async function submitReferralCode() {
-    setReferralError(null);
-    const result = await applyReferralCode(enteredReferralCode);
-    if (!result.ok) {
-      setReferralError(result.error ?? 'Could not apply code.');
-      return;
-    }
-    setEnteredReferralCode('');
-  }
-
   async function openScanner() {
     if (!permission?.granted) {
       const res = await requestPermission();
@@ -216,11 +214,24 @@ export default function AddFriendScreen() {
     const code = extractFriendCode(data);
     if (code && /^[A-Z0-9]{6,12}$/.test(code)) {
       setFriendCode(code);
+      setPremiumGrantCandidateCode(code);
       setFriendError('');
+      setFriendNotice('Code scanned. Tap Add friend to send or accept the friend request.');
+      setQrGrantError('');
+      setQrGrantNotice('');
     } else {
       setFriendError("That QR code doesn't look like a friend invite.");
     }
   }, []);
+
+  function handleFriendCodeChange(value: string) {
+    setFriendCode(value);
+    if (extractFriendCode(value) !== premiumGrantCandidateCode) {
+      setPremiumGrantCandidateCode(null);
+      setQrGrantError('');
+      setQrGrantNotice('');
+    }
+  }
 
   return (
     <AppScreen header={topBar} floatingHeaderOnScroll>
@@ -282,7 +293,7 @@ export default function AddFriendScreen() {
                       <Text style={styles.requestTitle}>{recipient?.displayName ?? 'Someone'}</Text>
                       <Text style={styles.requestSubtitle}>Waiting for them to accept</Text>
                     </View>
-                    <Ionicons name="time-outline" size={18} color={colors.inkSoft} />
+                    <Ionicons name="time-outline" size={18} color={colors.ink} />
                   </View>
                 );
               })}
@@ -318,16 +329,28 @@ export default function AddFriendScreen() {
               <Text style={styles.orText}>or type it</Text>
               <View style={styles.orLine} />
             </View>
-            <FormField autoCapitalize="characters" label="Friend code" onChangeText={setFriendCode} placeholder="e.g. AB3XK7PN" value={friendCode} />
+            <FormField autoCapitalize="characters" label="Friend code" onChangeText={handleFriendCodeChange} placeholder="e.g. AB3XK7PN" value={friendCode} />
             {friendError ? <Text style={styles.error}>{friendError}</Text> : null}
             {friendNotice ? <Text style={styles.notice}>{friendNotice}</Text> : null}
+            {qrGrantNotice ? <Text style={styles.notice}>{qrGrantNotice}</Text> : null}
+            {qrGrantError ? <Text style={styles.error}>{qrGrantError}</Text> : null}
             <ActionButton label={friendBusy ? 'Looking up…' : 'Add friend'} onPress={handleAddByCode} disabled={friendBusy} />
           </>
         )}
       </SectionCard>
 
       <SectionCard eyebrow="Your Code" title="Show your QR">
-        <Text style={styles.note}>Let a friend scan this to add you instantly.</Text>
+        <Text style={styles.note}>
+          Let a friend scan this to add you instantly. If your Premium is active, up to {QR_PREMIUM_ACTIVE_GRANT_LIMIT} friends can have a free {QR_PREMIUM_GRANT_LABEL} grant from your QR at the same time.
+        </Text>
+        <View style={[styles.premiumQrBanner, isPremium ? styles.premiumQrBannerActive : undefined]}>
+          <Ionicons name={isPremium ? 'sparkles' : 'lock-closed-outline'} size={16} color={isPremium ? colors.accent : colors.ink} />
+          <Text style={styles.premiumQrBannerText}>
+            {isPremium
+              ? 'Premium QR active. Scanning still adds you first; the free Premium grant can apply after you are connected.'
+              : 'Subscribe or receive free Premium before your QR can gift Premium to friends.'}
+          </Text>
+        </View>
         <View style={styles.qrCard}>
           <QRCode
             value={inviteLink}
@@ -346,69 +369,16 @@ export default function AddFriendScreen() {
           <Text style={styles.shareButtonLabel}>Share Link</Text>
         </Pressable>
       </SectionCard>
-
-      <SectionCard eyebrow="Refer a friend" title="Give 7 days, get 7 days">
-        {!referrerCode ? (
-          <View style={styles.referralAttentionRow}>
-            <View style={styles.referralSectionBadge}>
-              <Text style={styles.referralSectionBadgeText}>1</Text>
-            </View>
-            <Text style={styles.referralAttentionText}>Enter the code from whoever invited you.</Text>
-          </View>
-        ) : null}
-        <Text style={styles.note}>
-          Share your referral code. When a friend creates an account with it, both of you get {REFERRAL_REWARD_LABEL}, free.
-        </Text>
-        <View style={styles.referralCodeRow}>
-          <Text style={styles.referralCodeLabel}>Your code</Text>
-          <Text style={styles.referralCode} selectable>{authenticatedUser.friendCode}</Text>
-        </View>
-        <ActionButton
-          label="Share invite"
-          onPress={() =>
-            Share.share({
-              message: `Join me on Your Friends and use my referral code so we both get 7 days of Premium free.\n${inviteLink}\nReferral code: ${authenticatedUser.friendCode}`,
-            })
-          }
-          variant="secondary"
-        />
-        {referralRewardCount > 0 ? (
-          <View style={styles.referralRewardBanner}>
-            <Ionicons name="gift" size={16} color={colors.accent} />
-            <Text style={styles.referralRewardText}>
-              {referralRewardCount === 1
-                ? '1 referral reward earned'
-                : `${referralRewardCount} referral rewards earned`}
-            </Text>
-          </View>
-        ) : null}
-        {referrerCode ? (
-          <Text style={styles.referrerLine}>
-            Referral locked to code <Text style={styles.referrerCode}>{referrerCode}</Text>
+      {qrPremiumGrantCount > 0 ? (
+        <View style={styles.referralRewardBanner}>
+          <Ionicons name="gift" size={16} color={colors.accent} />
+          <Text style={styles.referralRewardText}>
+            {qrPremiumGrantCount === 1
+              ? '1 Premium QR scan gifted'
+              : `${qrPremiumGrantCount} Premium QR scans gifted`}
           </Text>
-        ) : (
-          <View style={styles.referrerForm}>
-            <Text style={styles.note}>Got referred? Enter the code once to give both of you {REFERRAL_REWARD_LABEL}.</Text>
-            <FormField
-              label="Referrer's friend code"
-              autoCapitalize="characters"
-              placeholder="e.g. AB3XK7PN"
-              value={enteredReferralCode}
-              onChangeText={(text) => {
-                setEnteredReferralCode(text);
-                if (referralError) setReferralError(null);
-              }}
-            />
-            {referralError ? <Text style={styles.error}>{referralError}</Text> : null}
-            <ActionButton
-              label="Apply code"
-              onPress={submitReferralCode}
-              variant="secondary"
-              disabled={!enteredReferralCode.trim()}
-            />
-          </View>
-        )}
-      </SectionCard>
+        </View>
+      ) : null}
 
       {existingFriendsWithoutProfile.length > 0 ? (
         <SectionCard eyebrow="Existing friends" title="Create profile for a friend">
@@ -456,37 +426,14 @@ export default function AddFriendScreen() {
 
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
-    backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     hero: { gap: spacing.sm },
     eyebrow: {
       fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent,
       letterSpacing: 0.8, textTransform: 'uppercase',
     },
     title: { fontFamily: fonts.heading, fontSize: 36, lineHeight: 40, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 36) },
-    referralAttentionRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.xs,
-      alignSelf: 'flex-start',
-      borderRadius: radius.pill,
-      backgroundColor: colors.error + '12',
-      borderWidth: 1,
-      borderColor: colors.error + '36',
-      paddingVertical: spacing.xs,
-      paddingHorizontal: spacing.sm,
-    },
-    referralSectionBadge: {
-      minWidth: 18,
-      height: 18,
-      borderRadius: 9,
-      backgroundColor: colors.error ?? '#EF4444',
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 5,
-    },
-    referralSectionBadgeText: { fontFamily: fonts.bodyBold, fontSize: 10, color: '#fff' },
-    referralAttentionText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink },
     subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
     note: { fontFamily: fonts.body, fontSize: 14, lineHeight: 21, color: colors.inkSoft },
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
@@ -528,6 +475,27 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: colors.paper, borderRadius: radius.md,
       paddingVertical: spacing.lg,
     },
+    premiumQrBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paperMuted,
+      padding: spacing.md,
+    },
+    premiumQrBannerActive: {
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
+    },
+    premiumQrBannerText: {
+      flex: 1,
+      fontFamily: fonts.bodyMedium,
+      fontSize: 13,
+      lineHeight: 18,
+      color: colors.inkSoft,
+    },
     qrCodeText: { fontFamily: fonts.heading, fontSize: 20, color: colors.accent, letterSpacing: 3, ...protectTextFromFontClipping(fonts.heading, 20) },
     shareButton: {
       alignSelf: 'center',
@@ -535,20 +503,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderRadius: radius.pill, backgroundColor: colors.accent,
     },
     shareButtonLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.white },
-    referralCodeRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: spacing.sm,
-      borderWidth: 1,
-      borderColor: colors.line,
-      borderRadius: radius.md,
-      padding: spacing.md,
-      backgroundColor: colors.paperMuted,
-      marginTop: spacing.xs,
-    },
-    referralCodeLabel: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkMuted, letterSpacing: 1.2 },
-    referralCode: { fontFamily: fonts.bodyBold, fontSize: 18, color: colors.ink, letterSpacing: 2 },
     referralRewardBanner: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -559,9 +513,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: 'rgba(245,194,66,0.18)',
     },
     referralRewardText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.ink },
-    referrerLine: { fontFamily: fonts.body, fontSize: 13, color: colors.inkSoft, marginTop: spacing.sm },
-    referrerCode: { fontFamily: fonts.bodyBold, color: colors.ink, letterSpacing: 1.4 },
-    referrerForm: { marginTop: spacing.sm, gap: spacing.xs },
 
     existingFriendList: { gap: spacing.sm, marginTop: spacing.sm },
     existingFriendRow: {

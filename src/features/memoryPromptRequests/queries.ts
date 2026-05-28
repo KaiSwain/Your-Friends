@@ -1,5 +1,6 @@
 import { createNotification } from '../../lib/notifications';
 import { supabase } from '../../lib/supabase';
+import { uploadMemoryImageVariants, uploadMemoryVideo } from '../../lib/memoryMediaUpload';
 import type {
   CompleteMemoryPromptRequestInput,
   CreateMemoryPromptRequestInput,
@@ -8,7 +9,9 @@ import type {
   WallPost,
 } from '../../types/domain';
 import { rowToWallPost } from '../social/mappers';
-import { rowToMemoryPromptRequest, songToPromptResponseDbColumns, songToWallPostDbColumns } from './mappers';
+import { hasTextOrVoice } from '../../lib/voiceAttachmentDb';
+import { getPromptExpiresAt, isPromptExpired } from '../../lib/promptExpiration';
+import { rowToMemoryPromptRequest, songToPromptResponseDbColumns, songToWallPostDbColumns, voiceToPromptQuestionDbColumns, voiceToPromptResponseDbColumns, voiceToWallPostDbColumns } from './mappers';
 
 export const memoryPromptQueryKeys = {
   requests: ['memoryPrompts', 'requests'] as const,
@@ -25,6 +28,7 @@ export async function fetchMemoryPromptRequests(): Promise<MemoryPromptRequest[]
 
 export async function createMemoryPromptRequest(requesterUserId: string, input: CreateMemoryPromptRequestInput): Promise<MemoryPromptRequest> {
   const promptText = cleanRequiredText(input.promptText, 'Write a prompt first.', 240);
+  const now = new Date().toISOString();
   const { data, error } = await supabase
     .from('memory_prompt_requests')
     .insert({
@@ -32,7 +36,9 @@ export async function createMemoryPromptRequest(requesterUserId: string, input: 
       recipient_user_id: input.recipientUserId,
       prompt_type: input.promptType,
       prompt_text: promptText,
+      ...voiceToPromptQuestionDbColumns(input.promptVoice),
       status: 'pending',
+      expires_at: getPromptExpiresAt(now),
     })
     .select()
     .single();
@@ -85,11 +91,30 @@ export async function completeMemoryPromptRequest(reviewerUserId: string, input:
 
   if (requestError || !requestRow) throw new Error(requestError?.message ?? 'Memory prompt is no longer available.');
   const request = rowToMemoryPromptRequest(requestRow);
+  if (isPromptExpired(request)) throw new Error('This memory prompt has expired.');
   const responseBody = cleanOptionalText(input.body, 1200);
   const responseSong = input.song ?? null;
+  const responseVoice = input.voice ?? null;
+  const responsePostType = input.responsePostType ?? null;
+  const responseImageUri = input.imageUri ?? null;
+  const responseVideoUri = input.videoUri ?? null;
   const referencedWallPostId = input.referencedWallPostId ?? null;
 
-  validateCompletion(request.promptType, responseBody, responseSong, referencedWallPostId);
+  validateCompletion(request.promptType, responseBody, responseSong, responseVoice, referencedWallPostId, responsePostType, responseImageUri, responseVideoUri);
+
+  const uploadedResponseImage = request.promptType === 'photo' && responseImageUri
+    ? await uploadMemoryImageVariants(responseImageUri, { prefix: reviewerUserId })
+    : null;
+  const uploadedResponseVideoUri = request.promptType === 'photo' && responseVideoUri
+    ? await uploadMemoryVideo(responseVideoUri, { prefix: reviewerUserId })
+    : null;
+  const completedPostType = request.promptType === 'song'
+    ? 'song'
+    : request.promptType === 'voice'
+      ? 'voice'
+      : request.promptType === 'photo'
+        ? responsePostType ?? 'media'
+        : 'note';
 
   const { data: wallPostRow, error: wallPostError } = await supabase
     .from('wall_posts')
@@ -98,14 +123,20 @@ export async function completeMemoryPromptRequest(reviewerUserId: string, input:
       subject_user_id: request.requesterUserId,
       subject_contact_id: null,
       visibility: 'visible_to_subject',
-      post_type: request.promptType === 'song' ? 'song' : 'note',
+      post_type: completedPostType,
       body: responseBody ?? '',
+      image_path: uploadedResponseImage?.imageUri ?? null,
+      image_thumb_path: uploadedResponseImage?.imageThumbUri ?? null,
+      video_path: uploadedResponseVideoUri,
+      video_muted: input.videoMuted ?? false,
       memory_date: new Date().toISOString().slice(0, 10),
       ...songToWallPostDbColumns(request.promptType === 'song' ? responseSong : null),
+      ...voiceToWallPostDbColumns(responseVoice),
       memory_prompt_request_id: request.id,
       referenced_wall_post_id: request.promptType === 'photo_reference' ? referencedWallPostId : null,
       prompt_text: request.promptText,
       prompt_type: request.promptType,
+      ...voiceToPromptQuestionDbColumns(request.promptVoice),
     })
     .select()
     .single();
@@ -119,6 +150,7 @@ export async function completeMemoryPromptRequest(reviewerUserId: string, input:
       status: 'completed',
       response_body: responseBody,
       ...songToPromptResponseDbColumns(request.promptType === 'song' ? responseSong : null),
+      ...voiceToPromptResponseDbColumns(responseVoice),
       referenced_wall_post_id: request.promptType === 'photo_reference' ? referencedWallPostId : null,
       completed_wall_post_id: wallPost.id,
       completed_at: new Date().toISOString(),
@@ -157,9 +189,14 @@ async function getDisplayName(userId: string) {
   return data?.display_name || 'Someone';
 }
 
-function validateCompletion(promptType: MemoryPromptType, body: string | null, song: CompleteMemoryPromptRequestInput['song'], referencedWallPostId: string | null) {
+function validateCompletion(promptType: MemoryPromptType, body: string | null, song: CompleteMemoryPromptRequestInput['song'], voice: CompleteMemoryPromptRequestInput['voice'], referencedWallPostId: string | null, responsePostType: CompleteMemoryPromptRequestInput['responsePostType'], imageUri: string | null, videoUri: string | null) {
   if (promptType === 'song' && !song) throw new Error('Choose a song before sending.');
-  if (promptType === 'text' && !body) throw new Error('Write a response before sending.');
+  if (promptType === 'voice' && !voice) throw new Error('Record a voice memory before sending.');
+  if (promptType === 'text' && !hasTextOrVoice(body, voice)) throw new Error('Write or record a response before sending.');
+  if (promptType === 'photo') {
+    if (responsePostType !== 'polaroid' && responsePostType !== 'media') throw new Error('Choose Memory Card or media before sending.');
+    if (!imageUri && !videoUri) throw new Error('Choose a photo or video before sending.');
+  }
   if (promptType === 'photo_reference' && !referencedWallPostId) throw new Error('Choose a photo memory before sending.');
 }
 

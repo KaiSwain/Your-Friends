@@ -7,13 +7,12 @@ import { BirthdaySliderPicker } from '../../src/components/BirthdaySliderPicker'
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
 import { useTheme } from '../../src/features/theme/ThemeContext';
-import { getDefaultBirthdayIso } from '../../src/lib/birthday';
 
 export default function OnboardingBirthdayScreen() {
   const router = useRouter();
   const { currentUser, updateProfile } = useAuth();
   const { colors, fonts } = useTheme();
-  const [birthday, setBirthday] = useState(currentUser?.birthday ?? getDefaultBirthdayIso());
+  const [birthday, setBirthday] = useState<string | null>(currentUser?.birthday ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -21,6 +20,10 @@ export default function OnboardingBirthdayScreen() {
   if (currentUser.birthday) return <Redirect href="/friends" />;
 
   async function handleSave() {
+    if (!birthday) {
+      setError('Please choose your birthday before continuing.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {

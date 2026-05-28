@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { useMemo } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../src/components/ActionButton';
 import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
@@ -17,6 +17,24 @@ const POLAROID_BORDER = 'rgba(180,170,155,0.4)';
 const FRAME_INK = '#2A2218';
 const FRAME_INK_SOFT = '#6B6052';
 
+const LIVE_POINTS = [
+  {
+    icon: 'videocam-outline' as const,
+    title: 'Hold to capture movement',
+    body: 'A Live Memory saves a short video moment, not just a still photo.',
+  },
+  {
+    icon: 'image-outline' as const,
+    title: 'It still looks like a memory card',
+    body: 'The wall shows a clean cover photo first, so the scrapbook stays calm and pretty.',
+  },
+  {
+    icon: 'volume-mute-outline' as const,
+    title: 'Sound is under control',
+    body: 'Live Memories can stay muted until someone chooses to play them.',
+  },
+];
+
 export default function OnboardingLivePolaroidsScreen() {
   const router = useRouter();
   const { colors, fonts } = useTheme();
@@ -25,120 +43,56 @@ export default function OnboardingLivePolaroidsScreen() {
   return (
     <OnboardingFrame
       step={4}
-      totalSteps={12}
+      totalSteps={13}
       eyebrow="Live Memory Cards"
       title="Some memories can move."
-      subtitle="Hold the shutter to record up to 5 seconds. When you release, the camera counts down and captures a high-quality photo thumbnail automatically."
-      footer={<ActionButton label="Show me more" onPress={() => pushOnce(router, '/(onboarding)/tutorial')} />}
+      subtitle="A Live Memory is a memory card with a short video tucked inside. It keeps the classic photo-memory look, but lets the moment move when you open it."
+      footer={<ActionButton label="Next" onPress={() => pushOnce(router, '/(onboarding)/prompts-movies')} />}
       scrollable
     >
       <View style={styles.previewSurface}>
-        <LivePolaroidPreview colors={colors} fonts={fonts} />
+        <LiveMemoryExplainer colors={colors} fonts={fonts} />
       </View>
       <View style={styles.hintRow}>
-        <View style={styles.hintPill}>
-          <Ionicons name="radio-button-on" size={13} color={colors.accent} />
-          <Text style={styles.hintText}>Hold to record the video</Text>
-        </View>
-        <View style={styles.hintPill}>
-          <Ionicons name="timer-outline" size={13} color={colors.accent} />
-          <Text style={styles.hintText}>Then hold still for the thumbnail countdown</Text>
-        </View>
+        {LIVE_POINTS.map((point) => (
+          <View key={point.title} style={styles.hintPill}>
+            <Ionicons name={point.icon} size={15} color={colors.accent} />
+            <View style={styles.hintCopy}>
+              <Text style={styles.hintTitle}>{point.title}</Text>
+              <Text style={styles.hintText}>{point.body}</Text>
+            </View>
+          </View>
+        ))}
       </View>
     </OnboardingFrame>
   );
 }
 
-function LivePolaroidPreview({ colors, fonts }: { colors: ColorTokens; fonts: FontSet }) {
-  const playback = useRef(new Animated.Value(0)).current;
-  const recordingPulse = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(playback, { toValue: 0, duration: 650, easing: Easing.linear, useNativeDriver: true }),
-        Animated.delay(850),
-        Animated.timing(playback, { toValue: 1, duration: 220, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.delay(2100),
-        Animated.timing(playback, { toValue: 3, duration: 220, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.delay(640),
-        Animated.timing(playback, { toValue: 4, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.delay(640),
-        Animated.timing(playback, { toValue: 5, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.delay(640),
-        Animated.timing(playback, { toValue: 6, duration: 260, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.delay(1500),
-      ]),
-    ).start();
-  }, [playback]);
-
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(recordingPulse, { toValue: 1, duration: 520, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(recordingPulse, { toValue: 0, duration: 520, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-      ]),
-    ).start();
-  }, [recordingPulse]);
-
-  const videoOpacity = playback.interpolate({ inputRange: [0, 0.85, 1, 2.72, 3, 6], outputRange: [0, 0, 1, 1, 0, 0], extrapolate: 'clamp' });
-  const coverOpacity = playback.interpolate({ inputRange: [0, 0.85, 1, 2.72, 3, 6], outputRange: [1, 1, 0, 0, 1, 1], extrapolate: 'clamp' });
-  const shutterPromptOpacity = playback.interpolate({ inputRange: [0, 0.85, 1], outputRange: [1, 1, 0], extrapolate: 'clamp' });
-  const recordingOpacity = playback.interpolate({ inputRange: [0.9, 1, 2.72, 3], outputRange: [0, 1, 1, 0], extrapolate: 'clamp' });
-  const countdownOpacity = playback.interpolate({ inputRange: [2.72, 3, 5.2, 5.35], outputRange: [0, 1, 1, 0], extrapolate: 'clamp' });
-  const finishedOpacity = playback.interpolate({ inputRange: [5.25, 5.45, 6], outputRange: [0, 1, 1], extrapolate: 'clamp' });
-  const countThreeOpacity = playback.interpolate({ inputRange: [2.9, 3.05, 3.7, 3.85], outputRange: [0, 1, 1, 0], extrapolate: 'clamp' });
-  const countTwoOpacity = playback.interpolate({ inputRange: [3.7, 3.85, 4.5, 4.65], outputRange: [0, 1, 1, 0], extrapolate: 'clamp' });
-  const countOneOpacity = playback.interpolate({ inputRange: [4.5, 4.65, 5.25, 5.35], outputRange: [0, 1, 1, 0], extrapolate: 'clamp' });
-  const recDotOpacity = recordingPulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 1] });
-  const shutterScale = recordingPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 0.92] });
-
+function LiveMemoryExplainer({ colors, fonts }: { colors: ColorTokens; fonts: FontSet }) {
   return (
     <View style={previewStyles.stage}>
       <View style={previewStyles.tape} />
       <View style={previewStyles.polaroidCard}>
         <View style={previewStyles.photoFrame}>
-          <Animated.View style={[previewStyles.thumbnail, { opacity: coverOpacity, backgroundColor: colors.accent }]}>
+          <View style={[previewStyles.thumbnail, { backgroundColor: colors.accent }]}>
             <PersonScene />
-          </Animated.View>
-          <Animated.View style={[previewStyles.videoFrame, { opacity: videoOpacity }]}>
-            <View style={[previewStyles.videoSky, { backgroundColor: colors.accent }]} />
-            <PersonScene />
-          </Animated.View>
-          <Animated.View style={[previewStyles.shutterPromptOverlay, { opacity: shutterPromptOpacity }]}>
-            <Text style={previewStyles.shutterPromptTitle}>Hold the shutter</Text>
-            <Text style={previewStyles.shutterPromptSubtitle}>Your video starts first.</Text>
-          </Animated.View>
-          <Animated.View style={[previewStyles.recordingOverlay, { opacity: recordingOpacity }]}>
-            <View style={previewStyles.recBadge}>
-              <Animated.View style={[previewStyles.recDot, { opacity: recDotOpacity, backgroundColor: colors.error }]} />
-              <Text style={previewStyles.recText}>REC</Text>
-            </View>
-            <Text style={previewStyles.recordingTitle}>Recording video</Text>
-            <Text style={previewStyles.recordingSubtitle}>Keep holding. This is the moving part.</Text>
-          </Animated.View>
-          <Animated.View style={[previewStyles.countdownOverlay, { opacity: countdownOpacity }]}>
-            <View style={previewStyles.countdownNumberSlot}>
-              <Animated.Text style={[previewStyles.countdownNumber, { opacity: countThreeOpacity }]}>3</Animated.Text>
-              <Animated.Text style={[previewStyles.countdownNumber, previewStyles.countdownNumberOverlay, { opacity: countTwoOpacity }]}>2</Animated.Text>
-              <Animated.Text style={[previewStyles.countdownNumber, previewStyles.countdownNumberOverlay, { opacity: countOneOpacity }]}>1</Animated.Text>
-            </View>
-            <Text style={previewStyles.countdownTitle}>Taking thumbnail</Text>
-            <Text style={previewStyles.countdownSubtitle}>Hold still for the cover photo</Text>
-          </Animated.View>
-          <Animated.View style={[previewStyles.soundButton, { opacity: finishedOpacity }]}>
+          </View>
+          <View style={previewStyles.playBadge}>
+            <Ionicons name="play" size={18} color="#fff" />
+          </View>
+          <View style={previewStyles.soundButton}>
             <Ionicons name="volume-mute" size={14} color="#fff" />
-          </Animated.View>
+          </View>
         </View>
-        <Text style={[previewStyles.caption, { fontFamily: fonts.handwrittenBold }, protectTextFromFontClipping(fonts.handwrittenBold, 34)]}>best moment</Text>
-        <Text style={[previewStyles.note, { fontFamily: fonts.handwritten }, protectTextFromFontClipping(fonts.handwritten, 20)]}>tap to flip later</Text>
+        <Text style={[previewStyles.caption, { fontFamily: fonts.handwrittenBold }, protectTextFromFontClipping(fonts.handwrittenBold, 34)]}>live memory</Text>
+        <Text style={[previewStyles.note, { fontFamily: fonts.handwritten }, protectTextFromFontClipping(fonts.handwritten, 20)]}>video inside, photo outside</Text>
         <Ionicons name="flower-outline" size={18} color={FRAME_INK_SOFT} style={previewStyles.flourish} />
       </View>
       <View style={previewStyles.cameraControls}>
-        <Animated.View style={[previewStyles.shutterButton, { borderColor: colors.accent, transform: [{ scale: shutterScale }] }]}>
+        <View style={[previewStyles.shutterButton, { borderColor: colors.accent }]}>
           <View style={[previewStyles.shutterCore, { backgroundColor: colors.accent }]} />
-        </Animated.View>
-        <Text style={[previewStyles.cameraControlText, { color: FRAME_INK_SOFT }]}>recording, then thumbnail countdown</Text>
+        </View>
+        <Text style={[previewStyles.cameraControlText, { color: FRAME_INK_SOFT }]}>hold shutter to make one</Text>
       </View>
     </View>
   );
@@ -168,7 +122,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     hintRow: { gap: spacing.sm },
     hintPill: {
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       gap: spacing.xs,
       borderRadius: radius.pill,
       borderWidth: 1,
@@ -177,7 +131,9 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
-    hintText: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.ink },
+    hintCopy: { flex: 1, gap: 2 },
+    hintTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.ink },
+    hintText: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkSoft },
   });
 
 const previewStyles = StyleSheet.create({
@@ -244,116 +200,18 @@ const previewStyles = StyleSheet.create({
     borderRadius: 39,
     backgroundColor: 'rgba(255,255,255,0.58)',
   },
-  videoFrame: {
+  playBadge: {
     position: 'absolute',
-    top: -4,
-    right: -4,
-    bottom: -4,
-    left: -4,
-    overflow: 'hidden',
-  },
-  videoSky: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.85,
-  },
-  shutterPromptOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    alignSelf: 'center',
+    top: 86,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    backgroundColor: 'rgba(0,0,0,0.12)',
-    paddingHorizontal: 16,
-  },
-  shutterPromptTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '900',
-    textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,0.22)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  shutterPromptSubtitle: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: 12,
-    lineHeight: 16,
-    textAlign: 'center',
-  },
-  recordingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
-    backgroundColor: 'rgba(0,0,0,0.18)',
-  },
-  recBadge: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderRadius: 999,
-    backgroundColor: 'rgba(0,0,0,0.62)',
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-  },
-  recDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  recText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  recordingTitle: {
-    marginTop: 'auto',
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '900',
-    textAlign: 'center',
-  },
-  recordingSubtitle: {
-    color: 'rgba(255,255,255,0.86)',
-    fontSize: 11,
-    lineHeight: 15,
-    textAlign: 'center',
-    marginTop: 5,
-  },
-  countdownOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(0,0,0,0.38)',
-    paddingHorizontal: 16,
-  },
-  countdownNumberSlot: {
-    width: 76,
-    height: 66,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  countdownNumber: {
-    color: '#fff',
-    fontSize: 56,
-    fontWeight: '900',
-    lineHeight: 60,
-  },
-  countdownNumberOverlay: {
-    position: 'absolute',
-  },
-  countdownTitle: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '900',
-  },
-  countdownSubtitle: {
-    color: 'rgba(255,255,255,0.88)',
-    fontSize: 11,
-    lineHeight: 15,
-    textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.48)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
   },
   soundButton: {
     position: 'absolute',

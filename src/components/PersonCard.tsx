@@ -28,7 +28,7 @@ export function PersonCard({ item, onPress }: PersonCardProps) {
         <Text style={styles.title}>{item.title}</Text>
         <Text style={styles.subtitle}>{item.subtitle}</Text>
       </View>
-      <Ionicons color={colors.inkSoft} name="chevron-forward" size={18} />
+      <Ionicons color={colors.ink} name="chevron-forward" size={18} />
     </Pressable>
   );
 }
@@ -76,7 +76,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     subtitle: {
       fontFamily: fonts.body,
       fontSize: 13,
-      color: colors.inkSoft,
+      color: colors.ink,
     },
   });
 

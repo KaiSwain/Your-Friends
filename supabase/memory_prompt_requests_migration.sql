@@ -6,13 +6,13 @@ alter table public.wall_posts
 
 alter table public.wall_posts drop constraint if exists wall_posts_prompt_type_check;
 alter table public.wall_posts
-  add constraint wall_posts_prompt_type_check check (prompt_type is null or prompt_type in ('song', 'text', 'photo_reference'));
+  add constraint wall_posts_prompt_type_check check (prompt_type is null or prompt_type in ('song', 'text', 'photo', 'photo_reference'));
 
 create table if not exists public.memory_prompt_requests (
   id uuid primary key default uuid_generate_v4(),
   requester_user_id uuid not null references public.profiles(id) on delete cascade,
   recipient_user_id uuid not null references public.profiles(id) on delete cascade,
-  prompt_type text not null check (prompt_type in ('song', 'text', 'photo_reference')),
+  prompt_type text not null check (prompt_type in ('song', 'text', 'photo', 'photo_reference')),
   prompt_text text not null,
   status text not null default 'pending' check (status in ('pending', 'completed', 'cancelled')),
   response_body text,

@@ -1,8 +1,9 @@
 import { usePathname, useRouter } from 'expo-router';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { CachedRemoteImage } from '../../components/CachedRemoteImage';
 import { useAuth } from '../auth/AuthContext';
 import { useSocialGraph } from '../social/SocialGraphContext';
 import { useCalendar } from '../calendar/CalendarContext';
@@ -26,6 +27,7 @@ const AUTO_DISMISS_MS = 4000;
 const ENTER_MS = 180;
 const EXIT_MS = 180;
 const SWIPE_DISMISS_THRESHOLD = -40;
+const NOTIFICATION_SUMMARY_SOURCE = 'notification_summary';
 
 export function InAppNotificationProvider({ children }: { children: ReactNode }) {
   const { currentUser } = useAuth();
@@ -262,10 +264,15 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
       setQueue([]);
       return;
     }
-    const [next, ...rest] = queue;
-    setQueue(rest);
+    if (queue.length > 1) {
+      setQueue([]);
+      setActive(createNotificationSummary(queue, currentUser?.id ?? ''));
+      return;
+    }
+    const [next] = queue;
+    setQueue([]);
     setActive(next);
-  }, [active, queue, pathname]);
+  }, [active, currentUser?.id, queue, pathname]);
 
   // When a new active toast is set, animate in + schedule auto-dismiss.
   useEffect(() => {
@@ -286,6 +293,10 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
     if (!active) return;
     const n = active;
     hideActive(() => {
+      if (isNotificationSummary(n)) {
+        pushOnce(router, '/(app)/notifications');
+        return;
+      }
       if (!n.read) {
         void markNotificationRead(n.id);
       }
@@ -360,7 +371,8 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
   const value = useMemo<InAppNotificationContextValue>(() => ({ show, showLocal }), [show, showLocal]);
 
   const actor = active ? getUserById(active.actorUserId) : undefined;
-  const activeCanOpen = !!active && active.type !== 'local';
+  const activeIsSummary = !!active && isNotificationSummary(active);
+  const activeCanOpen = !!active && (activeIsSummary || active.type !== 'local');
   const initials = (actor?.displayName ?? '?')
     .split(' ')
     .filter(Boolean)
@@ -388,8 +400,10 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
           >
             <View style={styles.toastCard}>
               <View style={styles.avatarCircle}>
-                {actor?.avatarPath ? (
-                  <Image source={{ uri: actor.avatarPath }} style={styles.avatarImage} />
+                {activeIsSummary ? (
+                  <ThemedIcon name="bell" size={19} color={colors.white} />
+                ) : actor?.avatarPath ? (
+                  <CachedRemoteImage uri={actor.avatarPath} style={styles.avatarImage} />
                 ) : (
                   <Text style={styles.avatarInitials}>{initials}</Text>
                 )}
@@ -425,6 +439,26 @@ function hasFriendRequestNotification(notifications: Notification[], requestId: 
       : notification.referenceId;
     return notificationRequestId === requestId && notification.metadata.action === action;
   });
+}
+
+function createNotificationSummary(notifications: Notification[], currentUserId: string): Notification {
+  const count = notifications.length;
+  const now = new Date().toISOString();
+  return {
+    id: `notification-summary:${now}:${count}`,
+    recipientUserId: currentUserId,
+    actorUserId: currentUserId,
+    type: 'local',
+    referenceId: null,
+    metadata: { source: NOTIFICATION_SUMMARY_SOURCE, notificationCount: count },
+    message: `You have ${count} notification${count === 1 ? '' : 's'}`,
+    read: true,
+    createdAt: now,
+  };
+}
+
+function isNotificationSummary(notification: Notification) {
+  return notification.metadata.source === NOTIFICATION_SUMMARY_SOURCE;
 }
 
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>

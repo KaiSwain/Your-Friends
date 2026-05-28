@@ -16,7 +16,7 @@ import { radius, spacing } from '../theme/tokens';
 
 interface BirthdaySliderPickerProps {
   value: string | null;
-  onChange: (value: string) => void;
+  onChange: (value: string | null) => void;
 }
 
 const MONTH_LABELS = [
@@ -37,7 +37,7 @@ const MONTH_LABELS = [
 export function BirthdaySliderPicker({ value, onChange }: BirthdaySliderPickerProps) {
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
-  const [parts, setParts] = useState<BirthdayParts>(() => parseBirthdayParts(value) ?? getDefaultBirthdayParts());
+  const [parts, setParts] = useState<Partial<BirthdayParts>>(() => parseBirthdayParts(value) ?? {});
   const [openField, setOpenField] = useState<'month' | 'day' | 'year' | null>(null);
 
   useEffect(() => {
@@ -47,10 +47,15 @@ export function BirthdaySliderPicker({ value, onChange }: BirthdaySliderPickerPr
 
   const today = new Date();
   const currentYear = today.getFullYear();
-  const maxMonth = parts.year === currentYear ? today.getMonth() + 1 : 12;
-  const maxDay = parts.year === currentYear && parts.month === today.getMonth() + 1
+  const fallbackParts = getDefaultBirthdayParts();
+  const selectedYear = parts.year ?? fallbackParts.year;
+  const selectedMonth = parts.month ?? fallbackParts.month;
+  const selectedDay = parts.day ?? fallbackParts.day;
+  const hasCompleteBirthday = parts.month != null && parts.day != null && parts.year != null;
+  const maxMonth = selectedYear === currentYear ? today.getMonth() + 1 : 12;
+  const maxDay = selectedYear === currentYear && selectedMonth === today.getMonth() + 1
     ? today.getDate()
-    : getDaysInMonth(parts.year, parts.month);
+    : getDaysInMonth(selectedYear, selectedMonth);
   const monthOptions = useMemo(
     () => Array.from({ length: maxMonth }, (_, index) => ({
       label: MONTH_LABELS[index],
@@ -74,10 +79,20 @@ export function BirthdaySliderPicker({ value, onChange }: BirthdaySliderPickerPr
   );
 
   function updateParts(next: Partial<BirthdayParts>) {
-    const clamped = clampBirthdayParts({ ...parts, ...next });
+    const merged = { ...parts, ...next };
+    if (merged.month == null || merged.day == null || merged.year == null) {
+      setParts(merged);
+      onChange(null);
+      return;
+    }
+
+    const clamped = clampBirthdayParts({
+      month: merged.month,
+      day: merged.day,
+      year: merged.year,
+    });
     setParts(clamped);
-    const iso = birthdayPartsToIso(clamped);
-    if (iso) onChange(iso);
+    onChange(birthdayPartsToIso(clamped));
   }
 
   function selectPart(field: 'month' | 'day' | 'year', value: number) {
@@ -90,14 +105,14 @@ export function BirthdaySliderPicker({ value, onChange }: BirthdaySliderPickerPr
       <View style={styles.previewCard}>
         <Text style={styles.previewLabel}>Birthday</Text>
         <Text style={styles.previewValue}>
-          {MONTH_LABELS[parts.month - 1]} {parts.day}, {parts.year}
+          {hasCompleteBirthday ? `${MONTH_LABELS[selectedMonth - 1]} ${selectedDay}, ${selectedYear}` : 'Choose your birthday'}
         </Text>
       </View>
 
       <DropdownControl
         label="Month"
-        valueLabel={MONTH_LABELS[parts.month - 1]}
-        value={parts.month}
+        valueLabel={parts.month ? MONTH_LABELS[parts.month - 1] : 'Choose month'}
+        value={parts.month ?? null}
         options={monthOptions}
         open={openField === 'month'}
         onToggle={() => setOpenField(openField === 'month' ? null : 'month')}
@@ -107,8 +122,8 @@ export function BirthdaySliderPicker({ value, onChange }: BirthdaySliderPickerPr
       />
       <DropdownControl
         label="Day"
-        valueLabel={String(parts.day)}
-        value={parts.day}
+        valueLabel={parts.day ? String(parts.day) : 'Choose day'}
+        value={parts.day ?? null}
         options={dayOptions}
         open={openField === 'day'}
         onToggle={() => setOpenField(openField === 'day' ? null : 'day')}
@@ -118,8 +133,8 @@ export function BirthdaySliderPicker({ value, onChange }: BirthdaySliderPickerPr
       />
       <DropdownControl
         label="Year"
-        valueLabel={String(parts.year)}
-        value={parts.year}
+        valueLabel={parts.year ? String(parts.year) : 'Choose year'}
+        value={parts.year ?? null}
         options={yearOptions}
         open={openField === 'year'}
         onToggle={() => setOpenField(openField === 'year' ? null : 'year')}
@@ -144,7 +159,7 @@ function DropdownControl({
 }: {
   label: string;
   valueLabel: string;
-  value: number;
+  value: number | null;
   options: { label: string; value: number }[];
   open: boolean;
   onToggle: () => void;
@@ -278,10 +293,10 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingVertical: spacing.sm,
     },
     optionSelected: {
-      backgroundColor: colors.accent + '14',
+      backgroundColor: colors.paper,
     },
     optionPressed: {
-      backgroundColor: colors.accent + '0F',
+      backgroundColor: colors.paper,
     },
     optionText: {
       fontFamily: fonts.bodyMedium,

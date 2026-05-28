@@ -1,4 +1,4 @@
-/** Polaroid-style photo filters applied as tinted overlays on the image. */
+/** Memory-card photo filters applied as tinted overlays on the image. */
 
 export interface PolaroidFilter {
   /** Unique key stored in the database. */

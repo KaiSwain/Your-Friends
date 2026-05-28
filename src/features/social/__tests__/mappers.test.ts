@@ -24,11 +24,14 @@ describe('rowToUser', () => {
       profile_bg_image_path: 'https://img.test/bg.jpg',
       profile_bg_image_public: true,
       profile_facts: ['Loves cats'],
+      profile_personality_traits: ['Playful'],
       premium_until: '2026-05-14T12:00:00Z',
       premium_paid_until: '2026-05-14T12:00:00Z',
       premium_free_until: '2026-05-10T12:00:00Z',
       premium_free_granted_by_user_id: 'grantor-1',
       premium_free_granted_at: '2026-05-07T12:00:00Z',
+      is_official: true,
+      is_team_admin: true,
       created_at: '2024-01-01T00:00:00Z',
     };
     const user = rowToUser(row);
@@ -43,11 +46,14 @@ describe('rowToUser', () => {
       profileBgImagePath: 'https://img.test/bg.jpg',
       profileBgImagePublic: true,
       profileFacts: ['Loves cats'],
+      profilePersonalityTraits: ['Playful'],
       premiumUntil: '2026-05-14T12:00:00Z',
       premiumPaidUntil: '2026-05-14T12:00:00Z',
       premiumFreeUntil: '2026-05-10T12:00:00Z',
       premiumFreeGrantorUserId: 'grantor-1',
       premiumFreeGrantedAt: '2026-05-07T12:00:00Z',
+      isOfficial: true,
+      isTeamAdmin: true,
       createdAt: '2024-01-01T00:00:00Z',
     });
   });
@@ -59,11 +65,14 @@ describe('rowToUser', () => {
     expect(user.profileBgImagePath).toBeNull();
     expect(user.profileBgImagePublic).toBe(false);
     expect(user.profileFacts).toEqual([]);
+    expect(user.profilePersonalityTraits).toEqual([]);
     expect(user.premiumUntil).toBeNull();
     expect(user.premiumPaidUntil).toBeNull();
     expect(user.premiumFreeUntil).toBeNull();
     expect(user.premiumFreeGrantorUserId).toBeNull();
     expect(user.premiumFreeGrantedAt).toBeNull();
+    expect(user.isOfficial).toBe(false);
+    expect(user.isTeamAdmin).toBe(false);
   });
 });
 
@@ -76,6 +85,7 @@ describe('rowToContact', () => {
       display_name: 'Bob',
       nickname: 'Bobby',
       facts: ['Fact 1'],
+      personality_traits: ['Thoughtful'],
       avatar_path: null,
       avatar_video_path: 'https://video.test/hero.mp4',
       avatar_video_muted: true,
@@ -91,6 +101,7 @@ describe('rowToContact', () => {
     expect(contact.ownerUserId).toBe('u1');
     expect(contact.linkedUserId).toBe('u2');
     expect(contact.nickname).toBe('Bobby');
+    expect(contact.personalityTraits).toEqual(['Thoughtful']);
     expect(contact.tags).toEqual(['family']);
     expect(contact.avatarVideoPath).toBe('https://video.test/hero.mp4');
     expect(contact.avatarVideoMuted).toBe(true);
@@ -104,6 +115,7 @@ describe('rowToContact', () => {
     expect(contact.linkedUserId).toBeNull();
     expect(contact.nickname).toBeNull();
     expect(contact.facts).toEqual([]);
+    expect(contact.personalityTraits).toEqual([]);
     expect(contact.tags).toEqual([]);
     expect(contact.avatarVideoPath).toBeNull();
     expect(contact.avatarVideoMuted).toBe(false);
@@ -137,6 +149,8 @@ describe('rowToMemoryReply', () => {
       wall_post_id: 'post-1',
       author_user_id: 'user-1',
       body: 'I remember this.',
+      audio_path: 'https://audio.test/reply.m4a',
+      audio_duration_ms: '12000',
       created_at: '2026-05-19T12:00:00Z',
       updated_at: '2026-05-19T12:01:00Z',
     })).toEqual({
@@ -144,6 +158,10 @@ describe('rowToMemoryReply', () => {
       wallPostId: 'post-1',
       authorUserId: 'user-1',
       body: 'I remember this.',
+      voice: {
+        uri: 'https://audio.test/reply.m4a',
+        durationMs: 12000,
+      },
       createdAt: '2026-05-19T12:00:00Z',
       updatedAt: '2026-05-19T12:01:00Z',
     });
@@ -172,6 +190,7 @@ describe('rowToWallPost', () => {
       visibility: 'private',
       body: 'Hello',
       image_path: 'https://img.test/x.jpg',
+      image_thumb_path: 'https://img.test/x-thumb.jpg',
       video_path: 'https://video.test/live.mp4',
       video_muted: true,
       memory_date: '2024-03-28',
@@ -180,6 +199,7 @@ describe('rowToWallPost', () => {
       created_at: '2024-04-01',
     });
     expect(post.imageUri).toBe('https://img.test/x.jpg');
+    expect(post.imageThumbUri).toBe('https://img.test/x-thumb.jpg');
     expect(post.videoUri).toBe('https://video.test/live.mp4');
     expect(post.videoMuted).toBe(true);
     expect(post.memoryDate).toBe('2024-03-28');
@@ -188,6 +208,19 @@ describe('rowToWallPost', () => {
     expect(post.backText).toBe('Back');
     expect(post.subjectContactId).toBeNull();
     expect(post.song).toBeNull();
+  });
+
+  it('falls back to image_path when image_thumb_path is missing', () => {
+    const post = rowToWallPost({
+      id: 'p1-thumb-fallback',
+      author_user_id: 'u1',
+      subject_user_id: 'u2',
+      visibility: 'private',
+      body: 'Hello',
+      image_path: 'https://img.test/x.jpg',
+      created_at: '2024-04-01',
+    });
+    expect(post.imageThumbUri).toBe('https://img.test/x.jpg');
   });
 
   it('decodes text-only style metadata stored in filter', () => {
@@ -266,6 +299,24 @@ describe('rowToWallPost', () => {
     });
   });
 
+  it('maps explicit media posts separately from polaroids', () => {
+    const post = rowToWallPost({
+      id: 'p-media',
+      author_user_id: 'u1',
+      subject_user_id: 'u2',
+      visibility: 'visible_to_subject',
+      post_type: 'media',
+      body: 'Just the real photo.',
+      image_path: 'https://img.test/media.jpg',
+      video_path: 'https://video.test/media.mp4',
+      created_at: '2024-04-05',
+    });
+
+    expect(post.postType).toBe('media');
+    expect(post.imageUri).toBe('https://img.test/media.jpg');
+    expect(post.videoUri).toBe('https://video.test/media.mp4');
+  });
+
   it('keeps song metadata attached to explicit note posts', () => {
     const post = rowToWallPost({
       id: 'p6',
@@ -296,6 +347,62 @@ describe('rowToWallPost', () => {
     });
   });
 
+  it('maps voice metadata to a voice memory', () => {
+    const post = rowToWallPost({
+      id: 'p-voice',
+      author_user_id: 'u1',
+      subject_user_id: 'u2',
+      visibility: 'visible_to_subject',
+      post_type: 'voice',
+      body: 'Listen to this.',
+      audio_path: 'https://audio.test/memory.m4a',
+      audio_duration_ms: 24500,
+      created_at: '2024-04-06',
+    });
+    expect(post.postType).toBe('voice');
+    expect(post.voice).toEqual({
+      uri: 'https://audio.test/memory.m4a',
+      durationMs: 24500,
+    });
+  });
+
+  it('keeps voice metadata attached to explicit non-voice posts', () => {
+    const post = rowToWallPost({
+      id: 'p-attached-voice',
+      author_user_id: 'u1',
+      subject_user_id: 'u2',
+      visibility: 'visible_to_subject',
+      post_type: 'song',
+      body: 'This one has my voice note too.',
+      song_provider: 'apple',
+      song_provider_id: '12345',
+      song_title: 'Golden Hour',
+      song_artist: 'Friend Band',
+      audio_path: 'https://audio.test/attached.m4a',
+      audio_duration_ms: 18000,
+      created_at: '2024-04-06',
+    });
+    expect(post.postType).toBe('song');
+    expect(post.voice).toEqual({
+      uri: 'https://audio.test/attached.m4a',
+      durationMs: 18000,
+    });
+  });
+
+  it('falls back from voice type when audio metadata is missing', () => {
+    const post = rowToWallPost({
+      id: 'p-voice-missing',
+      author_user_id: 'u1',
+      subject_user_id: 'u2',
+      visibility: 'visible_to_subject',
+      post_type: 'voice',
+      body: 'Missing audio',
+      created_at: '2024-04-06',
+    });
+    expect(post.postType).toBe('note');
+    expect(post.voice).toBeNull();
+  });
+
   it('maps generic memory prompt metadata', () => {
     const post = rowToWallPost({
       id: 'p7',
@@ -308,12 +415,15 @@ describe('rowToWallPost', () => {
       referenced_wall_post_id: 'p1',
       prompt_text: 'Pick a polaroid that reminds you of us.',
       prompt_type: 'photo_reference',
+      prompt_audio_path: 'https://audio.test/prompt.m4a',
+      prompt_audio_duration_ms: 9000,
       created_at: '2024-04-07',
     });
     expect(post.memoryPromptRequestId).toBe('prompt-1');
     expect(post.referencedWallPostId).toBe('p1');
     expect(post.promptText).toBe('Pick a polaroid that reminds you of us.');
     expect(post.promptType).toBe('photo_reference');
+    expect(post.promptVoice).toEqual({ uri: 'https://audio.test/prompt.m4a', durationMs: 9000 });
   });
 
   it('falls back from song type when song metadata is incomplete', () => {

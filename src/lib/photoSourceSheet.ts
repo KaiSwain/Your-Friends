@@ -1,41 +1,20 @@
 import { Alert } from 'react-native';
 
 interface PhotoSourceSheetOptions {
+  cameraLabel?: string;
+  galleryLabel?: string;
   galleryLocked?: boolean;
   onCamera: () => void;
   onGallery: () => void;
   title?: string;
 }
 
-export interface PhotoSourceSheetRequest {
-  galleryLabel: string;
-  onCamera: () => void;
-  onGallery: () => void;
-  title: string;
-}
-
-type PhotoSourceSheetListener = (request: PhotoSourceSheetRequest | null) => void;
-
-let activeListener: PhotoSourceSheetListener | null = null;
-
-export function subscribePhotoSourceSheet(listener: PhotoSourceSheetListener) {
-  activeListener = listener;
-  return () => {
-    if (activeListener === listener) activeListener = null;
-  };
-}
-
-export function showPhotoSourceSheet({ galleryLocked = false, onCamera, onGallery, title = 'Add Photo' }: PhotoSourceSheetOptions) {
-  const galleryLabel = galleryLocked ? 'Choose from Gallery (Premium)' : 'Choose from Gallery';
-
-  if (activeListener) {
-    activeListener({ galleryLabel, onCamera, onGallery, title });
-    return;
-  }
+export function showPhotoSourceSheet({ cameraLabel = 'Take Photo', galleryLabel, galleryLocked = false, onCamera, onGallery, title = 'Add Photo' }: PhotoSourceSheetOptions) {
+  const resolvedGalleryLabel = galleryLabel ?? (galleryLocked ? 'Choose from Gallery (Premium)' : 'Choose from Gallery');
 
   Alert.alert(title, 'Choose a photo source.', [
-    { text: 'Take Photo', onPress: onCamera },
-    { text: galleryLabel, onPress: onGallery },
+    { text: cameraLabel, onPress: onCamera },
+    { text: resolvedGalleryLabel, onPress: onGallery },
     { text: 'Cancel', style: 'cancel' },
   ]);
 }

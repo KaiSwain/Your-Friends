@@ -223,7 +223,7 @@ export function LivePolaroidLayer({
       ) : null}
       {playbackEnabled && isManualPlayback && playbackPhase !== 'playing' ? (
         <View pointerEvents="none" style={styles.playHint}>
-          <Ionicons name={playbackPhase === 'paused' ? 'pause' : 'play'} size={16} color="#fff" />
+          <Ionicons name="play" size={16} color="#fff" />
         </View>
       ) : null}
     </Pressable>

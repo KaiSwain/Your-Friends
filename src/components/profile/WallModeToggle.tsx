@@ -1,7 +1,6 @@
 import { StyleSheet, Text, Pressable, View } from 'react-native';
 
 import type { ColorTokens } from '../../features/theme/themes';
-import { contrastText } from '../../lib/contrastText';
 import { radius, spacing } from '../../theme/tokens';
 import type { FontSet } from '../../theme/typography';
 
@@ -20,7 +19,8 @@ interface WallModeToggleProps<T extends string> {
 }
 
 export function WallModeToggle<T extends string>({ colors, fonts, onChange, options, tint, value }: WallModeToggleProps<T>) {
-  const styles = makeStyles(colors, fonts, tint);
+  const activeTint = tint;
+  const styles = makeStyles(colors, fonts, activeTint);
   return (
     <View style={styles.toggle} accessibilityRole="tablist">
       {options.map((option) => {
@@ -61,14 +61,26 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, tint: string) =>
       paddingHorizontal: spacing.sm,
     },
     chipActive: {
-      backgroundColor: tint,
+      backgroundColor: tint + '1A',
+      borderWidth: 1,
+      borderColor: withAlpha(colors.line, 0.42),
     },
     label: {
       fontFamily: fonts.bodyMedium,
       fontSize: 13,
-      color: colors.inkSoft,
+      color: colors.ink,
     },
     labelActive: {
-      color: contrastText(tint),
+      color: tint,
     },
   });
+
+function withAlpha(color: string, alpha: number) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = match[1];
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}

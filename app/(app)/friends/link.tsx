@@ -113,7 +113,7 @@ export default function LinkFriendChooserScreen() {
                       {candidates.length} saved {candidates.length === 1 ? 'profile may' : 'profiles may'} match.
                     </Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={18} color={colors.inkSoft} />
+                  <Ionicons name="chevron-forward" size={18} color={colors.ink} />
                 </Pressable>
               ))}
             </View>

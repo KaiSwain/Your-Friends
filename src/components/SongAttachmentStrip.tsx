@@ -3,7 +3,7 @@ import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from 'expo-au
 import { useEffect, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { useMusicPreference } from '../features/music/MusicPreferenceContext';
+import { type MusicOpenPreference, useMusicPreference } from '../features/music/MusicPreferenceContext';
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
 import { safePauseAudioPlayer, safePlayAudioPlayer, safeSeekAudioPlayer } from '../lib/audioPlayerControls';
@@ -11,7 +11,7 @@ import { openSongInPreferredService } from '../lib/musicLinks';
 import { announceActiveSongPreview, subscribeActiveSongPreview } from '../lib/songPreviewPlayback';
 import { buildSongWaveform } from '../lib/songWaveform';
 import type { FontSet } from '../theme/typography';
-import { spacing } from '../theme/tokens';
+import { semanticColors, spacing } from '../theme/tokens';
 import type { SongAttachment } from '../types/domain';
 
 interface SongAttachmentStripProps {
@@ -25,7 +25,8 @@ export function SongAttachmentStrip({ song, postId, themeColors, autoPlayKey }: 
   const { colors: appColors, fonts } = useTheme();
   const { musicOpenPreference } = useMusicPreference();
   const colors = themeColors ?? appColors;
-  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
+  const providerColor = getMusicPreferenceColor(musicOpenPreference);
+  const styles = useMemo(() => makeStyles(colors, fonts, providerColor), [colors, fonts, providerColor]);
   const previewId = `${postId}:song-attachment`;
   const player = useAudioPlayer(song.previewUrl ?? null, { updateInterval: 250 });
   const status = useAudioPlayerStatus(player);
@@ -101,7 +102,7 @@ export function SongAttachmentStrip({ song, postId, themeColors, autoPlayKey }: 
               styles.waveBar,
               {
                 height: Math.max(8, Math.round(height * 0.42)),
-                backgroundColor: index < activeBars ? colors.accent : colors.line,
+                backgroundColor: index < activeBars ? providerColor : colors.line,
               },
             ]}
           />
@@ -111,7 +112,11 @@ export function SongAttachmentStrip({ song, postId, themeColors, autoPlayKey }: 
   );
 }
 
-const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
+function getMusicPreferenceColor(preference: MusicOpenPreference) {
+  return preference === 'spotify' ? semanticColors.spotifyGreen : semanticColors.appleMusicOrange;
+}
+
+const makeStyles = (colors: ColorTokens, fonts: FontSet, providerColor: string) => StyleSheet.create({
   strip: {
     width: 248,
     minHeight: 52,
@@ -137,7 +142,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.accent,
+    backgroundColor: providerColor,
   },
   playButtonDisabled: {
     backgroundColor: colors.inkMuted,

@@ -2,17 +2,22 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 
 import { useAuth } from '../auth/AuthContext';
+import { usePremium } from '../premium/PremiumContext';
 import { extractFriendCode } from '../../lib/friendCode';
 import {
   uploadContactAvatar,
   uploadContactProfileBackground,
   uploadContactProfileVideo,
-  uploadMemoryImage,
+  uploadMemoryAudio,
+  uploadMemoryImageVariants,
 } from '../../lib/memoryMediaUpload';
-import { createNotification, subscribeNotificationInserts } from '../../lib/notifications';
+import { createNotification, createNotifications, subscribeNotificationInserts } from '../../lib/notifications';
 import { supabase } from '../../lib/supabase';
 import { compareWallPostsByMemoryDateDesc } from '../../lib/memoryDate';
+import { resyncFriendNotificationReminders } from '../../lib/friendNotificationReminders';
+import { getPromptExpiresAt, isPromptExpired } from '../../lib/promptExpiration';
 import { syncProfileBirthdayCalendarEvent } from '../calendar/queries';
+import { canDeleteWallPost, canEditWallPostContent } from '../../lib/wallPostPermissions';
 import { encodeWallPostTextStyle, splitWallPostPresentation } from '../../lib/wallPostTextStyle';
 import { useSyntheticNotificationReads } from '../../hooks/useSyntheticNotificationReads';
 import {
@@ -29,6 +34,7 @@ import {
   CreateContactInput,
   CreateFriendFactInput,
   CreateGiftNoteInput,
+  CreateOfficialBroadcastInput,
   CreateMemoryPromptRequestInput,
   CompleteMovieReviewRequestInput,
   CreateMovieReviewRequestInput,
@@ -43,10 +49,12 @@ import {
   MemoryPromptRequest,
   MovieReviewRequest,
   Notification,
+  OfficialBroadcastResult,
   PeopleListItem,
   ProfileWallItem,
   SaveWallPostLayoutInput,
   SongAttachment,
+  VoiceAttachment,
   WallPost,
   WallPostLayout,
   WallPostLayoutContext,
@@ -116,7 +124,7 @@ interface SocialGraphContextValue {
   movieReviewRequests: MovieReviewRequest[];
   memoryPromptRequests: MemoryPromptRequest[];
   addFriendByCode: (currentUserId: string, friendCode: string) => Promise<
-    | { ok: true; friend: AppUser; contactId: string | null; candidateContactIds: string[]; requested?: boolean; requestId?: string }
+    | { ok: true; friend: AppUser; contactId: string | null; candidateContactIds: string[]; requested?: boolean; requestId?: string; alreadyFriends?: boolean }
     | { ok: false; error: string }
   >;
   getIncomingFriendRequests: (currentUserId: string) => FriendRequest[];
@@ -137,6 +145,7 @@ interface SocialGraphContextValue {
   deleteContact: (currentUserId: string, contactId: string) => Promise<void>;
   addManualContact: (ownerUserId: string, input: CreateContactInput) => Promise<Contact>;
   addWallPost: (authorUserId: string, input: CreateWallPostInput) => Promise<WallPost>;
+  createOfficialBroadcast: (input: CreateOfficialBroadcastInput) => Promise<OfficialBroadcastResult>;
   createGiftNote: (authorUserId: string, input: CreateGiftNoteInput) => Promise<GiftNote>;
   cancelGiftNote: (noteId: string, authorUserId: string) => Promise<void>;
   getGiftNotesForPair: (leftUserId: string, rightUserId: string) => GiftNote[];
@@ -167,7 +176,7 @@ interface SocialGraphContextValue {
   getWallPostById: (postId: string) => WallPost | undefined;
   getRepliesForWallPost: (postId: string) => MemoryReply[];
   getReplyCountForWallPost: (postId: string) => number;
-  addMemoryReply: (wallPostId: string, authorUserId: string, body: string) => Promise<MemoryReply>;
+  addMemoryReply: (wallPostId: string, authorUserId: string, body: string, voice?: VoiceAttachment | null) => Promise<MemoryReply>;
   deleteMemoryReply: (replyId: string, authorUserId: string) => Promise<void>;
   getProfileWallItemsForUser: (userId: string) => ProfileWallItem[];
   getWallPostLayoutsForContext: (ownerUserId: string, wallContext: WallPostLayoutContext, wallContextId: string) => WallPostLayout[];
@@ -183,7 +192,7 @@ interface SocialGraphContextValue {
   deleteFriendFact: (factId: string) => Promise<void>;
   getFriendFactsFor: (authorUserId: string, subjectUserId: string) => FriendFact[];
   deleteWallPost: (postId: string) => Promise<void>;
-  updateWallPost: (postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean, locationName?: string | null) => Promise<void>;
+  updateWallPost: (postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean, locationName?: string | null, voice?: VoiceAttachment | null) => Promise<void>;
   updateContact: (contactId: string, updates: {
     displayName?: string;
     avatarLocalUri?: string | null;
@@ -201,6 +210,8 @@ interface SocialGraphContextValue {
   }) => Promise<void>;
   addContactFact: (contactId: string, fact: string) => Promise<void>;
   deleteContactFact: (contactId: string, fact: string) => Promise<void>;
+  addContactPersonalityTrait: (contactId: string, trait: string) => Promise<void>;
+  deleteContactPersonalityTrait: (contactId: string, trait: string) => Promise<void>;
   migrateContactPostsToUser: (contactId: string, userId: string) => Promise<void>;
   linkContactByFriendCode: (contactId: string, currentUserId: string, friendCode: string) => Promise<{ ok: true; friend: AppUser; requested?: boolean } | { ok: false; error: string }>;
   togglePin: (contactId: string) => Promise<void>;
@@ -233,6 +244,7 @@ const SocialGraphContext = createContext<SocialGraphContextValue | null>(null);
 export function SocialGraphProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const { currentUser } = useAuth();
+  const { isPremium } = usePremium();
   const socialEnabled = Boolean(currentUser?.id);
   const birthdaySyncSignatureRef = useRef<string | null>(null);
   const giftRevealSignatureRef = useRef<string | null>(null);
@@ -330,6 +342,32 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     && friendFactsQuery.isFetched
     && notificationsQuery.isFetched
     && calendarEventReactionsQuery.isFetched;
+  const friendReminderSignature = useMemo(() => {
+    if (!currentUser?.id) return '';
+    const incomingPolaroids = wallPosts
+      .filter((post) => post.postType === 'polaroid' && post.imageUri && post.authorUserId !== currentUser.id && post.subjectUserId === currentUser.id)
+      .map((post) => `${post.id}:${post.createdAt}`)
+      .sort();
+    const pendingMemoryPrompts = memoryPromptRequests
+      .filter((request) => request.recipientUserId === currentUser.id && request.status === 'pending')
+      .map((request) => `${request.id}:${request.createdAt}`)
+      .sort();
+    const pendingMoviePrompts = movieReviewRequests
+      .filter((request) => request.recipientUserId === currentUser.id && request.status === 'pending')
+      .map((request) => `${request.id}:${request.createdAt}`)
+      .sort();
+    const lockedGiftNotes = giftNotes
+      .filter((note) => note.recipientUserId === currentUser.id && note.status === 'locked')
+      .map((note) => `${note.id}:${note.unlockDate}:${note.unlockTime}`)
+      .sort();
+    return [
+      currentUser.id,
+      incomingPolaroids.join('|'),
+      pendingMemoryPrompts.join('|'),
+      pendingMoviePrompts.join('|'),
+      lockedGiftNotes.join('|'),
+    ].join('::');
+  }, [currentUser?.id, giftNotes, memoryPromptRequests, movieReviewRequests, wallPosts]);
 
   // ── Effects ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -342,6 +380,18 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     });
     return () => subscription.unsubscribe();
   }, [queryClient, socialEnabled]);
+
+  useEffect(() => {
+    if (!currentUser?.id || !hasSettledInitialData || !friendReminderSignature) return;
+    resyncFriendNotificationReminders({
+      userId: currentUser.id,
+      users,
+      giftNotes,
+      memoryPromptRequests,
+      movieReviewRequests,
+      wallPosts,
+    }).catch((error) => console.warn('[notifications] reminder sync failed:', error));
+  }, [currentUser?.id, friendReminderSignature, giftNotes, hasSettledInitialData, memoryPromptRequests, movieReviewRequests, users, wallPosts]);
 
   useEffect(() => {
     if (!socialEnabled) return;
@@ -449,6 +499,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
             display_name: friend?.displayName ?? 'Friend',
             avatar_path: friend?.avatarPath ?? null,
             facts: friend?.profileFacts?.length ? friend.profileFacts : [],
+            personality_traits: friend?.profilePersonalityTraits?.length ? friend.profilePersonalityTraits : [],
           };
         });
         const { data: rows, error: upsertErr } = await supabase
@@ -525,6 +576,21 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     revealDueGiftNotes()
       .then((revealed) => {
         if (revealed.length === 0) return;
+        const myReveals = revealed.filter((entry) => entry.recipientUserId === currentUser.id && entry.authorUserId !== currentUser.id);
+        for (const reveal of myReveals) {
+          createNotification({
+            recipientUserId: reveal.authorUserId,
+            actorUserId: currentUser.id,
+            type: 'wall_post',
+            referenceId: reveal.wallPostId,
+            metadata: {
+              wallPostId: reveal.wallPostId,
+              giftNoteId: reveal.giftNoteId,
+              source: 'gift_note_revealed',
+            },
+            message: `${currentUser.displayName} opened your gift note`,
+          }).catch((error) => console.warn('[notification] gift_note_revealed insert failed:', error));
+        }
         queryClient.invalidateQueries({ queryKey: giftQueryKeys.all });
         queryClient.invalidateQueries({ queryKey: socialQueryKeys.wallPosts });
         queryClient.invalidateQueries({ queryKey: socialQueryKeys.notifications });
@@ -891,8 +957,8 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         actorUserId: currentUserId,
         type: 'friend_request',
         referenceId: request.id,
-        metadata: { action: 'requested', friendRequestId: request.id, source: 'friend_requests' },
-        message: `${currentName} sent you a friend request`,
+        metadata: { action: 'requested', friendRequestId: request.id, source: 'friend_invite' },
+        message: `${currentName} used your invite and sent you a friend request`,
       }).catch((error) => console.warn('[notification] friend_request insert failed:', error));
 
       return { ok: true as const, friend: rowToUser(profile), contactId: null, candidateContactIds: [], requested: true, requestId: request.id };
@@ -924,7 +990,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       (c) => c.ownerUserId === currentUserId && c.linkedUserId === friendUser.id,
     );
     if (existingLinkedContact) {
-      return { ok: true as const, friend: friendUser, contactId: existingLinkedContact.id, candidateContactIds: [] };
+      return { ok: true as const, friend: friendUser, contactId: existingLinkedContact.id, candidateContactIds: [], alreadyFriends: true };
     }
 
     // If the user already has unlinked manual contacts that look like this
@@ -932,7 +998,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     // UI so the user can decide which Steven (if any) this is.
     const candidates = getLinkReviewCandidates(currentUserId, friendUser.id);
     if (candidates.length > 0) {
-      return { ok: true as const, friend: friendUser, contactId: null, candidateContactIds: candidates.map((c) => c.id) };
+      return { ok: true as const, friend: friendUser, contactId: null, candidateContactIds: candidates.map((c) => c.id), alreadyFriends: true };
     }
 
     const { data: newContactRow, error: newContactErr } = await supabase
@@ -943,25 +1009,26 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         display_name: friendUser.displayName,
         avatar_path: friendUser.avatarPath ?? null,
         facts: friendUser.profileFacts.length > 0 ? friendUser.profileFacts : [],
+        personality_traits: friendUser.profilePersonalityTraits.length > 0 ? friendUser.profilePersonalityTraits : [],
       })
       .select()
       .single();
     if (newContactErr) {
       const fetchedLinkedContact = await hydrateOwnedLinkedContact();
       if (fetchedLinkedContact) {
-        return { ok: true as const, friend: friendUser, contactId: fetchedLinkedContact.id, candidateContactIds: [] };
+        return { ok: true as const, friend: friendUser, contactId: fetchedLinkedContact.id, candidateContactIds: [], alreadyFriends: true };
       }
       return { ok: false as const, error: newContactErr.message };
     }
     if (newContactRow) {
       const newContact = rowToContact(newContactRow);
       queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) => [newContact, ...(old ?? [])]);
-      return { ok: true as const, friend: friendUser, contactId: newContact.id, candidateContactIds: [] };
+      return { ok: true as const, friend: friendUser, contactId: newContact.id, candidateContactIds: [], alreadyFriends: true };
     }
 
     const fetchedLinkedContact = await hydrateOwnedLinkedContact();
     if (fetchedLinkedContact) {
-      return { ok: true as const, friend: friendUser, contactId: fetchedLinkedContact.id, candidateContactIds: [] };
+      return { ok: true as const, friend: friendUser, contactId: fetchedLinkedContact.id, candidateContactIds: [], alreadyFriends: true };
     }
 
     return { ok: false as const, error: 'We added the friendship, but could not create your editable contact card.' };
@@ -1086,6 +1153,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         display_name: friend?.displayName ?? 'Friend',
         avatar_path: friend?.avatarPath ?? null,
         facts: friend?.profileFacts?.length ? friend.profileFacts : [],
+        personality_traits: friend?.profilePersonalityTraits?.length ? friend.profilePersonalityTraits : [],
       })
       .select()
       .single();
@@ -1224,11 +1292,13 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   }
 
   async function notifyLinkedContactUpdate({
+    avatarLocalUri,
     contactId,
     linkedUserId,
     ownerUserId,
     profileBgImageLocalUri,
   }: {
+    avatarLocalUri?: string | null;
     contactId: string;
     linkedUserId: string | null | undefined;
     ownerUserId?: string | null;
@@ -1237,18 +1307,27 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     if (!linkedUserId || !ownerUserId || linkedUserId === ownerUserId) return;
 
     const ownerName = users.find((user) => user.id === ownerUserId)?.displayName ?? 'Someone';
-    const message = profileBgImageLocalUri === undefined
-      ? `${ownerName} updated your profile`
-      : profileBgImageLocalUri
-        ? `${ownerName} updated your profile background`
-        : `${ownerName} removed your profile background`;
+    const updateKind = avatarLocalUri !== undefined
+      ? 'profile_photo'
+      : profileBgImageLocalUri !== undefined
+        ? 'profile_background'
+        : 'profile';
+    const message = avatarLocalUri !== undefined
+      ? avatarLocalUri
+        ? `${ownerName} updated your profile photo`
+        : `${ownerName} removed your profile photo`
+      : profileBgImageLocalUri === undefined
+        ? `${ownerName} updated your profile`
+        : profileBgImageLocalUri
+          ? `${ownerName} updated your profile background`
+          : `${ownerName} removed your profile background`;
 
     createNotification({
       recipientUserId: linkedUserId,
       actorUserId: ownerUserId,
       type: 'contact_update',
       referenceId: contactId,
-      metadata: { contactId, source: 'contact_profile' },
+      metadata: { contactId, source: 'contact_profile', updateKind },
       message,
     }).catch((error) => console.warn('[notification] contact_update insert failed:', error));
   }
@@ -1339,6 +1418,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         display_name: input.displayName.trim(),
         nickname: input.nickname?.trim() || null,
         facts: ['Freshly added to your circle.'],
+        personality_traits: [],
       })
       .select()
       .single();
@@ -1415,6 +1495,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
 
     const linkedId = contact?.linkedUserId ?? (updates.linkedUserId ?? null);
     await notifyLinkedContactUpdate({
+      avatarLocalUri: updates.avatarLocalUri,
       contactId,
       linkedUserId: linkedId,
       ownerUserId: contact?.ownerUserId,
@@ -1484,6 +1565,46 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     if (error) throw new Error(error.message);
     queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
       (old ?? []).map((c) => (c.id === contactId ? { ...c, facts: updatedFacts } : c)),
+    );
+  }
+
+  async function addContactPersonalityTrait(contactId: string, trait: string) {
+    const contact = contacts.find((c) => c.id === contactId);
+    const normalizedTrait = trait.trim();
+    const existingTraits = contact?.personalityTraits ?? [];
+    const updatedTraits = existingTraits.some((entry) => entry.toLowerCase() === normalizedTrait.toLowerCase())
+      ? existingTraits
+      : [...existingTraits, normalizedTrait];
+    const { error } = await supabase.from('contacts').update({ personality_traits: updatedTraits }).eq('id', contactId);
+    if (error) throw new Error(error.message);
+    queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
+      (old ?? []).map((c) => (c.id === contactId ? { ...c, personalityTraits: updatedTraits } : c)),
+    );
+
+    const linkedId = contact?.linkedUserId;
+    if (linkedId) {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (authUser && linkedId !== authUser.id) {
+        const ownerName = users.find((u) => u.id === authUser.id)?.displayName ?? 'Someone';
+        createNotification({
+          recipientUserId: linkedId,
+          actorUserId: authUser.id,
+          type: 'contact_update',
+          referenceId: contactId,
+          metadata: { contactId, source: 'contact_personality_trait' },
+          message: `${ownerName} added a personality trait about you: ${normalizedTrait}`,
+        }).catch((error) => console.warn('[notification] contact_update insert failed:', error));
+      }
+    }
+  }
+
+  async function deleteContactPersonalityTrait(contactId: string, trait: string) {
+    const contact = contacts.find((c) => c.id === contactId);
+    const updatedTraits = (contact?.personalityTraits ?? []).filter((entry) => entry !== trait);
+    const { error } = await supabase.from('contacts').update({ personality_traits: updatedTraits }).eq('id', contactId);
+    if (error) throw new Error(error.message);
+    queryClient.setQueryData<Contact[]>(socialQueryKeys.contacts, (old) =>
+      (old ?? []).map((c) => (c.id === contactId ? { ...c, personalityTraits: updatedTraits } : c)),
     );
   }
 
@@ -1606,7 +1727,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   }
 
   async function addWallPost(authorUserId: string, input: CreateWallPostInput) {
-    const postType = input.postType ?? (input.movie ? 'movie' : input.song ? 'song' : input.imageUri ? 'polaroid' : 'note');
+    const postType = input.postType ?? (input.movie ? 'movie' : input.song ? 'song' : input.voice ? 'voice' : input.imageUri ? 'polaroid' : 'note');
     const { data, error } = await supabase
       .from('wall_posts')
       .insert({
@@ -1617,6 +1738,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         post_type: postType,
         body: input.body,
         image_path: input.imageUri,
+        image_thumb_path: input.imageThumbUri ?? input.imageUri,
         video_path: input.videoUri ?? null,
         video_muted: input.videoMuted ?? false,
         card_color: input.cardColor ?? null,
@@ -1634,6 +1756,8 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         song_artwork_url: input.song?.artworkUrl ?? null,
         song_preview_url: input.song?.previewUrl ?? null,
         song_external_url: input.song?.externalUrl ?? null,
+        audio_path: input.voice?.uri ?? null,
+        audio_duration_ms: input.voice?.durationMs ?? null,
         movie_tmdb_id: input.movie?.tmdbId ?? null,
         movie_title: input.movie?.title ?? null,
         movie_year: input.movie?.year ?? null,
@@ -1647,6 +1771,8 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         referenced_wall_post_id: input.referencedWallPostId ?? null,
         prompt_text: input.promptText ?? null,
         prompt_type: input.promptType ?? null,
+        prompt_audio_path: input.promptVoice?.uri ?? null,
+        prompt_audio_duration_ms: input.promptVoice?.durationMs ?? null,
       })
       .select()
       .single();
@@ -1670,7 +1796,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
           type: 'wall_post',
           referenceId: post.id,
           metadata: { wallPostId: post.id, postType: post.postType, source: 'wall_post' },
-          message: `${authorName} added a ${post.postType === 'song' ? 'song memory' : post.postType === 'movie' ? 'movie review' : 'memory'} about you`,
+          message: `${authorName} added a ${post.postType === 'song' ? 'song memory' : post.postType === 'voice' ? 'voice memory' : post.postType === 'movie' ? 'movie review' : 'memory'} about you`,
         }).catch((error) => console.warn('[notification] wall_post insert failed:', error));
       }
     }
@@ -1678,7 +1804,91 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     return post;
   }
 
+  async function createOfficialBroadcast(input: CreateOfficialBroadcastInput): Promise<OfficialBroadcastResult> {
+    if (!currentUser?.isOfficial || !currentUser.isTeamAdmin) {
+      throw new Error('Only the official Your Friends admin account can broadcast posts.');
+    }
+
+    const body = input.body.trim();
+    if (!body && !input.imageUri) throw new Error('Write a message or choose a photo first.');
+
+    const recipients = users
+      .filter((user) => user.id !== currentUser.id && !user.isOfficial)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    if (recipients.length === 0) throw new Error('There are no users to send this broadcast to yet.');
+
+    const broadcastId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const uploadedImage = input.imageUri
+      ? await uploadMemoryImageVariants(input.imageUri, { prefix: 'official-broadcasts' })
+      : null;
+    const postType = uploadedImage ? 'polaroid' : 'note';
+    const memoryDate = input.memoryDate ?? new Date().toISOString().slice(0, 10);
+
+    const insertedPosts: WallPost[] = [];
+    for (const recipientChunk of chunk(recipients, 200)) {
+      const { data, error } = await supabase
+        .from('wall_posts')
+        .insert(
+          recipientChunk.map((recipient) => ({
+            author_user_id: currentUser.id,
+            subject_user_id: recipient.id,
+            subject_contact_id: null,
+            visibility: 'visible_to_subject',
+            post_type: postType,
+            body,
+            image_path: uploadedImage?.imageUri ?? null,
+            image_thumb_path: uploadedImage?.imageThumbUri ?? null,
+            video_path: null,
+            video_muted: false,
+            card_color: input.cardColor ?? null,
+            back_text: input.backText ?? null,
+            filter: input.filter ?? null,
+            date_stamp: input.dateStamp ?? false,
+            memory_date: memoryDate,
+          })),
+        )
+        .select();
+
+      if (error || !data) throw new Error(error?.message ?? 'Could not create official broadcast posts.');
+      insertedPosts.push(...data.map(rowToWallPost));
+    }
+
+    queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) =>
+      [...insertedPosts, ...(old ?? [])].sort(compareWallPostsByMemoryDateDesc),
+    );
+
+    let notificationCount = 0;
+    for (const postChunk of chunk(insertedPosts, 200)) {
+      const notifications = await createNotifications(
+        postChunk
+          .filter((post): post is WallPost & { subjectUserId: string } => Boolean(post.subjectUserId))
+          .map((post) => ({
+            recipientUserId: post.subjectUserId,
+            actorUserId: currentUser.id,
+            type: 'wall_post',
+            referenceId: post.id,
+            metadata: {
+              wallPostId: post.id,
+              postType: post.postType,
+              source: 'official_broadcast',
+              broadcastId,
+            },
+            message: 'Your Friends posted a new memory for you',
+          })),
+      );
+      notificationCount += notifications.length;
+    }
+
+    return {
+      broadcastId,
+      recipientCount: recipients.length,
+      postCount: insertedPosts.length,
+      notificationCount,
+    };
+  }
+
   async function createGiftNoteForUser(authorUserId: string, input: CreateGiftNoteInput) {
+    if (!isPremium) throw new Error('Gift notes are a Premium feature.');
     const note = await createGiftNote(authorUserId, input);
     queryClient.setQueryData<GiftNote[]>(giftQueryKeys.notes(authorUserId), (old) => [note, ...(old ?? [])]);
     return note;
@@ -1705,6 +1915,9 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   }
 
   async function completeMovieReviewRequestForUser(reviewerUserId: string, input: CompleteMovieReviewRequestInput) {
+    const pendingRequest = movieReviewRequests.find((entry) => entry.id === input.requestId);
+    if (!pendingRequest) throw new Error('Movie request is no longer available.');
+    if (isPromptExpired(pendingRequest)) throw new Error('This movie prompt has expired.');
     const { request, wallPost } = await completeMovieReviewRequest(reviewerUserId, input);
     queryClient.setQueryData<MovieReviewRequest[]>(movieQueryKeys.requests, (old) =>
       (old ?? []).map((entry) => (entry.id === request.id ? request : entry)),
@@ -1713,8 +1926,50 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   }
 
   async function createMemoryPromptRequestForUser(requesterUserId: string, input: CreateMemoryPromptRequestInput) {
-    const request = await createMemoryPromptRequest(requesterUserId, input);
-    queryClient.setQueryData<MemoryPromptRequest[]>(memoryPromptQueryKeys.requests, (old) => [request, ...(old ?? [])]);
+    if (!isPremium) throw new Error('Sending prompts is a Premium feature.');
+    const now = new Date().toISOString();
+    const optimisticRequest: MemoryPromptRequest = {
+      id: `pending-prompt:${requesterUserId}:${input.recipientUserId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+      requesterUserId,
+      recipientUserId: input.recipientUserId,
+      promptType: input.promptType,
+      promptText: input.promptText,
+      promptVoice: input.promptVoice ?? null,
+      status: 'pending',
+      responseBody: null,
+      responseSong: null,
+      responseVoice: null,
+      referencedWallPostId: null,
+      completedWallPostId: null,
+      createdAt: now,
+      expiresAt: getPromptExpiresAt(now),
+      updatedAt: now,
+      completedAt: null,
+    };
+
+    queryClient.setQueryData<MemoryPromptRequest[]>(memoryPromptQueryKeys.requests, (old) => [optimisticRequest, ...(old ?? [])]);
+
+    createPersistedMemoryPromptRequest(requesterUserId, input, optimisticRequest.id).catch((error) => {
+      console.warn('[memory prompt] background send failed:', error);
+      queryClient.setQueryData<MemoryPromptRequest[]>(memoryPromptQueryKeys.requests, (old) =>
+        (old ?? []).filter((entry) => entry.id !== optimisticRequest.id),
+      );
+    });
+
+    return optimisticRequest;
+  }
+
+  async function createPersistedMemoryPromptRequest(requesterUserId: string, input: CreateMemoryPromptRequestInput, optimisticId: string) {
+    const uploadedPromptVoice = input.promptVoice
+      ? {
+        ...input.promptVoice,
+        uri: await uploadMemoryAudio(input.promptVoice.uri, { prefix: `${requesterUserId}/voice-prompts` }),
+      }
+      : null;
+    const request = await createMemoryPromptRequest(requesterUserId, { ...input, promptVoice: uploadedPromptVoice });
+    queryClient.setQueryData<MemoryPromptRequest[]>(memoryPromptQueryKeys.requests, (old) =>
+      (old ?? []).map((entry) => (entry.id === optimisticId ? request : entry)),
+    );
     return request;
   }
 
@@ -1726,18 +1981,89 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   }
 
   async function completeMemoryPromptRequestForUser(reviewerUserId: string, input: CompleteMemoryPromptRequestInput) {
-    const { request, wallPost } = await completeMemoryPromptRequest(reviewerUserId, input);
+    const pendingRequest = memoryPromptRequests.find((entry) => entry.id === input.requestId);
+    if (pendingRequest?.promptType === 'voice' && !isPremium) throw new Error('Voice prompt responses are a Premium feature.');
+    if (input.responsePostType === 'media' && !isPremium) throw new Error('Media prompt responses are a Premium feature.');
+    if (!pendingRequest) throw new Error('Memory prompt is no longer available.');
+    if (isPromptExpired(pendingRequest)) throw new Error('This memory prompt has expired.');
+    const now = new Date().toISOString();
+    const optimisticWallPost: WallPost = {
+      id: `pending-prompt-response:${input.requestId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+      authorUserId: reviewerUserId,
+      subjectUserId: pendingRequest.requesterUserId,
+      subjectContactId: null,
+      visibility: 'visible_to_subject',
+      postType: pendingRequest.promptType === 'song'
+        ? 'song'
+        : pendingRequest.promptType === 'voice'
+          ? 'voice'
+          : pendingRequest.promptType === 'photo'
+            ? input.responsePostType ?? 'media'
+            : 'note',
+      body: input.body?.trim() ?? '',
+      imageUri: input.imageUri ?? null,
+      imageThumbUri: input.imageUri ?? null,
+      videoUri: input.videoUri ?? null,
+      videoMuted: input.videoMuted ?? false,
+      cardColor: null,
+      backText: null,
+      filter: null,
+      dateStamp: false,
+      song: pendingRequest.promptType === 'song' ? input.song ?? null : null,
+      voice: input.voice ?? null,
+      movie: null,
+      memoryPromptRequestId: pendingRequest.id,
+      referencedWallPostId: pendingRequest.promptType === 'photo_reference' ? input.referencedWallPostId ?? null : null,
+      promptText: pendingRequest.promptText,
+      promptType: pendingRequest.promptType,
+      promptVoice: pendingRequest.promptVoice ?? null,
+      memoryDate: now.slice(0, 10),
+      locationName: null,
+      createdAt: now,
+      syncStatus: 'saving',
+      syncError: null,
+      pendingMemoryId: null,
+    };
+    const optimisticRequest: MemoryPromptRequest = {
+      ...pendingRequest,
+      status: 'completed',
+      responseBody: input.body?.trim() || null,
+      responseSong: pendingRequest.promptType === 'song' ? input.song ?? null : null,
+      responseVoice: input.voice ?? null,
+      referencedWallPostId: pendingRequest.promptType === 'photo_reference' ? input.referencedWallPostId ?? null : null,
+      completedWallPostId: optimisticWallPost.id,
+      updatedAt: now,
+      completedAt: now,
+    };
+
     queryClient.setQueryData<MemoryPromptRequest[]>(memoryPromptQueryKeys.requests, (old) =>
-      (old ?? []).map((entry) => (entry.id === request.id ? request : entry)),
+      (old ?? []).map((entry) => (entry.id === optimisticRequest.id ? optimisticRequest : entry)),
     );
-    queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) => [wallPost, ...(old ?? [])].sort(compareWallPostsByMemoryDateDesc));
+    queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) => [optimisticWallPost, ...(old ?? [])].sort(compareWallPostsByMemoryDateDesc));
+
+    completeMemoryPromptRequest(reviewerUserId, input).then(({ request, wallPost }) => {
+      queryClient.setQueryData<MemoryPromptRequest[]>(memoryPromptQueryKeys.requests, (old) =>
+        (old ?? []).map((entry) => (entry.id === optimisticRequest.id ? request : entry)),
+      );
+      queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) =>
+        [wallPost, ...(old ?? []).filter((entry) => entry.id !== optimisticWallPost.id)].sort(compareWallPostsByMemoryDateDesc),
+      );
+    }).catch((error) => {
+      console.warn('[memory prompt] background response failed:', error);
+      queryClient.setQueryData<MemoryPromptRequest[]>(memoryPromptQueryKeys.requests, (old) =>
+        (old ?? []).map((entry) => (entry.id === optimisticRequest.id ? pendingRequest : entry)),
+      );
+      queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) =>
+        (old ?? []).map((entry) => (entry.id === optimisticWallPost.id ? { ...entry, syncStatus: 'failed', syncError: 'Could not save prompt response. Try again.' } : entry)),
+      );
+    });
   }
 
   async function deleteWallPost(postId: string) {
     const post = wallPosts.find((p) => p.id === postId);
-    if (!currentUser || post?.authorUserId !== currentUser.id) throw new Error('You can only delete your own memories.');
+    if (!currentUser || !post || !canDeleteWallPost(post, currentUser.id)) throw new Error('You can only delete memories you wrote or responses to prompts you sent.');
 
-    const { error } = await supabase.from('wall_posts').delete().eq('id', postId).eq('author_user_id', currentUser.id);
+    const { error } = await supabase.from('wall_posts').delete().eq('id', postId);
     if (error) throw new Error(error.message);
     queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) =>
       (old ?? []).filter((p) => p.id !== postId),
@@ -1747,9 +2073,9 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  async function addMemoryReply(wallPostId: string, authorUserId: string, body: string) {
+  async function addMemoryReply(wallPostId: string, authorUserId: string, body: string, voice?: VoiceAttachment | null) {
     const trimmed = body.trim();
-    if (!trimmed) throw new Error('Write a reply first.');
+    if (!trimmed && !voice) throw new Error('Write or record a reply first.');
     const post = wallPosts.find((entry) => entry.id === wallPostId);
     if (!post) throw new Error('Memory not found.');
 
@@ -1759,6 +2085,8 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         wall_post_id: wallPostId,
         author_user_id: authorUserId,
         body: trimmed.slice(0, 500),
+        audio_path: voice?.uri ?? null,
+        audio_duration_ms: voice?.durationMs ?? null,
       })
       .select()
       .single();
@@ -1880,9 +2208,9 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function updateWallPost(postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean, locationName?: string | null) {
+  async function updateWallPost(postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean, locationName?: string | null, voice?: VoiceAttachment | null) {
     const post = wallPosts.find((p) => p.id === postId);
-    if (!currentUser || post?.authorUserId !== currentUser.id) throw new Error('You can only edit your own memories.');
+    if (!currentUser || !post || !canEditWallPostContent(post, currentUser.id)) throw new Error('You can only edit your own memories.');
 
     const updateData: Record<string, unknown> = { body };
 
@@ -1920,22 +2248,34 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       updateData.location_name = locationName;
     }
 
+    if (voice !== undefined) {
+      updateData.audio_path = voice?.uri ?? null;
+      updateData.audio_duration_ms = voice?.durationMs ?? null;
+    }
+
     if (newLocalImageUri !== undefined) {
       if (newLocalImageUri) {
-        updateData.image_path = await uploadMemoryImage(newLocalImageUri, { prefix: 'uploads' });
+        const uploadedImage = await uploadMemoryImageVariants(newLocalImageUri, { prefix: 'uploads' });
+        updateData.image_path = uploadedImage.imageUri;
+        updateData.image_thumb_path = uploadedImage.imageThumbUri;
       } else {
         updateData.image_path = null;
+        updateData.image_thumb_path = null;
       }
     }
 
     const { error } = await supabase.from('wall_posts').update(updateData).eq('id', postId).eq('author_user_id', currentUser.id);
     if (error) throw new Error(error.message);
     const newImageUri = typeof updateData.image_path === 'string' ? updateData.image_path : (updateData.image_path === null ? null : undefined);
+    const newImageThumbUri = typeof updateData.image_thumb_path === 'string'
+      ? updateData.image_thumb_path
+      : (updateData.image_thumb_path === null ? null : undefined);
     queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) =>
       (old ?? []).map((p) => {
         if (p.id !== postId) return p;
         const updated = { ...p, body };
         if (newImageUri !== undefined) updated.imageUri = newImageUri;
+        if (newImageThumbUri !== undefined) updated.imageThumbUri = newImageThumbUri;
         if (cardColor !== undefined) updated.cardColor = cardColor;
         if (backText !== undefined) updated.backText = backText;
         if (filter !== undefined) {
@@ -1950,6 +2290,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         if (song !== undefined) updated.song = song;
         if (videoMuted !== undefined) updated.videoMuted = videoMuted;
         if (locationName !== undefined) updated.locationName = locationName;
+        if (voice !== undefined) updated.voice = voice;
         return updated;
       }),
     );
@@ -1978,19 +2319,26 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
 
   // ── Mutations: Notifications ─────────────────────────────────────────
   async function markNotificationRead(notificationId: string) {
-    await supabase.from('notifications').update({ read: true }).eq('id', notificationId);
+    if (notificationId.includes(':')) return;
     queryClient.setQueryData<Notification[]>(socialQueryKeys.notifications, (old) =>
       (old ?? []).map((n) => n.id === notificationId ? { ...n, read: true } : n),
     );
+    const { error } = await supabase.from('notifications').update({ read: true }).eq('id', notificationId);
+    if (error) {
+      console.warn('[notifications] mark read failed:', error);
+    }
   }
 
   async function markAllNotificationsRead() {
     const unread = notifications.filter((n) => !n.read);
     if (!unread.length) return;
-    await supabase.from('notifications').update({ read: true }).eq('read', false);
     queryClient.setQueryData<Notification[]>(socialQueryKeys.notifications, (old) =>
       (old ?? []).map((n) => ({ ...n, read: true })),
     );
+    const { error } = await supabase.from('notifications').update({ read: true }).eq('read', false);
+    if (error) {
+      console.warn('[notifications] mark all read failed:', error);
+    }
   }
 
   function getCalendarEventReactionSummary(eventId: string): CalendarEventReactionSummary {
@@ -2144,6 +2492,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         deleteContact,
         addManualContact,
         addWallPost,
+        createOfficialBroadcast,
         createGiftNote: createGiftNoteForUser,
         cancelGiftNote: cancelGiftNoteForUser,
         getGiftNotesForPair,
@@ -2194,6 +2543,8 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         updateContact,
         addContactFact,
         deleteContactFact,
+        addContactPersonalityTrait,
+        deleteContactPersonalityTrait,
         migrateContactPostsToUser,
         linkContactByFriendCode,
         togglePin,
@@ -2212,6 +2563,14 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       {children}
     </SocialGraphContext.Provider>
   );
+}
+
+function chunk<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 export function useSocialGraph() {

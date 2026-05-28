@@ -1,8 +1,23 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { rowToMemoryPromptRequest, songToPromptResponseDbColumns, songToWallPostDbColumns } from '../mappers';
+import { rowToMemoryPromptRequest, songToPromptResponseDbColumns, songToWallPostDbColumns, voiceToPromptQuestionDbColumns, voiceToPromptResponseDbColumns } from '../mappers';
 
 describe('rowToMemoryPromptRequest', () => {
+  it.each(['song', 'text', 'photo', 'photo_reference', 'voice'] as const)('maps %s prompt requests', (promptType) => {
+    const request = rowToMemoryPromptRequest({
+      id: `prompt-${promptType}`,
+      requester_user_id: 'requester-1',
+      recipient_user_id: 'recipient-1',
+      prompt_type: promptType,
+      prompt_text: 'Answer this.',
+      status: 'pending',
+      created_at: '2026-05-01T00:00:00Z',
+    });
+
+    expect(request.promptType).toBe(promptType);
+    expect(request.status).toBe('pending');
+  });
+
   it('maps snake_case rows to MemoryPromptRequest', () => {
     expect(rowToMemoryPromptRequest({
       id: 'prompt-1',
@@ -10,8 +25,12 @@ describe('rowToMemoryPromptRequest', () => {
       recipient_user_id: 'recipient-1',
       prompt_type: 'song',
       prompt_text: 'What song reminds you of us?',
+      prompt_audio_path: 'https://audio.test/prompt.m4a',
+      prompt_audio_duration_ms: 9000,
       status: 'completed',
       response_body: 'Late night drives.',
+      response_audio_path: 'https://audio.test/response.m4a',
+      response_audio_duration_ms: '15000',
       response_song_provider: 'apple',
       response_song_provider_id: '12345',
       response_song_title: 'Golden Hour',
@@ -30,6 +49,10 @@ describe('rowToMemoryPromptRequest', () => {
       recipientUserId: 'recipient-1',
       promptType: 'song',
       promptText: 'What song reminds you of us?',
+      promptVoice: {
+        uri: 'https://audio.test/prompt.m4a',
+        durationMs: 9000,
+      },
       status: 'completed',
       responseBody: 'Late night drives.',
       responseSong: {
@@ -40,6 +63,10 @@ describe('rowToMemoryPromptRequest', () => {
         artworkUrl: 'https://img.test/art.jpg',
         previewUrl: 'https://audio.test/preview.m4a',
         externalUrl: 'https://music.test/song',
+      },
+      responseVoice: {
+        uri: 'https://audio.test/response.m4a',
+        durationMs: 15000,
       },
       referencedWallPostId: 'post-ref',
       completedWallPostId: 'post-1',
@@ -61,6 +88,27 @@ describe('rowToMemoryPromptRequest', () => {
     });
     expect(request.promptType).toBe('song');
     expect(request.status).toBe('pending');
+  });
+});
+
+describe('voice db column helpers', () => {
+  const voice = {
+    uri: 'https://audio.test/note.m4a',
+    durationMs: 11000,
+  };
+
+  it('maps prompt question voice columns', () => {
+    expect(voiceToPromptQuestionDbColumns(voice)).toEqual({
+      prompt_audio_path: 'https://audio.test/note.m4a',
+      prompt_audio_duration_ms: 11000,
+    });
+  });
+
+  it('maps response voice columns', () => {
+    expect(voiceToPromptResponseDbColumns(voice)).toEqual({
+      response_audio_path: 'https://audio.test/note.m4a',
+      response_audio_duration_ms: 11000,
+    });
   });
 });
 

@@ -4,16 +4,15 @@ import { useEffect, useMemo } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { useAuth } from '../../src/features/auth/AuthContext';
-import { PhotoSourceSheetHost } from '../../src/components/PhotoSourceSheetHost';
 import { CalendarProvider } from '../../src/features/calendar/CalendarContext';
 import { InAppNotificationProvider } from '../../src/features/notifications/InAppNotificationContext';
 import { usePremium } from '../../src/features/premium/PremiumContext';
 import { SocialGraphProvider, useSocialGraph } from '../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
+import { ScrollChromeProvider } from '../../src/features/navigation/ScrollChromeContext';
 import { usePushNotifications } from '../../src/hooks/usePushNotifications';
 import { extractFriendCode } from '../../src/lib/friendCode';
 import { pushOnce } from '../../src/lib/navigationGuard';
-import { storeIncomingReferralCode } from '../../src/lib/referrals';
 
 export default function AppLayout() {
   const { currentUser, loading } = useAuth();
@@ -32,7 +31,6 @@ export default function AppLayout() {
       if (!looksLikeInvite) return;
       const code = extractFriendCode(url);
       if (code && /^[A-Z0-9]{6,12}$/.test(code)) {
-        storeIncomingReferralCode(code).catch(() => {});
         pushOnce(router, { pathname: '/(app)/friends/add', params: { code } });
       }
     }
@@ -58,21 +56,23 @@ export default function AppLayout() {
     <SocialGraphProvider>
       <CalendarProvider>
         <InAppNotificationProvider>
-          <PremiumFriendsSync />
-          <PhotoSourceSheetHost />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              animation: 'slide_from_right',
-              contentStyle: { backgroundColor: 'transparent' },
-            }}
-          >
-            <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
-            <Stack.Screen name="friends/add" />
-            <Stack.Screen name="notifications" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
-            <Stack.Screen name="settings" />
-            <Stack.Screen name="store" />
-          </Stack>
+          <ScrollChromeProvider>
+            <PremiumFriendsSync />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                animation: 'slide_from_right',
+                contentStyle: { backgroundColor: 'transparent' },
+              }}
+            >
+              <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
+              <Stack.Screen name="friends/add" />
+              <Stack.Screen name="notifications" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
+              <Stack.Screen name="settings" options={{ animation: 'slide_from_left' }} />
+              <Stack.Screen name="store" options={{ animation: 'slide_from_left' }} />
+              <Stack.Screen name="admin/broadcast" />
+            </Stack>
+          </ScrollChromeProvider>
         </InAppNotificationProvider>
       </CalendarProvider>
     </SocialGraphProvider>

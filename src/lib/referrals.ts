@@ -7,12 +7,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const REFERRAL_REWARD_DAYS = 7;
 export const REFERRAL_REWARD_LABEL = '7 days of Premium';
+export const QR_PREMIUM_GRANT_DAYS = 3;
+export const QR_PREMIUM_GRANT_LABEL = '3 days of Premium';
+export const QR_PREMIUM_ACTIVE_GRANT_LIMIT = 3;
 
 export const subscribedKey = (userId: string) => `yourfriends:premium:subscribed:${userId}`;
 export const premiumUntilKey = (userId: string) => `yourfriends:premium:until:${userId}`;
 export const referrerCodeKey = (userId: string) => `yourfriends:premium:referrerCode:${userId}`;
 export const referralRewardCountKey = (userId: string) => `yourfriends:premium:referralRewardCount:${userId}`;
 export const referralRewardGrantedKey = (userId: string) => `yourfriends:premium:referralRewardGranted:${userId}`;
+export const qrPremiumGrantCountKey = (userId: string) => `yourfriends:premium:qrGrantCount:${userId}`;
 
 const INCOMING_REFERRAL_CODE_KEY = 'yourfriends:referral:incoming';
 
@@ -31,6 +35,15 @@ export function extendIsoByDays(value: string | null | undefined, days: number, 
   const existing = value ? Date.parse(value) : NaN;
   const base = Number.isFinite(existing) && existing > now ? existing : now;
   return new Date(base + days * DAY_MS).toISOString();
+}
+
+export function maxPremiumUntil(...values: Array<string | null | undefined>) {
+  let maxTime = 0;
+  for (const value of values) {
+    const time = value ? Date.parse(value) : NaN;
+    if (Number.isFinite(time) && time > maxTime) maxTime = time;
+  }
+  return maxTime > 0 ? new Date(maxTime).toISOString() : null;
 }
 
 export async function storeIncomingReferralCode(rawCode: string) {
@@ -86,6 +99,13 @@ async function incrementLocalReferralRewardCount(userId: string) {
   return next;
 }
 
+async function incrementLocalQrGrantCount(userId: string) {
+  const raw = await AsyncStorage.getItem(qrPremiumGrantCountKey(userId));
+  const next = (raw ? Number(raw) || 0 : 0) + 1;
+  await AsyncStorage.setItem(qrPremiumGrantCountKey(userId), String(next));
+  return next;
+}
+
 function isMissingReferralBackend(error: unknown) {
   if (!error || typeof error !== 'object') return false;
   const message = 'message' in error && typeof error.message === 'string' ? error.message.toLowerCase() : '';
@@ -98,6 +118,91 @@ type ReferralRpcResult = {
   referee_premium_until?: string | null;
   referrer_premium_until?: string | null;
 };
+
+type QrPremiumGrantRpcResult = {
+  grantor_user_id?: string | null;
+  recipient_premium_until?: string | null;
+  recipient_free_until?: string | null;
+  granted?: boolean | null;
+};
+
+type ApplyQrPremiumGrantInput = {
+  recipientUserId: string;
+  recipientFriendCode: string;
+  grantorCode: string;
+};
+
+export async function applyQrPremiumGrantForUser({
+  recipientUserId,
+  recipientFriendCode,
+  grantorCode,
+}: ApplyQrPremiumGrantInput): Promise<{
+  ok: true;
+  code: string;
+  grantorUserId: string;
+  recipientPremiumUntil: string;
+  recipientFreeUntil: string;
+  granted: boolean;
+} | { ok: false; error: string }> {
+  const code = normalizeFriendCode(grantorCode);
+  const ownCode = normalizeFriendCode(recipientFriendCode);
+  if (!code) return { ok: false, error: 'Scan a premium friend QR code.' };
+  if (ownCode && code === ownCode) return { ok: false, error: "That's your own QR code." };
+
+  const { data: grantor, error: grantorError } = await supabase
+    .from('profiles')
+    .select('id, friend_code, premium_until, premium_paid_until, premium_free_until')
+    .eq('friend_code', code)
+    .maybeSingle();
+
+  if (grantorError || !grantor?.id) return { ok: false, error: 'Friend QR code not found.' };
+  if (grantor.id === recipientUserId) return { ok: false, error: "That's your own QR code." };
+
+  const grantorPremiumUntil = maxPremiumUntil(grantor.premium_until, grantor.premium_paid_until, grantor.premium_free_until);
+  if (!isPremiumUntilActive(grantorPremiumUntil)) {
+    return { ok: false, error: 'This QR code belongs to someone without active Premium.' };
+  }
+
+  let recipientPremiumUntil: string | null = null;
+  let recipientFreeUntil: string | null = null;
+  let granted = true;
+
+  try {
+    const { data, error } = await supabase.rpc('apply_premium_qr_grant', {
+      recipient_id: recipientUserId,
+      grantor_code: code,
+    });
+    if (error) {
+      return { ok: false, error: isMissingReferralBackend(error) ? 'Update required before Premium QR grants can be used.' : error.message };
+    } else {
+      const row = (Array.isArray(data) ? data[0] : data) as QrPremiumGrantRpcResult | null;
+      recipientPremiumUntil = row?.recipient_premium_until ?? null;
+      recipientFreeUntil = row?.recipient_free_until ?? recipientPremiumUntil;
+      granted = row?.granted ?? true;
+    }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Could not apply QR Premium.' };
+  }
+
+  if (!recipientFreeUntil) {
+    return { ok: false, error: 'Could not apply QR Premium.' };
+  } else {
+    await setLocalPremiumUntil(recipientUserId, maxPremiumUntil(recipientPremiumUntil, recipientFreeUntil));
+  }
+
+  if (!recipientPremiumUntil) recipientPremiumUntil = recipientFreeUntil;
+
+  await incrementLocalQrGrantCount(grantor.id);
+
+  return {
+    ok: true,
+    code,
+    grantorUserId: grantor.id,
+    recipientPremiumUntil,
+    recipientFreeUntil,
+    granted,
+  };
+}
 
 type ApplyReferralRewardInput = {
   refereeUserId: string;

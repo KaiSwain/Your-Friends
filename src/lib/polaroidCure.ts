@@ -24,7 +24,7 @@ export function getCureProgress(createdAt: string, now: number = Date.now()): nu
 
 /**
  * Return style values to reflect the current development stage.
- * Real Polaroids start black — the image emerges from darkness.
+ * Instant photo cards start dark — the image emerges from darkness.
  * We layer a black overlay that fades out as the photo develops.
  */
 export function getCureStyles(progress: number) {

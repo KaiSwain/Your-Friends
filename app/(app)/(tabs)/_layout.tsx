@@ -8,10 +8,11 @@ import {
 import { ParamListBase, TabNavigationState } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
 import { useRouter, withLayoutContext } from 'expo-router';
-import { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef } from 'react';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useScrollChrome } from '../../../src/features/navigation/ScrollChromeContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
 import { spacing } from '../../../src/theme/tokens';
@@ -64,17 +65,39 @@ type TabRouteName = 'calendar' | 'friends/index' | 'profiles/me';
 
 function FloatingDockTabBar({ state, navigation }: MaterialTopTabBarProps) {
   const { colors, fonts, resolvedMode } = useTheme();
+  const { isScrollChromeHidden } = useScrollChrome();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
   const blurTint = resolvedMode === 'dark' ? 'dark' : 'light';
+  const dockAnim = useRef(new Animated.Value(1)).current;
 
   const activeName = state.routes[state.index]?.name as TabRouteName | undefined;
   const isHome = activeName === 'friends/index';
   const isCalendar = activeName === 'calendar';
   const isProfile = activeName === 'profiles/me';
 
-  const bottomPad = Math.max(insets.bottom, spacing.sm) + spacing.sm;
+  const bottomPad = Math.max(insets.bottom * 0.5, spacing.xs);
+
+  useEffect(() => {
+    Animated.timing(dockAnim, {
+      toValue: isScrollChromeHidden ? 0 : 1,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [dockAnim, isScrollChromeHidden]);
+
+  const dockAnimatedStyle = {
+    opacity: dockAnim,
+    transform: [
+      {
+        translateY: dockAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [DOCK_BAR_HEIGHT + bottomPad + spacing.lg, 0],
+        }),
+      },
+    ],
+  };
 
   // Switch tabs by URL navigation (works through expo-router's withLayoutContext
   // wrapper). Falling back to React Navigation's navigate() if needed.
@@ -87,21 +110,24 @@ function FloatingDockTabBar({ state, navigation }: MaterialTopTabBarProps) {
   };
 
   return (
-    <View pointerEvents="box-none" style={[styles.dockContainer, { paddingBottom: bottomPad }]}>
+    <Animated.View pointerEvents={isScrollChromeHidden ? 'none' : 'box-none'} style={[styles.dockContainer, { paddingBottom: bottomPad }, dockAnimatedStyle]}>
       <View style={styles.dockBar}>
         <BlurView
-          intensity={42}
+          intensity={56}
           tint={blurTint}
           style={[StyleSheet.absoluteFill, styles.dockBlur]}
           pointerEvents="none"
         />
+        <View pointerEvents="none" style={styles.dockGlassTint} />
+        <View pointerEvents="none" style={styles.dockLiquidHighlight} />
+        <View pointerEvents="none" style={styles.dockLiquidGlow} />
         <Pressable
           onPress={() => router.navigate('/(app)/store')}
           style={({ pressed }) => [styles.storeButton, pressed && styles.dockTabPressed]}
           accessibilityRole="button"
           accessibilityLabel="Open store"
         >
-          <Ionicons name="bag-handle-outline" size={20} color={colors.inkSoft} />
+          <Ionicons name="bag-handle-outline" size={20} color={colors.ink} />
         </Pressable>
         <Pressable
           onPress={() => goTo('/calendar', 'calendar')}
@@ -114,7 +140,7 @@ function FloatingDockTabBar({ state, navigation }: MaterialTopTabBarProps) {
           accessibilityLabel="Calendar tab"
           accessibilityState={{ selected: isCalendar }}
         >
-          <Ionicons name="calendar-outline" size={20} color={isCalendar ? colors.white : colors.inkSoft} />
+          <Ionicons name="calendar-outline" size={20} color={isCalendar ? colors.white : colors.ink} />
           <Text style={[styles.dockTabLabel, isCalendar && styles.dockTabLabelActive]}>Calendar</Text>
         </Pressable>
 
@@ -129,7 +155,7 @@ function FloatingDockTabBar({ state, navigation }: MaterialTopTabBarProps) {
           accessibilityLabel="Home tab"
           accessibilityState={{ selected: isHome }}
         >
-          <Ionicons name="home" size={18} color={isHome ? colors.white : colors.inkSoft} />
+          <Ionicons name="home" size={18} color={isHome ? colors.white : colors.ink} />
           <Text style={[styles.dockHomeLabel, !isHome && styles.dockHomeLabelInactive]}>Home</Text>
         </Pressable>
 
@@ -144,11 +170,11 @@ function FloatingDockTabBar({ state, navigation }: MaterialTopTabBarProps) {
           accessibilityLabel="Profile tab"
           accessibilityState={{ selected: isProfile }}
         >
-          <Ionicons name="person-circle-outline" size={21} color={isProfile ? colors.white : colors.inkSoft} />
+          <Ionicons name="person-circle-outline" size={21} color={isProfile ? colors.white : colors.ink} />
           <Text style={[styles.dockTabLabel, isProfile && styles.dockTabLabelActive]}>Profile</Text>
         </Pressable>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -174,16 +200,37 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: 'transparent',
       borderRadius: 32,
       borderWidth: 1,
-      borderColor: colors.line + '44',
+      borderColor: withAlpha(colors.white, 0.22),
       overflow: 'hidden',
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.1,
-      shadowRadius: 18,
+      shadowOpacity: 0.12,
+      shadowRadius: 24,
       elevation: 8,
     },
     dockBlur: {
       borderRadius: 32,
+    },
+    dockGlassTint: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(colors.paper, 0.18),
+    },
+    dockLiquidHighlight: {
+      position: 'absolute',
+      top: 1,
+      left: 18,
+      right: 18,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: withAlpha(colors.white, 0.72),
+    },
+    dockLiquidGlow: {
+      position: 'absolute',
+      top: -34,
+      left: '36%',
+      width: 120,
+      height: 120,
+      borderRadius: 60,
+      backgroundColor: withAlpha(colors.accentAlt ?? colors.accent, 0.12),
     },
     dockTab: {
       flex: 1,
@@ -196,7 +243,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: 'transparent',
     },
     dockTabActive: {
-      backgroundColor: colors.accent,
+      backgroundColor: withAlpha(colors.accent, 0.9),
     },
     dockTabPressed: {
       opacity: 0.6,
@@ -213,7 +260,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: spacing.lg,
       height: 48,
       borderRadius: 24,
-      backgroundColor: colors.accent,
+      backgroundColor: withAlpha(colors.accent, 0.9),
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
@@ -221,7 +268,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       marginHorizontal: 4,
       shadowColor: colors.accent,
       shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: 0.35,
+      shadowOpacity: 0.2,
       shadowRadius: 12,
       elevation: 8,
     },
@@ -245,9 +292,9 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: 44,
       height: 44,
       borderRadius: 22,
-      backgroundColor: colors.paper,
+      backgroundColor: withAlpha(colors.paper, 0.62),
       borderWidth: 1,
-      borderColor: colors.line,
+      borderColor: withAlpha(colors.white, 0.32),
       alignItems: 'center',
       justifyContent: 'center',
       shadowColor: '#000',
@@ -257,3 +304,13 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       elevation: 8,
     },
   });
+
+function withAlpha(color: string, alpha: number) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = match[1];
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}

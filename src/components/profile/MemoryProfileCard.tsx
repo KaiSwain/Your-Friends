@@ -1,7 +1,8 @@
 import { ReactNode, useMemo, useState } from 'react';
-import { Animated, Image, Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { Animated, Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 
 import { useTheme } from '../../features/theme/ThemeContext';
+import { CachedRemoteImage } from '../CachedRemoteImage';
 import type { ColorTokens } from '../../features/theme/themes';
 import { useFlipCard } from '../../hooks/useFlipCard';
 import { usePolaroidImageReady } from '../../hooks/usePolaroidImageReady';
@@ -182,10 +183,9 @@ function ProfileCardFace({
           {image.showImage ? (
             <>
               {isGhost ? <MemoryPhotoGhost style={styles.photoGhostSurface} /> : null}
-              <Image
-                source={{ uri: imageUri! }}
+              <CachedRemoteImage
+                uri={imageUri!}
                 style={[styles.photo, isGhost && styles.photoLoading]}
-                fadeDuration={0}
                 onLoad={image.handleImageLoad}
                 onError={image.handleImageError}
               />

@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { BlurView } from 'expo-blur';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { ReactNode, useEffect, useMemo, useCallback, useRef, useState } from 'react';
-import { Alert, Animated, Image, Linking, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Animated, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ActionButton } from '../../../../src/components/ActionButton';
@@ -16,50 +17,84 @@ import { MemoryPromptRequestList } from '../../../../src/components/MemoryPrompt
 import { MemoryReplyThreadPreview } from '../../../../src/components/MemoryReplyThreadPreview';
 import { LockedGiftNoteCard } from '../../../../src/components/LockedGiftNoteCard';
 import { MemoryProfileCard, ProfileBackgroundBackdrop, WallModeToggle } from '../../../../src/components/profile';
+import { PolaroidIcon } from '../../../../src/components/PolaroidIcon';
 import { SectionCard } from '../../../../src/components/SectionCard';
 import { ProfileSkeleton } from '../../../../src/components/Skeleton';
 import { WallPostCard } from '../../../../src/components/WallPostCard';
 import { useAuth } from '../../../../src/features/auth/AuthContext';
 import { useCalendar } from '../../../../src/features/calendar/CalendarContext';
+import { useScrollChrome } from '../../../../src/features/navigation/ScrollChromeContext';
 import { usePremium } from '../../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../../src/features/social/SocialGraphContext';
 import { buildContactProfileViewModel } from '../../../../src/features/social/selectors';
+import { useTheme } from '../../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../../src/features/theme/themes';
 import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
 import type { FontSet } from '../../../../src/theme/typography';
 import { accentPalette, radius, spacing } from '../../../../src/theme/tokens';
-import { contrastText } from '../../../../src/lib/contrastText';
+import { notifyMemoryAuthorRecipientDeveloped } from '../../../../src/lib/memoryRecipientDevelopNotifications';
 import { backOnce, pushOnce, replaceOnce } from '../../../../src/lib/navigationGuard';
 import { createPrivateNoteImageUrl, removePrivateNoteImage, uploadPrivateNoteImage } from '../../../../src/lib/privateNoteMedia';
-import { showGalleryPaywall } from '../../../../src/lib/premiumGates';
+import { showGalleryPaywall, showGiftNotePaywall, showMediaMemoryPaywall, showPromptPaywall } from '../../../../src/lib/premiumGates';
 import { showPhotoSourceSheet } from '../../../../src/lib/photoSourceSheet';
-import { avatarImagePickerOptions, privateNoteImagePickerOptions } from '../../../../src/lib/imagePickerPresets';
+import { isPromptExpired } from '../../../../src/lib/promptExpiration';
+import { canDeleteWallPost, canEditWallPostContent } from '../../../../src/lib/wallPostPermissions';
+import { avatarImagePickerOptions, memoryImagePickerOptions, memoryMediaPickerOptions, privateNoteImagePickerOptions } from '../../../../src/lib/imagePickerPresets';
 import { getProfileScreenGradientColors, useEffectiveProfileTheme } from '../../../../src/hooks/useEffectiveProfileTheme';
+import { useIncomingMemoryDevelopStarts } from '../../../../src/hooks/useIncomingMemoryDevelopStarts';
 import { compareWallPostsByMemoryDateDesc, groupPostsByMemoryDateDay } from '../../../../src/lib/memoryDate';
+import {
+  getNotificationIdsForMemoryPrompt,
+  getNotificationIdsForMoviePrompt,
+  getNotificationIdsForWallPost,
+  getUnreadMemoryPromptIds,
+  getUnreadMoviePromptIds,
+  getUnreadWallPostIds,
+  markProfileNotificationIdsRead,
+} from '../../../../src/lib/profileNotificationIndicators';
 import { usePrioritizedWallImageLoading } from '../../../../src/hooks/usePrioritizedWallImageLoading';
 import { useSyntheticNotificationReads } from '../../../../src/hooks/useSyntheticNotificationReads';
 import type { ContactPrivateNoteBlock, WallPost } from '../../../../src/types/domain';
+
+const REGULAR_VIDEO_MAX_DURATION_MS = 5000;
 
 export default function ContactProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ contactId: string | string[] }>();
   const { currentUser } = useAuth();
+  const { resolvedMode } = useTheme();
+  const { isScrollChromeHidden } = useScrollChrome();
   const { isPremium, isUserPremium } = usePremium();
-  const { loading, contacts, getContactById, getUserById, getDirectFriends, getPeopleListForUser, getWallPostsForSubject, getVisiblePostsByAuthor, getPrivateNotesForContact, getPrivateNoteById, getPrivateNoteBlocks, cancelGiftNote, getGiftNotesForPair, getMovieReviewRequestsForPair, cancelMovieReviewRequest, getMemoryPromptRequestsForPair, cancelMemoryPromptRequest, getRepliesForWallPost, createPrivateNote, updatePrivateNote, deletePrivateNote, addPrivateNoteBlock, updatePrivateNoteBlock, deletePrivateNoteBlock, addContactFact, deleteContactFact, deleteWallPost, updateWallPost, updateContact, migrateContactPostsToUser, linkContactByFriendCode, togglePin, removeFriend, deleteContact, notifications, unreadCount, isPostOnProfileWall, addPostToProfileWall, refresh } = useSocialGraph();
+  const { loading, contacts, getContactById, getUserById, getDirectFriends, getPeopleListForUser, getWallPostsForSubject, getVisiblePostsByAuthor, getPrivateNotesForContact, getPrivateNoteById, getPrivateNoteBlocks, cancelGiftNote, getGiftNotesForPair, getMovieReviewRequestsForPair, cancelMovieReviewRequest, getMemoryPromptRequestsForPair, cancelMemoryPromptRequest, getRepliesForWallPost, getWallPostById, createPrivateNote, updatePrivateNote, deletePrivateNote, addPrivateNoteBlock, updatePrivateNoteBlock, deletePrivateNoteBlock, addContactFact, deleteContactFact, addContactPersonalityTrait, deleteContactPersonalityTrait, deleteWallPost, updateWallPost, updateContact, migrateContactPostsToUser, linkContactByFriendCode, togglePin, removeFriend, deleteContact, notifications, unreadCount, markNotificationRead, isPostOnProfileWall, addPostToProfileWall, refresh } = useSocialGraph();
   const { events } = useCalendar();
   const contactId = Array.isArray(params.contactId) ? params.contactId[0] : params.contactId;
   const contact = contactId ? getContactById(contactId) : undefined;
   const {
     baseColors: colors,
-    effectiveColors,
+    effectiveColors: rawEffectiveColors,
     effectiveFonts,
     themedColors,
-    tint,
   } = useEffectiveProfileTheme(contact?.profileBg);
+  const hasProfileBackgroundImage = Boolean(contact?.profileBgImagePath);
+  const effectiveColors = useMemo(
+    () => hasProfileBackgroundImage
+      ? {
+        ...rawEffectiveColors,
+        ink: colors.ink,
+        inkSoft: colors.ink,
+        inkMuted: colors.ink,
+      }
+      : rawEffectiveColors,
+    [colors.ink, colors.inkSoft, hasProfileBackgroundImage, rawEffectiveColors],
+  );
+  const blurTint = resolvedMode === 'dark' ? 'dark' : 'light';
+  const tint = effectiveColors.ink;
 
   const [newFact, setNewFact] = useState('');
   const [factBusy, setFactBusy] = useState(false);
+  const [newPersonalityTrait, setNewPersonalityTrait] = useState('');
+  const [personalityTraitBusy, setPersonalityTraitBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [editingPostBody, setEditingPostBody] = useState('');
@@ -97,10 +132,9 @@ export default function ContactProfileScreen() {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveInFlightRef = useRef(false);
   const autoSavePendingRef = useRef(false);
-  const memoryDockBottom = Math.max(insets.bottom, spacing.sm) + spacing.sm;
+  const memoryDockBottom = Math.max(insets.bottom * 0.5, spacing.xs);
   const [memoryMenuVisible, setMemoryMenuVisible] = useState(true);
   const memoryMenuVisibleRef = useRef(true);
-  const memoryMenuScrollOffsetRef = useRef(0);
   const memoryMenuAnim = useRef(new Animated.Value(1)).current;
 
   const setMemoryMenuShown = useCallback((visible: boolean) => {
@@ -109,24 +143,14 @@ export default function ContactProfileScreen() {
     setMemoryMenuVisible(visible);
     Animated.timing(memoryMenuAnim, {
       toValue: visible ? 1 : 0,
-      duration: visible ? 180 : 140,
+      duration: 180,
       useNativeDriver: true,
     }).start();
   }, [memoryMenuAnim]);
 
-  const handleMemoryMenuScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offsetY = Math.max(0, event.nativeEvent.contentOffset.y);
-    const delta = offsetY - memoryMenuScrollOffsetRef.current;
-    memoryMenuScrollOffsetRef.current = offsetY;
-
-    if (offsetY <= 24) {
-      setMemoryMenuShown(true);
-      return;
-    }
-
-    if (Math.abs(delta) < 8) return;
-    setMemoryMenuShown(delta < 0);
-  }, [setMemoryMenuShown]);
+  useEffect(() => {
+    setMemoryMenuShown(activePane === 'profile' ? !isScrollChromeHidden : true);
+  }, [activePane, isScrollChromeHidden, setMemoryMenuShown]);
 
   const openLinkScanner = useCallback(async () => {
     if (!linkCameraPermission?.granted) {
@@ -149,7 +173,7 @@ export default function ContactProfileScreen() {
     }
   }, []);
 
-  const { readIds: syntheticNotificationReadIds } = useSyntheticNotificationReads(currentUser?.id ?? null);
+  const { readIds: syntheticNotificationReadIds, markSyntheticRead } = useSyntheticNotificationReads(currentUser?.id ?? null);
   const calendarFallbackUnreadCount = useMemo(() => {
     if (!currentUser?.id) return 0;
     const existingEventIds = new Set(
@@ -170,7 +194,14 @@ export default function ContactProfileScreen() {
 
   const friendHasPremium = Boolean(linkedUser?.id && isUserPremium(linkedUser.id));
 
-  const styles = useMemo(() => makeStyles(effectiveColors, tint, effectiveFonts), [effectiveColors, tint, effectiveFonts]);
+  const styles = useMemo(
+    () => makeStyles(effectiveColors, tint, effectiveFonts, hasProfileBackgroundImage),
+    [effectiveColors, tint, effectiveFonts, hasProfileBackgroundImage],
+  );
+  const profileGradientColors = useMemo(
+    () => getProfileScreenGradientColors(contact?.profileBgImagePath, themedColors),
+    [contact?.profileBgImagePath, themedColors],
+  );
 
   const handleHeroPress = useCallback(() => {
     if (editing) {
@@ -189,9 +220,7 @@ export default function ContactProfileScreen() {
   // Compute wall posts unconditionally so the hook count stays stable across
   // renders (including during sign-out when `currentUser` becomes null).
   const [wallMode, setWallMode] = useState<'mine' | 'shared'>('shared');
-  const [focusedReferencePostId, setFocusedReferencePostId] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView | null>(null);
-  const postLayoutYRef = useRef<Record<string, number>>({});
   const contactPostsAll = contact ? getWallPostsForSubject(contact.id, 'contact') : [];
   const linkedPostsAll = contact?.linkedUserId ? getWallPostsForSubject(contact.linkedUserId, 'user') : [];
   const myWallPosts = useMemo(() =>
@@ -226,31 +255,36 @@ export default function ContactProfileScreen() {
   const unfilteredWallPosts = wallMode === 'shared' && isLinked ? sharedWallPosts : myWallPosts;
   const wallPosts = useMemo(() => filterWallPosts(unfilteredWallPosts, memoryFilter), [unfilteredWallPosts, memoryFilter]);
   const wallDayGroups = useMemo<DayGroup[]>(() => groupPostsByMemoryDateDay(wallPosts), [wallPosts]);
+  const getIncomingDevelopStartAt = useIncomingMemoryDevelopStarts(wallPosts, currentUser?.id, wallMode === 'shared' && isLinked);
   const wallImageLoading = usePrioritizedWallImageLoading(wallPosts, true);
   const lockedGiftNotes = currentUser?.id && contact?.linkedUserId
     ? getGiftNotesForPair(currentUser.id, contact.linkedUserId).filter((note) => note.status === 'locked')
     : [];
-  const moviePromptRequests = currentUser?.id && contact?.linkedUserId && wallMode === 'shared'
-    ? getMovieReviewRequestsForPair(currentUser.id, contact.linkedUserId).filter((request) => request.status === 'pending')
+  const moviePromptRequests = currentUser?.id && contact?.linkedUserId
+    ? getMovieReviewRequestsForPair(currentUser.id, contact.linkedUserId).filter((request) => request.status === 'pending' && !isPromptExpired(request))
     : [];
-  const memoryPromptRequests = currentUser?.id && contact?.linkedUserId && wallMode === 'shared'
-    ? getMemoryPromptRequestsForPair(currentUser.id, contact.linkedUserId).filter((request) => request.status === 'pending')
+  const memoryPromptRequests = currentUser?.id && contact?.linkedUserId
+    ? getMemoryPromptRequestsForPair(currentUser.id, contact.linkedUserId).filter((request) => request.status === 'pending' && !isPromptExpired(request))
     : [];
-  const incomingPromptCount = currentUser?.id && wallMode === 'shared'
-    ? memoryPromptRequests.filter((request) => request.recipientUserId === currentUser.id).length
-      + moviePromptRequests.filter((request) => request.recipientUserId === currentUser.id).length
+  const unreadMemoryPromptIds = useMemo(() => getUnreadMemoryPromptIds(notifications), [notifications]);
+  const unreadMoviePromptIds = useMemo(() => getUnreadMoviePromptIds(notifications), [notifications]);
+  const unreadWallPostIds = useMemo(() => getUnreadWallPostIds(notifications), [notifications]);
+  const newMemoryPromptIds = memoryPromptRequests
+    .filter((request) => request.recipientUserId === currentUser?.id && unreadMemoryPromptIds.has(request.id))
+    .map((request) => request.id);
+  const newMoviePromptIds = moviePromptRequests
+    .filter((request) => request.recipientUserId === currentUser?.id && unreadMoviePromptIds.has(request.id))
+    .map((request) => request.id);
+  const newIncomingPromptCount = currentUser?.id
+    ? newMemoryPromptIds.length + newMoviePromptIds.length
     : 0;
   const newSharedMemoryCount = wallMode === 'shared'
-    ? sharedWallPosts.filter((post) => notifications.some((notification) => (
-      !notification.read
-      && notification.type === 'wall_post'
-      && notification.referenceId === post.id
-    ))).length
+    ? sharedWallPosts.filter((post) => unreadWallPostIds.has(post.id)).length
     : 0;
   const wallViewIndicators = {
     timeline: newSharedMemoryCount,
     grid: newSharedMemoryCount,
-    prompts: incomingPromptCount,
+    prompts: newIncomingPromptCount,
   };
   const privateNotes = contact ? getPrivateNotesForContact(contact.id) : [];
   const selectedPrivateNote = selectedNoteId ? getPrivateNoteById(selectedNoteId) : undefined;
@@ -489,6 +523,26 @@ export default function ContactProfileScreen() {
   );
   const profileBackTo = `/(app)/profiles/contact/${contact.id}`;
 
+  async function handleAddPersonalityTrait() {
+    const trait = newPersonalityTrait.trim();
+    if (!trait) return;
+    setPersonalityTraitBusy(true);
+    try {
+      await addContactPersonalityTrait(contact!.id, trait);
+      setNewPersonalityTrait('');
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    }
+    setPersonalityTraitBusy(false);
+  }
+
+  function handleDeletePersonalityTrait(trait: string) {
+    Alert.alert('Delete trait?', 'This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteContactPersonalityTrait(contact!.id, trait) },
+    ]);
+  }
+
   async function handleAddFact() {
     if (!newFact.trim()) return;
     setFactBusy(true);
@@ -623,24 +677,6 @@ export default function ContactProfileScreen() {
     if (post) updateWallPost(postId, post.body, undefined, undefined, text);
   }
 
-  function handlePostLayout(postId: string, event: LayoutChangeEvent) {
-    postLayoutYRef.current[postId] = event.nativeEvent.layout.y;
-  }
-
-  function focusReferencedPost(postId: string) {
-    postLayoutYRef.current = {};
-    setMemoryFilter('all');
-    setMemoryWallViewMode('timeline');
-    setFocusedReferencePostId(postId);
-    [180, 420, 800].forEach((delay) => {
-      setTimeout(() => {
-        const y = postLayoutYRef.current[postId];
-        if (typeof y === 'number') scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 120), animated: true });
-      }, delay);
-    });
-    setTimeout(() => setFocusedReferencePostId((current) => current === postId ? null : current), 1800);
-  }
-
   async function handleAddToMyProfile(postId: string, repliesHidden = false) {
     if (!currentUser) return;
     const result = await addPostToProfileWall(currentUser.id, postId, { repliesHidden });
@@ -660,6 +696,30 @@ export default function ContactProfileScreen() {
     if (actions.length === 0) return;
     actions.push({ text: 'Cancel', style: 'cancel' });
     Alert.alert('Memory options', 'Choose what to do with this memory card.', actions);
+  }
+
+  function markNotificationsForMemoryPrompt(requestId: string) {
+    markProfileNotificationIdsRead(
+      getNotificationIdsForMemoryPrompt(notifications, requestId),
+      markNotificationRead,
+      markSyntheticRead,
+    );
+  }
+
+  function markNotificationsForMoviePrompt(requestId: string) {
+    markProfileNotificationIdsRead(
+      getNotificationIdsForMoviePrompt(notifications, requestId),
+      markNotificationRead,
+      markSyntheticRead,
+    );
+  }
+
+  function markNotificationsForWallPost(postId: string) {
+    markProfileNotificationIdsRead(
+      getNotificationIdsForWallPost(notifications, postId),
+      markNotificationRead,
+      markSyntheticRead,
+    );
   }
 
   async function handleCreatePrivateNote() {
@@ -683,16 +743,29 @@ export default function ContactProfileScreen() {
     }
   }
 
-  function openMemoryNoteShortcut() {
+  function openMemoryComposerShortcut(kind: 'note' | 'song') {
     if (!contact) return;
     pushOnce(router, {
       pathname: '/(app)/memories/add',
-      params: { subjectId: contact.id, subjectType: 'contact', backTo: profileBackTo },
+      params: { subjectId: contact.id, subjectType: 'contact', kind, backTo: profileBackTo },
     });
+  }
+
+  function openMemoryNoteShortcut() {
+    if (!contact) return;
+    Alert.alert(`Add to ${contact.displayName}'s wall`, 'What kind of memory?', [
+      { text: 'Note', onPress: () => openMemoryComposerShortcut('note') },
+      { text: 'Song', onPress: () => openMemoryComposerShortcut('song') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   }
 
   function openGiftNoteShortcut() {
     if (!contact?.linkedUserId) return;
+    if (!isPremium) {
+      showGiftNotePaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
     pushOnce(router, {
       pathname: '/(app)/gifts/add',
       params: { subjectId: contact.id, subjectType: 'contact', backTo: profileBackTo },
@@ -708,18 +781,33 @@ export default function ContactProfileScreen() {
   }
 
   function openMovieReviewResponse(requestId: string) {
+    markNotificationsForMoviePrompt(requestId);
     pushOnce(router, `/(app)/movies/review/${requestId}`);
   }
 
   function openMemoryPromptRequestShortcut() {
     if (!contact?.linkedUserId) return;
+    if (!isPremium) {
+      showPromptPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
     pushOnce(router, {
       pathname: '/(app)/prompts/request',
       params: { subjectId: contact.id, subjectType: 'contact', backTo: profileBackTo },
     });
   }
 
+  function openPromptTypeSheet() {
+    if (!contact?.linkedUserId) return;
+    Alert.alert(`Ask ${contact.displayName}`, 'What do you want them to answer?', [
+      { text: 'Memory Prompt', onPress: openMemoryPromptRequestShortcut },
+      { text: 'Movie Rating', onPress: openMovieRequestShortcut },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+
   function openMemoryPromptResponse(requestId: string) {
+    markNotificationsForMemoryPrompt(requestId);
     pushOnce(router, `/(app)/prompts/respond/${requestId}`);
   }
 
@@ -736,6 +824,69 @@ export default function ContactProfileScreen() {
     });
   }
 
+  async function openRegularMediaCameraShortcut() {
+    if (!contact) return;
+    if (!isPremium) {
+      showMediaMemoryPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = await ImagePicker.launchCameraAsync(memoryMediaPickerOptions);
+    } catch {
+      Alert.alert('Camera unavailable', 'The camera is not available on this device. Try this on a real phone or choose from your gallery.');
+      return;
+    }
+    const asset = result.canceled ? null : result.assets[0];
+    if (!asset?.uri) return;
+    if (asset.type === 'video' && asset.duration && asset.duration > REGULAR_VIDEO_MAX_DURATION_MS + 250) {
+      Alert.alert('Video too long', 'Regular video memories can be up to 5 seconds.');
+      return;
+    }
+    pushOnce(router, {
+      pathname: '/(app)/memories/add',
+      params: {
+        subjectId: contact.id,
+        subjectType: 'contact',
+        mediaUri: asset.uri,
+        mediaType: asset.type === 'video' ? 'video' : 'image',
+        backTo: profileBackTo,
+      },
+    });
+  }
+
+  async function openRegularMediaGalleryShortcut() {
+    if (!contact) return;
+    if (!isPremium) {
+      showMediaMemoryPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
+
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = await ImagePicker.launchImageLibraryAsync(memoryMediaPickerOptions);
+    } catch {
+      Alert.alert('Gallery unavailable', 'We could not open your gallery. Try again in a moment.');
+      return;
+    }
+    const asset = result.canceled ? null : result.assets[0];
+    if (!asset?.uri) return;
+    if (asset.type === 'video' && asset.duration && asset.duration > REGULAR_VIDEO_MAX_DURATION_MS + 250) {
+      Alert.alert('Video too long', 'Regular video memories can be up to 5 seconds.');
+      return;
+    }
+    pushOnce(router, {
+      pathname: '/(app)/memories/add',
+      params: {
+        subjectId: contact.id,
+        subjectType: 'contact',
+        mediaUri: asset.uri,
+        mediaType: asset.type === 'video' ? 'video' : 'image',
+        backTo: profileBackTo,
+      },
+    });
+  }
+
   async function openMemoryGalleryShortcut() {
     if (!contact) return;
     if (!isPremium) {
@@ -743,7 +894,13 @@ export default function ContactProfileScreen() {
       return;
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync(avatarImagePickerOptions);
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = await ImagePicker.launchImageLibraryAsync(memoryImagePickerOptions);
+    } catch {
+      Alert.alert('Gallery unavailable', 'We could not open your gallery. Try again in a moment.');
+      return;
+    }
     if (!result.canceled && result.assets[0]?.uri) {
       pushOnce(router, {
         pathname: '/(app)/memories/add',
@@ -757,12 +914,29 @@ export default function ContactProfileScreen() {
     }
   }
 
-  function openMemoryPhotoShortcut() {
+  function openPolaroidShortcut() {
     if (!contact) return;
     showPhotoSourceSheet({
       galleryLocked: !isPremium,
       onCamera: openMemoryCameraShortcut,
       onGallery: openMemoryGalleryShortcut,
+      title: 'Add Memory Card',
+    });
+  }
+
+  function openRegularMediaShortcut() {
+    if (!contact) return;
+    if (!isPremium) {
+      showMediaMemoryPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
+    showPhotoSourceSheet({
+      cameraLabel: 'Take Photo or Video',
+      galleryLabel: 'Choose Photo or Video',
+      galleryLocked: false,
+      onCamera: openRegularMediaCameraShortcut,
+      onGallery: openRegularMediaGalleryShortcut,
+      title: 'Add Media',
     });
   }
 
@@ -839,6 +1013,10 @@ export default function ContactProfileScreen() {
 
   async function handleAddPrivateNotePhoto() {
     if (!selectedPrivateNote || !currentUser) return;
+    if (!isPremium) {
+      showGalleryPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
 
     const result = await ImagePicker.launchImageLibraryAsync(privateNoteImagePickerOptions);
     if (result.canceled || !result.assets[0]?.uri) return;
@@ -980,7 +1158,7 @@ export default function ContactProfileScreen() {
           accessibilityRole="button"
           accessibilityLabel={notificationBadgeCount > 0 ? `Notifications, ${notificationBadgeCount} unread` : 'Notifications'}
         >
-          <Ionicons name={notificationBadgeCount > 0 ? 'notifications' : 'notifications-outline'} size={20} color={colors.inkMuted} />
+          <Ionicons name={notificationBadgeCount > 0 ? 'notifications' : 'notifications-outline'} size={20} color={colors.ink} />
           {notificationBadgeCount > 0 ? (
             <View style={styles.notificationBadge}>
               <Text style={styles.notificationBadgeText}>{notificationBadgeCount > 9 ? '9+' : notificationBadgeCount}</Text>
@@ -988,7 +1166,7 @@ export default function ContactProfileScreen() {
           ) : null}
         </Pressable>
         <Pressable onPress={() => togglePin(contact.id)} style={styles.pinButton} accessibilityRole="button" accessibilityLabel={contact.pinned ? 'Unpin contact' : 'Pin contact'}>
-          <Text style={styles.pinLabel}>{contact.pinned ? <Ionicons name="pin" size={20} color="#E74C3C" /> : <Ionicons name="pin-outline" size={20} color={colors.inkMuted} />}</Text>
+          <Text style={styles.pinLabel}>{contact.pinned ? <Ionicons name="pin" size={20} color="#E74C3C" /> : <Ionicons name="pin-outline" size={20} color={colors.ink} />}</Text>
         </Pressable>
         <Pressable onPress={() => setEditing((prev) => !prev)} style={[styles.editButton, editing && styles.editButtonActive]} accessibilityRole="button" accessibilityLabel={editing ? 'Done editing' : 'Edit contact'}>
           <Text style={[styles.editButtonLabel, editing && styles.editButtonLabelActive]}>{editing ? 'Done' : 'Edit'}</Text>
@@ -1019,7 +1197,7 @@ export default function ContactProfileScreen() {
           value={noteTitleDraft}
           onChangeText={setNoteTitleDraft}
           placeholder="Title"
-          placeholderTextColor={effectiveColors.inkMuted}
+          placeholderTextColor={effectiveColors.ink}
           style={styles.noteTitleInput}
         />
         <View style={styles.noteBodyCanvas}>
@@ -1037,7 +1215,7 @@ export default function ContactProfileScreen() {
                       onFocus={() => setActiveNoteTextBlockId(block.id)}
                       onBlur={() => setActiveNoteTextBlockId((current) => (current === block.id ? null : current))}
                       placeholder={index === 0 ? 'Start typing…' : 'Type under this…'}
-                      placeholderTextColor={effectiveColors.inkMuted}
+                      placeholderTextColor={effectiveColors.ink}
                       style={[styles.noteBodyTextBlockInput, index === 0 && styles.noteBodyTextBlockInputFirst]}
                       multiline
                       scrollEnabled={false}
@@ -1097,7 +1275,7 @@ export default function ContactProfileScreen() {
                       <Image source={{ uri: imageUrl }} style={styles.noteBodyPhotoImage} />
                     ) : (
                       <View style={styles.noteBodyPhotoLoading}>
-                        <Ionicons name="image-outline" size={28} color={colors.inkSoft} />
+                        <Ionicons name="image-outline" size={28} color={colors.ink} />
                       </View>
                     )}
                     <Pressable
@@ -1193,7 +1371,7 @@ export default function ContactProfileScreen() {
         accessibilityRole="button"
         accessibilityState={{ selected: activePane === 'profile' }}
       >
-        <Ionicons name="person-outline" size={15} color={activePane === 'profile' ? colors.white : tint} />
+        <Ionicons name="person-outline" size={15} color={tint} />
         <Text style={[styles.segmentedLabel, activePane === 'profile' && styles.segmentedLabelActive]}>Profile</Text>
       </Pressable>
       <Pressable
@@ -1202,7 +1380,7 @@ export default function ContactProfileScreen() {
         accessibilityRole="button"
         accessibilityState={{ selected: activePane === 'notes' }}
       >
-        <Ionicons name="document-text-outline" size={15} color={activePane === 'notes' ? colors.white : tint} />
+        <Ionicons name="document-text-outline" size={15} color={tint} />
         <Text style={[styles.segmentedLabel, activePane === 'notes' && styles.segmentedLabelActive]}>Notes</Text>
       </Pressable>
     </View>,
@@ -1306,7 +1484,7 @@ export default function ContactProfileScreen() {
                   autoCapitalize="characters"
                   autoCorrect={false}
                   placeholder="AB3XK7PN"
-                  placeholderTextColor={effectiveColors.inkMuted}
+                  placeholderTextColor={effectiveColors.ink}
                   style={styles.connectInput}
                   maxLength={8}
                 />
@@ -1352,6 +1530,50 @@ export default function ContactProfileScreen() {
   );
 
   screenContent.push(
+    <View key="personality-traits" style={[styles.section, editing && styles.editableFactsSection]}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Personality Traits</Text>
+      </View>
+      {contact.personalityTraits.length > 0 ? (
+        <View style={styles.factList}>
+          {contact.personalityTraits.map((trait) => (
+            <View key={trait} style={styles.factChip}>
+              <Text style={styles.factChipText}>{trait}</Text>
+              {editing && (
+                <Pressable onPress={() => handleDeletePersonalityTrait(trait)}>
+                  <Ionicons name="close" size={14} color={effectiveColors.error} />
+                </Pressable>
+              )}
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.emptyHint}>No personality traits added yet.</Text>
+      )}
+      {editing && (
+        <View style={styles.factEditorBox}>
+          <View style={styles.editFactHintRow}>
+            <Ionicons name="sparkles-outline" size={14} color={tint} />
+            <Text style={styles.editFactHintText}>Add personality traits here. Tap the x on a chip to remove one.</Text>
+          </View>
+          <View style={styles.addFactRow}>
+            <TextInput
+              style={styles.addFactInput}
+              value={newPersonalityTrait}
+              onChangeText={setNewPersonalityTrait}
+              placeholder="Add a trait..."
+              placeholderTextColor={effectiveColors.ink}
+            />
+            <Pressable onPress={handleAddPersonalityTrait} disabled={personalityTraitBusy} style={styles.addFactButton}>
+              <Text style={styles.addFactButtonLabel}>{personalityTraitBusy ? '...' : '+'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+    </View>,
+  );
+
+  screenContent.push(
     <View key="facts" style={[styles.section, editing && styles.editableFactsSection]}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Facts</Text>
@@ -1384,7 +1606,7 @@ export default function ContactProfileScreen() {
               value={newFact}
               onChangeText={setNewFact}
               placeholder="Add a fact…"
-              placeholderTextColor={effectiveColors.inkMuted}
+              placeholderTextColor={effectiveColors.ink}
             />
             <Pressable onPress={handleAddFact} disabled={factBusy} style={styles.addFactButton}>
               <Text style={styles.addFactButtonLabel}>{factBusy ? '…' : '+'}</Text>
@@ -1396,7 +1618,7 @@ export default function ContactProfileScreen() {
   );
 
   screenContent.push(
-    <View key="memory-wall-heading" style={styles.section}>
+    <View key="memory-wall-heading" style={[styles.section, styles.memoryWallControlCard]}>
       <View style={styles.sectionHeader}>
         <Text style={styles.memoryWallTitle}>Memory Wall</Text>
       </View>
@@ -1496,24 +1718,26 @@ export default function ContactProfileScreen() {
         dayGroups={wallDayGroups}
         emptyAction={
           <Pressable
-            onPress={openMemoryNoteShortcut}
+            onPress={isLinked ? openPromptTypeSheet : openMemoryNoteShortcut}
             style={styles.memoryPromptButton}
             accessibilityRole="button"
             accessibilityLabel={`Start a memory prompt for ${contact.displayName}`}
           >
-            <Ionicons name="sparkles-outline" size={14} color={effectiveColors.white} />
+            <Ionicons name="sparkles-outline" size={14} color={tint} />
             <Text style={styles.memoryPromptButtonText}>Start with a prompt</Text>
           </Pressable>
         }
         emptyHint={wallMode === 'shared' && isLinked
           ? `No shared memories between you and ${contact.displayName} yet.`
           : 'No memories yet. Be the first to write one.'}
-        promptContent={wallMode === 'shared' && isLinked ? (
+        promptContent={isLinked ? (
           <MemoryPromptRequestList
             currentUserId={currentUser.id}
             friendName={contact.displayName}
             memoryPrompts={memoryPromptRequests}
             moviePrompts={moviePromptRequests}
+            newMemoryPromptIds={newMemoryPromptIds}
+            newMoviePromptIds={newMoviePromptIds}
             onAnswerMemoryPrompt={openMemoryPromptResponse}
             onCancelMemoryPrompt={(requestId) => cancelMemoryPromptRequest(requestId, currentUser.id)}
             onCreateMemoryPrompt={openMemoryPromptRequestShortcut}
@@ -1524,48 +1748,67 @@ export default function ContactProfileScreen() {
             tint={tint}
           />
         ) : undefined}
-        getGridExtraHeight={(post) => getReplyGridExtraHeight(getRepliesForWallPost(post.id).length)}
+        getGridExtraHeight={(post) => getReplyGridExtraHeight(getRepliesForWallPost(post.id))}
         themeColors={effectiveColors}
         viewMode={memoryWallViewMode}
         renderPost={(post, context) => {
           const author = getUserById(post.authorUserId);
-          const canEditPost = post.authorUserId === currentUser.id;
-          const referencedPost = post.referencedWallPostId
-            ? unfilteredWallPosts.find((candidate) => candidate.id === post.referencedWallPostId) ?? null
-            : null;
+          const canEditPost = canEditWallPostContent(post, currentUser.id);
+          const canOpenPostEditor = canEditPost || canDeleteWallPost(post, currentUser.id);
+          const promptAuthorName = post.memoryPromptRequestId || post.promptVoice || post.promptText
+            ? (post.subjectUserId ? getUserById(post.subjectUserId)?.displayName : null) ?? contact.displayName
+            : undefined;
+          const referencedPost = post.referencedWallPostId ? getWallPostById(post.referencedWallPostId) ?? null : null;
           const replies = getRepliesForWallPost(post.id);
+          const isNewWallPost = unreadWallPostIds.has(post.id);
           const replyItems = replies.map((reply) => ({
             id: reply.id,
             body: reply.body,
+            voice: reply.voice,
             authorName: getUserById(reply.authorUserId)?.displayName ?? 'Someone',
           }));
           return (
             <View
               key={post.id}
-              onLayout={(event) => handlePostLayout(post.id, event)}
-              style={[styles.wallPostWithProfileAction, focusedReferencePostId === post.id && styles.glowRow]}
+              style={styles.wallPostWithProfileAction}
             >
               <WallPostCard
                 authorName={author?.displayName ?? 'Unknown'}
                 post={post}
                 cardColor={post.cardColor}
+                developStartAt={getIncomingDevelopStartAt(post)}
                 themeColors={effectiveColors}
                 imageLoadEnabled={wallImageLoading.isImageLoadEnabled(post)}
                 displayMode={context?.viewMode}
                 referencedPost={referencedPost}
                 referencedPostAuthorName={referencedPost ? getUserById(referencedPost.authorUserId)?.displayName ?? 'Someone' : undefined}
+                promptAuthorName={promptAuthorName}
                 editing={editing}
                 shareable={!editing}
-                onPress={editing && canEditPost ? () => pushOnce(router, { pathname: '/(app)/memories/edit', params: { postId: post.id } }) : undefined}
+                onPress={editing && canOpenPostEditor ? () => pushOnce(router, { pathname: '/(app)/memories/edit', params: { postId: post.id } }) : undefined}
                 onLongPress={!editing ? () => handleMemoryLongPress(post) : undefined}
-                onReferencedPostPress={post.referencedWallPostId ? focusReferencedPost : undefined}
+                onDeveloped={getIncomingDevelopStartAt(post) ? () => {
+                  notifyMemoryAuthorRecipientDeveloped({
+                    post,
+                    recipientName: currentUser.displayName,
+                    recipientUserId: currentUser.id,
+                  }).catch((error) => console.warn('[notification] recipient developed memory insert failed:', error));
+                } : undefined}
                 onImageReady={wallImageLoading.markImageReady}
                 onSaveBackText={canEditPost ? handleSaveBackText : undefined}
               />
+              {isNewWallPost ? (
+                <View style={styles.newMemoryPill}>
+                  <Text style={styles.newMemoryPillText}>New</Text>
+                </View>
+              ) : null}
               {!editing ? (
                 <MemoryReplyThreadPreview
                   replies={replyItems}
-                  onOpenThread={() => pushOnce(router, `/(app)/memories/replies/${post.id}`)}
+                  onOpenThread={() => {
+                    markNotificationsForWallPost(post.id);
+                    pushOnce(router, `/(app)/memories/replies/${post.id}`);
+                  }}
                   themeColors={effectiveColors}
                 />
               ) : null}
@@ -1619,7 +1862,7 @@ export default function ContactProfileScreen() {
                   accessibilityState={{ selected: active }}
                 >
                   <View style={styles.noteRowIcon}>
-                    <Ionicons name="document-text-outline" size={18} color={active ? tint : colors.inkSoft} />
+                    <Ionicons name="document-text-outline" size={18} color={active ? tint : colors.ink} />
                   </View>
                   <View style={styles.noteRowBody}>
                     <Text style={styles.noteRowTitle} numberOfLines={1}>{note.title || 'Untitled note'}</Text>
@@ -1640,20 +1883,18 @@ export default function ContactProfileScreen() {
   const memoryMenuAnimatedStyle = {
     opacity: memoryMenuAnim,
     transform: [
-      { translateY: memoryMenuAnim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) },
-      { scale: memoryMenuAnim.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) },
+      { translateY: memoryMenuAnim.interpolate({ inputRange: [0, 1], outputRange: [28, 0] }) },
     ],
   };
 
   return (
     <View style={styles.screenShell}>
-      <ProfileBackgroundBackdrop colors={effectiveColors} imageUri={contact.profileBgImagePath} />
+      <ProfileBackgroundBackdrop colors={effectiveColors} imageUri={contact.profileBgImagePath} tintColors={themedColors} />
       <AppScreen
         header={showingFullScreenNote ? noteTopBar : topBar}
         floatingHeaderOnScroll={!showingFullScreenNote}
         contentContainerStyle={showingFullScreenNote ? styles.noteScreenContent : memoryControlsScreenStyle}
-        gradientColors={getProfileScreenGradientColors(contact.profileBgImagePath, themedColors)}
-        onScroll={activePane === 'profile' && !showingFullScreenNote ? handleMemoryMenuScroll : undefined}
+        gradientColors={profileGradientColors}
         onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }}
         refreshing={refreshing}
         scrollViewRef={scrollViewRef}
@@ -1668,13 +1909,35 @@ export default function ContactProfileScreen() {
             style={[styles.memoryFloatingRow, { bottom: memoryDockBottom }, memoryMenuAnimatedStyle]}
           > 
             <View style={styles.memoryFloatingActionRow}>
+              <BlurView intensity={58} tint={blurTint} style={[StyleSheet.absoluteFill, styles.memoryFloatingDockBlur]} pointerEvents="none" />
+              <View pointerEvents="none" style={styles.memoryFloatingDockGlassTint} />
+              <View pointerEvents="none" style={styles.memoryFloatingDockHighlight} />
+              <View pointerEvents="none" style={styles.memoryFloatingDockGlow} />
               <Pressable
                 onPress={openMemoryNoteShortcut}
                 style={[styles.memoryFloatingButton, styles.memoryFloatingSecondaryButton]}
                 accessibilityRole="button"
                 accessibilityLabel={`Add note about ${contact.displayName}`}
               >
-                <Ionicons name="create-outline" size={24} color={effectiveColors.inkSoft} />
+                <Ionicons name="create-outline" size={24} color={effectiveColors.ink} />
+              </Pressable>
+              {contact.linkedUserId ? (
+                <Pressable
+                  onPress={openPromptTypeSheet}
+                  style={[styles.memoryFloatingButton, styles.memoryFloatingSecondaryButton]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Ask ${contact.displayName} for a prompt or rating`}
+                >
+                  <Ionicons name="sparkles-outline" size={24} color={effectiveColors.ink} />
+                </Pressable>
+              ) : null}
+              <Pressable
+                onPress={openPolaroidShortcut}
+                style={[styles.memoryFloatingButton, styles.memoryFloatingPrimaryButton]}
+                accessibilityRole="button"
+                accessibilityLabel={`Add Memory Card about ${contact.displayName}`}
+              >
+                <PolaroidIcon size={23} color={effectiveColors.white} />
               </Pressable>
               {contact.linkedUserId ? (
                 <Pressable
@@ -1683,16 +1946,16 @@ export default function ContactProfileScreen() {
                   accessibilityRole="button"
                   accessibilityLabel={`Add gift note for ${contact.displayName}`}
                 >
-                  <Ionicons name="gift-outline" size={24} color={effectiveColors.inkSoft} />
+                  <Ionicons name="gift-outline" size={22} color={effectiveColors.ink} />
                 </Pressable>
               ) : null}
               <Pressable
-                onPress={openMemoryPhotoShortcut}
-                style={[styles.memoryFloatingButton, styles.memoryFloatingPrimaryButton]}
+                onPress={openRegularMediaShortcut}
+                style={[styles.memoryFloatingButton, styles.memoryFloatingSecondaryButton]}
                 accessibilityRole="button"
-                accessibilityLabel={`Add photo about ${contact.displayName}`}
+                accessibilityLabel={`Add photo or video about ${contact.displayName}`}
               >
-                <Ionicons name="camera-outline" size={25} color={effectiveColors.white} />
+                <Ionicons name="camera-outline" size={25} color={effectiveColors.ink} />
               </Pressable>
             </View>
           </Animated.View>
@@ -1726,16 +1989,26 @@ const MEMORY_FILTER_OPTIONS: { key: MemoryFilter; label: string }[] = [
 
 function filterWallPosts(posts: WallPost[], filter: MemoryFilter) {
   if (filter === 'all') return posts;
-  if (filter === 'photos') return posts.filter((post) => post.postType === 'polaroid');
+  if (filter === 'photos') return posts.filter((post) => post.postType === 'polaroid' || post.postType === 'media');
   if (filter === 'notes') return posts.filter((post) => post.postType === 'note');
   if (filter === 'songs') return posts.filter((post) => post.postType === 'song' || Boolean(post.song));
   if (filter === 'movies') return posts.filter((post) => post.postType === 'movie');
   return posts.filter((post) => Boolean(post.memoryPromptRequestId || post.promptText || post.promptType));
 }
 
-function getReplyGridExtraHeight(replyCount: number) {
-  const visibleReplies = Math.min(replyCount, 3);
-  return 34 + visibleReplies * 28 + (replyCount > visibleReplies ? 24 : 0);
+function getReplyGridExtraHeight(replies: { voice?: unknown }[]) {
+  const visibleReplies = replies.slice(-3);
+  return 34 + visibleReplies.reduce((height, reply) => height + (reply.voice ? 42 : 28), 0) + (replies.length > visibleReplies.length ? 24 : 0);
+}
+
+function withAlpha(color: string, alpha: number) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = match[1];
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
 function normalizePrivateNoteLink(value: string | null | undefined) {
@@ -1798,8 +2071,20 @@ const POLAROID_FRAME = '#F5F2EA';
 const FRAME_INK = '#2A2218';
 const FRAME_INK_SOFT = '#6B6052';
 
-const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
-  StyleSheet.create({
+const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgroundImage = false) => {
+  const altTint = colors.ink;
+  const tertiaryTint = colors.inkSoft;
+  const backgroundTextColor = colors.ink;
+  const backgroundMutedTextColor = colors.inkSoft;
+  const backgroundTextShadow = hasBackgroundImage
+    ? {
+      textShadowColor: 'rgba(255,255,255,0.7)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 3,
+    }
+    : {};
+
+  return StyleSheet.create({
     screenShell: { flex: 1 },
     profileBackgroundLayer: {
       ...StyleSheet.absoluteFillObject,
@@ -1817,19 +2102,34 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       ...StyleSheet.absoluteFillObject,
       backgroundColor: colors.canvas + '99',
     },
-    backButton: { paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
-    topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    topBarRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    backButton: {
+      alignSelf: 'flex-start',
+      minHeight: 40,
+      borderRadius: 999,
+      borderWidth: 0,
+      backgroundColor: withAlpha(colors.paper, 0.18),
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      justifyContent: 'center',
+    },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
+    topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm },
+    topBarRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      borderRadius: radius.pill,
+      backgroundColor: withAlpha(colors.paper, 0.16),
+      padding: 3,
+    },
     topBarFriendButton: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.xs,
       maxWidth: 148,
       borderRadius: radius.pill,
-      borderWidth: 1,
-      borderColor: tint + '35',
-      backgroundColor: colors.paper + 'D9',
+      borderWidth: 0,
+      backgroundColor: 'transparent',
       paddingLeft: 3,
       paddingRight: spacing.sm,
       paddingVertical: 3,
@@ -1847,9 +2147,12 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     topBarFriendName: { flexShrink: 1, fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink },
     notificationButton: {
       position: 'relative',
-      padding: spacing.xs,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: 'transparent',
     },
     notificationBadge: {
       position: 'absolute',
@@ -1864,7 +2167,14 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       backgroundColor: colors.error,
     },
     notificationBadgeText: { fontFamily: fonts.bodyBold, fontSize: 9, color: colors.white },
-    pinButton: { padding: spacing.xs },
+    pinButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'transparent',
+    },
     pinLabel: { fontSize: 20 },
     destructiveActions: { marginTop: spacing.lg, gap: spacing.sm, paddingBottom: spacing.md },
     unfriendButton: {
@@ -1888,8 +2198,13 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     },
     deleteProfileLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.white },
     editButton: {
-      paddingVertical: spacing.xs, paddingHorizontal: spacing.md,
-      borderRadius: radius.pill, borderWidth: 1, borderColor: tint,
+      minHeight: 36,
+      justifyContent: 'center',
+      paddingVertical: spacing.xs,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.pill,
+      borderWidth: 0,
+      backgroundColor: 'transparent',
     },
     editButtonActive: { backgroundColor: tint },
     editButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 14, color: tint },
@@ -1911,25 +2226,44 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       textAlign: 'right',
     },
     noteScreenContent: { paddingBottom: 260 },
-    profileScreenWithMemoryMenu: { paddingBottom: 150 },
-    section: { gap: spacing.sm },
+    profileScreenWithMemoryMenu: { paddingBottom: 230 },
+    section: {
+      gap: spacing.sm,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: hasBackgroundImage ? withAlpha(colors.line, 0.42) : 'transparent',
+      backgroundColor: hasBackgroundImage ? withAlpha(colors.paper, 0.7) : 'transparent',
+      padding: hasBackgroundImage ? spacing.md : 0,
+    },
     sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     sectionTitle: {
       fontFamily: fonts.heading,
       fontSize: 22,
-      color: colors.ink,
+      color: backgroundTextColor,
       overflow: 'visible' as const,
+      ...backgroundTextShadow,
       ...protectTextFromFontClipping(fonts.heading, 22),
     },
     memoryWallTitle: {
       fontFamily: fonts.handwrittenBold,
       fontSize: 40,
-      color: colors.ink,
+      color: backgroundTextColor,
       textAlign: 'left',
       width: '100%',
       paddingHorizontal: 10,
       overflow: 'visible' as const,
+      ...backgroundTextShadow,
       ...protectTextFromFontClipping(fonts.handwrittenBold, 40),
+    },
+    memoryWallControlCard: {
+      gap: spacing.md,
+      borderColor: withAlpha(colors.line, 0.58),
+      backgroundColor: withAlpha(colors.paper, hasBackgroundImage ? 0.78 : 0.56),
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: hasBackgroundImage ? 0.16 : 0.08,
+      shadowRadius: 18,
+      elevation: 4,
     },
     addLink: { fontFamily: fonts.bodyBold, fontSize: 14, color: tint },
     memoryShortcutRow: {
@@ -1956,7 +2290,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     },
     memoryShortcutButtonPrimary: {
       backgroundColor: tint,
-      borderColor: tint,
+      borderColor: withAlpha(colors.white, 0.18),
     },
     memoryFloatingLayer: {
       ...StyleSheet.absoluteFillObject,
@@ -1973,29 +2307,70 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: spacing.md,
+      gap: spacing.sm,
       alignSelf: 'center',
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: withAlpha(colors.white, 0.28),
+      backgroundColor: withAlpha(colors.paper, 0.34),
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 14 },
+      shadowOpacity: 0.2,
+      shadowRadius: 28,
+      elevation: 12,
+    },
+    memoryFloatingDockBlur: {
+      borderRadius: radius.pill,
+    },
+    memoryFloatingDockGlassTint: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(colors.paper, 0.16),
+    },
+    memoryFloatingDockHighlight: {
+      position: 'absolute',
+      top: 1,
+      left: 18,
+      right: 18,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: withAlpha(colors.white, 0.72),
+    },
+    memoryFloatingDockGlow: {
+      position: 'absolute',
+      top: -28,
+      left: '34%',
+      width: 108,
+      height: 108,
+      borderRadius: 54,
+      backgroundColor: withAlpha(colors.accentAlt ?? colors.accent, 0.2),
     },
     memoryFloatingButton: {
-      width: 56,
-      height: 56,
-      borderRadius: 28,
+      width: 50,
+      height: 50,
+      borderRadius: 25,
       borderWidth: 1,
+      borderColor: withAlpha(colors.white, 0.3),
+      backgroundColor: withAlpha(colors.paper, 0.5),
       alignItems: 'center',
       justifyContent: 'center',
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: 0.18,
-      shadowRadius: 14,
-      elevation: 10,
+      shadowOffset: { width: 0, height: 5 },
+      shadowOpacity: 0.1,
+      shadowRadius: 10,
+      elevation: 4,
     },
-    memoryFloatingSecondaryButton: {
-      borderColor: colors.line,
-      backgroundColor: colors.paper,
-    },
+    memoryFloatingSecondaryButton: {},
     memoryFloatingPrimaryButton: {
-      borderColor: tint,
-      backgroundColor: tint,
+      borderColor: colors.accent,
+      backgroundColor: colors.accent,
+      width: 58,
+      height: 58,
+      borderRadius: 29,
+      shadowOpacity: 0.22,
+      shadowRadius: 16,
+      elevation: 8,
     },
     segmentedControl: {
       flexDirection: 'row',
@@ -2005,8 +2380,8 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       padding: 4,
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: colors.line,
-      backgroundColor: colors.paper,
+      borderColor: withAlpha(colors.line, 0.7),
+      backgroundColor: withAlpha(colors.paper, 0.7),
     },
     segmentedButton: {
       flexDirection: 'row',
@@ -2016,9 +2391,13 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       paddingHorizontal: spacing.md,
       borderRadius: radius.pill,
     },
-    segmentedButtonActive: { backgroundColor: tint },
-    segmentedLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: tint },
-    segmentedLabelActive: { color: colors.white },
+    segmentedButtonActive: {
+      backgroundColor: withAlpha(colors.paper, 0.78),
+      borderWidth: 1,
+      borderColor: withAlpha(colors.line, 0.42),
+    },
+    segmentedLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: altTint },
+    segmentedLabelActive: { color: altTint },
     noteList: { gap: spacing.sm },
     noteRow: {
       flexDirection: 'row',
@@ -2030,7 +2409,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       borderColor: colors.line,
       backgroundColor: colors.paper,
     },
-    noteRowActive: { borderColor: tint, backgroundColor: tint + '12' },
+    noteRowActive: { borderColor: withAlpha(colors.line, 0.5), backgroundColor: colors.paper },
     noteRowIcon: {
       width: 34,
       height: 34,
@@ -2041,7 +2420,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     },
     noteRowBody: { flex: 1, gap: 2 },
     noteRowTitle: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
-    noteRowMeta: { fontFamily: fonts.body, fontSize: 12, color: colors.inkSoft },
+    noteRowMeta: { fontFamily: fonts.body, fontSize: 12, color: colors.ink },
     noteEditor: {
       gap: spacing.sm,
       padding: spacing.md,
@@ -2098,7 +2477,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     noteBodyTextBlockDisplayFirst: { minHeight: 150 },
     noteBodyInlineLink: {
       fontFamily: fonts.bodyMedium,
-      color: tint,
+      color: altTint,
       textDecorationLine: 'underline',
     },
     noteBodyCanvas: {
@@ -2118,12 +2497,12 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       minWidth: 92,
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: tint + '50',
+      borderColor: withAlpha(colors.line, 0.42),
       paddingVertical: spacing.sm,
       paddingHorizontal: spacing.md,
-      backgroundColor: tint + '12',
+      backgroundColor: colors.paper,
     },
-    noteInlinePhotoLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: tint },
+    noteInlinePhotoLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: altTint },
     noteInlineLinkComposer: {
       flex: 1,
       minWidth: 0,
@@ -2158,7 +2537,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       fontFamily: fonts.bodyMedium,
       fontSize: 16,
       lineHeight: 22,
-      color: tint,
+      color: altTint,
       textDecorationLine: 'underline',
     },
     noteBodyPhotoBlock: {
@@ -2223,7 +2602,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       borderRadius: 15,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: tint,
+      backgroundColor: altTint,
     },
     noteAddLinkButtonDisabled: { opacity: 0.35 },
     noteOpenLinkButton: {
@@ -2268,7 +2647,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       borderColor: colors.line,
       padding: spacing.md,
     },
-    noteAddPhotoLabel: { flex: 1, fontFamily: fonts.bodyBold, fontSize: 13, color: tint },
+    noteAddPhotoLabel: { flex: 1, fontFamily: fonts.bodyBold, fontSize: 13, color: altTint },
     noteActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
     noteSaveButton: { flex: 1, alignItems: 'center', paddingVertical: spacing.sm, borderRadius: radius.pill, backgroundColor: tint },
     noteSaveLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.white },
@@ -2277,55 +2656,57 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     editableFactsSection: {
       borderRadius: radius.lg,
       borderWidth: 1,
-      borderColor: tint + '66',
-      backgroundColor: tint + '0F',
+      borderColor: withAlpha(colors.line, 0.4),
+      backgroundColor: withAlpha(colors.paper, 0.78),
       padding: spacing.md,
     },
     factList: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: spacing.sm },
     factChip: {
       flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.xs,
       borderRadius: radius.pill,
-      backgroundColor: colors.accent + '18',
+      backgroundColor: withAlpha(colors.paper, hasBackgroundImage ? 0.54 : 0.9),
       borderWidth: 1,
-      borderColor: colors.accent + '40',
+      borderColor: withAlpha(colors.line, 0.42),
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
     factChipText: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.ink },
     deleteLink: { fontFamily: fonts.heading, fontSize: 20, color: colors.error, paddingLeft: spacing.sm, ...protectTextFromFontClipping(fonts.heading, 20) },
-    emptyHint: { fontFamily: fonts.body, fontSize: 14, color: colors.inkMuted },
-    memoryFilterRow: { flexDirection: 'row', gap: spacing.xs, flexWrap: 'wrap' },
+    emptyHint: { fontFamily: fonts.body, fontSize: 14, color: backgroundMutedTextColor, ...backgroundTextShadow },
+    memoryFilterRow: { flexDirection: 'row', gap: spacing.xs, flexWrap: 'wrap', paddingBottom: spacing.xs },
     memoryFilterChip: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       borderRadius: radius.pill,
-      backgroundColor: colors.paper,
+      backgroundColor: withAlpha(colors.paper, 0.68),
       borderWidth: 1,
-      borderColor: colors.line,
+      borderColor: withAlpha(colors.line, 0.72),
       paddingHorizontal: spacing.sm,
       paddingVertical: spacing.xs,
     },
-    memoryFilterChipActive: { backgroundColor: tint, borderColor: tint },
-    memoryFilterText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkSoft },
-    memoryFilterTextActive: { color: colors.white },
+    memoryFilterChipActive: { backgroundColor: withAlpha(altTint, 0.14), borderColor: withAlpha(colors.line, 0.42) },
+    memoryFilterText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink },
+    memoryFilterTextActive: { color: altTint },
     memoryPromptButton: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       gap: spacing.xs,
       borderRadius: radius.pill,
-      backgroundColor: tint,
+      borderWidth: 1,
+      borderColor: withAlpha(colors.line, 0.42),
+      backgroundColor: colors.paper,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
-    memoryPromptButtonText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.white },
+    memoryPromptButtonText: { fontFamily: fonts.bodyBold, fontSize: 12, color: tertiaryTint },
     lockedGiftBlock: { gap: spacing.sm },
     factEditorBox: {
       borderRadius: radius.md,
       borderWidth: 1,
       borderStyle: 'dashed',
-      borderColor: tint + '66',
+      borderColor: withAlpha(colors.line, 0.42),
       backgroundColor: colors.paper,
       padding: spacing.sm,
       gap: spacing.sm,
@@ -2353,8 +2734,17 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       alignItems: 'center', justifyContent: 'center',
     },
     addFactButtonLabel: { fontFamily: fonts.heading, fontSize: 22, color: colors.white, ...protectTextFromFontClipping(fonts.heading, 22) },
-    monthWallPostsBlock: { marginTop: -spacing.md },
+    monthWallPostsBlock: { marginTop: -spacing.xs },
     wallPostWithProfileAction: { alignItems: 'center', gap: spacing.xs },
+    newMemoryPill: {
+      alignSelf: 'center',
+      borderRadius: radius.pill,
+      backgroundColor: tint,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 3,
+      marginTop: -spacing.xs,
+    },
+    newMemoryPillText: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.white, textTransform: 'uppercase' },
     glowRow: {
       borderRadius: radius.lg,
       shadowColor: colors.accent,
@@ -2377,9 +2767,9 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       paddingVertical: spacing.xs,
       borderRadius: radius.pill,
     },
-    wallModeChipActive: { backgroundColor: tint },
+    wallModeChipActive: { backgroundColor: altTint + '1A' },
     wallModeLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft },
-    wallModeLabelActive: { color: contrastText(tint) },
+    wallModeLabelActive: { color: altTint },
     editPanel: {
       gap: spacing.sm,
     },
@@ -2417,8 +2807,8 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       borderRadius: radius.lg,
       borderWidth: 1,
       borderStyle: 'dashed',
-      borderColor: tint + '88',
-      backgroundColor: tint + '10',
+      borderColor: withAlpha(colors.line, 0.46),
+      backgroundColor: colors.paper,
       padding: spacing.md,
     },
     editHeroHint: {
@@ -2427,7 +2817,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       gap: spacing.xs,
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: tint + '55',
+      borderColor: withAlpha(colors.line, 0.42),
       backgroundColor: colors.paper,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs,
@@ -2435,7 +2825,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     editHeroHintText: {
       fontFamily: fonts.bodyBold,
       fontSize: 12,
-      color: tint,
+      color: tertiaryTint,
     },
     heroAmbientShadow: {
       shadowColor: '#000',
@@ -2649,7 +3039,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     backPlaceholder: { fontFamily: fonts.handwritten, fontSize: 17, textAlign: 'center', color: FRAME_INK_SOFT, flex: 1, opacity: 0.5, ...protectTextFromFontClipping(fonts.handwritten, 17) },
     backHint: { fontFamily: fonts.body, fontSize: 10, textAlign: 'center', color: FRAME_INK_SOFT, opacity: 0.5, paddingTop: 2 },
 
-    heroSubtitle: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.inkSoft },
+    heroSubtitle: { fontFamily: fonts.bodyMedium, fontSize: 14, color: backgroundMutedTextColor, ...backgroundTextShadow },
     connectionCard: {
       width: '100%',
       maxWidth: 340,
@@ -2666,14 +3056,14 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     manageConnectionButton: {
       alignSelf: 'flex-start',
       borderRadius: radius.pill,
-      backgroundColor: tint + '16',
+      backgroundColor: altTint + '16',
       borderWidth: 1,
-      borderColor: tint + '45',
+      borderColor: withAlpha(colors.line, 0.4),
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs,
       marginTop: spacing.xs,
     },
-    manageConnectionLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: tint },
+    manageConnectionLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: altTint },
     moveConnectionPanel: {
       gap: spacing.xs,
       borderTopWidth: 1,
@@ -2714,23 +3104,23 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     relationshipTagChip: {
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: tint + '45',
-      backgroundColor: tint + '14',
+      borderColor: withAlpha(colors.line, 0.42),
+      backgroundColor: colors.paper,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs,
     },
-    relationshipTagText: { fontFamily: fonts.bodyBold, fontSize: 12, color: tint },
+    relationshipTagText: { fontFamily: fonts.bodyBold, fontSize: 12, color: tertiaryTint },
     wallButton: {
       alignSelf: 'center',
       paddingVertical: spacing.sm,
       paddingHorizontal: spacing.xl,
       borderRadius: radius.pill,
-      backgroundColor: tint + '18',
+      backgroundColor: colors.paper,
       borderWidth: 1,
-      borderColor: tint + '40',
+      borderColor: withAlpha(colors.line, 0.42),
     },
     wallButtonRow: { flexDirection: 'row', alignItems: 'center' },
-    wallButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: tint },
+    wallButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: altTint },
     wallBadge: {
       minWidth: 20, height: 20, borderRadius: 10,
       backgroundColor: colors.error ?? '#EF4444',
@@ -2754,9 +3144,13 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       paddingVertical: spacing.sm,
       alignItems: 'center',
       gap: 2,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: withAlpha(colors.line, 0.42),
+      backgroundColor: colors.paper,
     },
     connectCtaLabel: { fontFamily: fonts.body, fontSize: 13, color: colors.inkSoft },
-    connectCtaAction: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.accent, letterSpacing: 0.2 },
+    connectCtaAction: { fontFamily: fonts.bodyBold, fontSize: 14, color: altTint, letterSpacing: 0.2 },
     connectForm: {
       alignSelf: 'stretch',
       padding: spacing.md,
@@ -2772,8 +3166,8 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       gap: spacing.xs,
       borderRadius: radius.md,
       borderWidth: 1,
-      borderColor: tint + '35',
-      backgroundColor: tint + '0F',
+      borderColor: withAlpha(colors.line, 0.42),
+      backgroundColor: colors.paper,
       padding: spacing.sm,
     },
     existingFriendToggle: {
@@ -2828,13 +3222,13 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
       paddingVertical: spacing.sm + 2,
       borderRadius: radius.sm,
       borderWidth: 1,
-      borderColor: colors.accent + '40',
-      backgroundColor: colors.accent + '10',
+      borderColor: withAlpha(colors.line, 0.42),
+      backgroundColor: colors.paper,
     },
-    scanButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.accent },
+    scanButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 14, color: altTint },
     orRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     orLine: { flex: 1, height: 1, backgroundColor: colors.line },
-    orText: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted, letterSpacing: 0.3 },
+    orText: { fontFamily: fonts.body, fontSize: 12, color: colors.ink, letterSpacing: 0.3 },
     scannerContainer: {
       width: '100%',
       aspectRatio: 1,
@@ -2864,3 +3258,4 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet) =>
     },
     cancelScanLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: '#FFFFFF' },
   });
+};

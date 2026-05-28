@@ -22,6 +22,7 @@ import { protectTextFromFontClipping } from '../theme/fontProtection';
 import type { FontSet } from '../theme/typography';
 import { spacing } from '../theme/tokens';
 import { CardFlourish } from './CardFlourish';
+import { CachedRemoteImage, prefetchCachedImages } from './CachedRemoteImage';
 import { LivePolaroidLayer } from './LivePolaroidLayer';
 import { AvatarInitials, MemoryPhotoEffects, MemoryPhotoGhost } from './memory-card';
 
@@ -121,7 +122,6 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
   const { width } = useWindowDimensions();
   const flatListRef = useRef<FlatList<PeopleListItem>>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
-  const progressAnim = useRef(new Animated.Value(activeIndex)).current;
 
   const compact = width < 390;
   const cardWidth = Math.min(width * 0.5, 230);
@@ -141,8 +141,6 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
   const listHeight = aboveCardSpace + cardMinHeight + belowCardSpace;
   const initialsSize = compact ? 44 : 54;
   const nameSize = compact ? 20 : 24;
-  const railWidth = Math.min(width - spacing.xl * 2, 260);
-  const pointerSize = 22;
 
   const count = items.length;
   // Looping only makes sense with more than one card. When disabled (e.g. during
@@ -150,16 +148,6 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
   // card doesn't appear to repeat forever.
   const shouldLoop = loop && count > 1;
   const profileLoadBatches = useMemo(() => buildProfileLoadBatches(items), [items]);
-
-  useEffect(() => {
-    Animated.spring(progressAnim, {
-      toValue: activeIndex,
-      damping: 18,
-      stiffness: 180,
-      mass: 0.45,
-      useNativeDriver: false,
-    }).start();
-  }, [activeIndex, progressAnim]);
 
   useEffect(() => {
     const nextBatch = profileLoadBatches.find((batch) => (
@@ -191,8 +179,8 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
 
     for (const image of imagesToPrefetch) {
       prefetchedImageKeysRef.current.add(image.key);
-      Image.prefetch(image.uri).catch(() => undefined);
     }
+    prefetchCachedImages(imagesToPrefetch.map((image) => image.uri)).catch(() => undefined);
   }, [failedImages, loadableProfiles, profileLoadBatches, readyImages]);
 
   // 3 copies of the list when looping: [copy0 | copy1 (centre) | copy2]. When
@@ -327,11 +315,10 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
                   {isPolaroidGhost ? (
                     <MemoryPhotoGhost style={styles.photoGhostSurface} />
                   ) : null}
-                  <Image
+                  <CachedRemoteImage
                     key={imageKey}
-                    source={{ uri: item.imageUri! }}
+                    uri={item.imageUri!}
                     style={[styles.photoImage, isPolaroidGhost && styles.photoImageLoading]}
-                    fadeDuration={0}
                     onLoad={() => setReadyImages((prev) => (prev[imageKey] ? prev : { ...prev, [imageKey]: true }))}
                     onError={() => setFailedImages((prev) => (prev[imageKey] ? prev : { ...prev, [imageKey]: true }))}
                   />
@@ -425,43 +412,8 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
 
   if (count === 0) return null;
 
-  const progressInputMax = Math.max(count - 1, 1);
-  const fillWidth = progressAnim.interpolate({
-    inputRange: [0, progressInputMax],
-    outputRange: [pointerSize / 2, railWidth],
-    extrapolate: 'clamp',
-  });
-  const pointerTranslateX = progressAnim.interpolate({
-    inputRange: [0, progressInputMax],
-    outputRange: [0, railWidth - pointerSize],
-    extrapolate: 'clamp',
-  });
-
   return (
     <View style={styles.wrapper}>
-      {/* Fixed progress rail stays readable even with a large friend list. */}
-      <View style={styles.positionRow}>
-        <View style={[styles.progressRail, { width: railWidth }]}>
-          <Animated.View style={[styles.progressFill, { width: fillWidth }]} />
-          <Animated.View
-            style={[
-              styles.progressPointer,
-              {
-                width: pointerSize,
-                height: pointerSize,
-                borderRadius: pointerSize / 2,
-                transform: [{ translateX: pointerTranslateX }],
-              },
-            ]}
-          >
-            <View style={styles.progressPointerCore} />
-          </Animated.View>
-        </View>
-        <Text style={styles.positionText}>
-          {activeIndex + 1} of {count}
-        </Text>
-      </View>
-
       <AnimatedFlatList
         ref={flatListRef as any}
         horizontal
@@ -513,68 +465,21 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     list: {
       flexGrow: 0,
     },
-    positionRow: {
-      marginTop: spacing.sm,
-      marginBottom: spacing.md,
-      alignItems: 'center',
-      gap: spacing.xs,
-    },
-    progressRail: {
-      height: 22,
-      borderRadius: 999,
-      backgroundColor: colors.inkMuted + '24',
-      borderWidth: 1,
-      borderColor: colors.line,
-      justifyContent: 'center',
-      overflow: 'visible',
-    },
-    progressFill: {
-      position: 'absolute',
-      left: 0,
-      height: 6,
-      borderRadius: 999,
-      backgroundColor: colors.accent,
-    },
-    progressPointer: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.paper,
-      borderWidth: 2,
-      borderColor: colors.accent,
-      shadowColor: colors.accent,
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.28,
-      shadowRadius: 5,
-      elevation: 4,
-    },
-    progressPointerCore: {
-      width: 8,
-      height: 8,
-      borderRadius: 4,
-      backgroundColor: colors.accent,
-    },
-    positionText: {
-      fontFamily: fonts.bodyMedium,
-      fontSize: 12,
-      color: colors.inkSoft,
-      letterSpacing: 0.5,
-    },
     card: {
       alignSelf: 'center',
-      borderRadius: 3,
+      borderRadius: 5,
       backgroundColor: POLAROID_FRAME,
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(180,170,155,0.4)',
+      borderColor: 'rgba(180,170,155,0.28)',
       paddingTop: CARD_PAD_TOP,
       paddingHorizontal: CARD_PAD_SIDE,
       paddingBottom: 0,
       alignItems: 'center',
-      // Contact shadow (tight, dark)
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.25,
-      shadowRadius: 3,
-      elevation: 5,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.18,
+      shadowRadius: 18,
+      elevation: 8,
       backfaceVisibility: 'hidden',
     },
     cardGhost: {
@@ -617,9 +522,9 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     ambientShadow: {
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.1,
-      shadowRadius: 20,
+      shadowOffset: { width: 0, height: 18 },
+      shadowOpacity: 0.13,
+      shadowRadius: 30,
     },
     premiumGlow: {
       shadowColor: '#F5C242',
@@ -678,10 +583,10 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       letterSpacing: 0.2,
     },
     photoFrame: {
-      borderRadius: 1,
+      borderRadius: 2,
       overflow: 'hidden',
       borderWidth: 1,
-      borderColor: 'rgba(0,0,0,0.045)',
+      borderColor: 'rgba(0,0,0,0.055)',
       backfaceVisibility: 'hidden',
     },
     photoFrameGhost: {

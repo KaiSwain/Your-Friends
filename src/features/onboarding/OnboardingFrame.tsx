@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { ReactNode } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../theme/ThemeContext';
 import type { ColorTokens } from '../theme/themes';
@@ -47,13 +47,14 @@ export function OnboardingFrame({
         {hideBack ? (
           <View style={styles.backPlaceholder} />
         ) : (
-          <Ionicons
-            name="chevron-back"
-            size={24}
-            color={colors.inkSoft}
+          <Pressable
             onPress={() => backOnce(router)}
-            suppressHighlighting
-          />
+            style={styles.iconButton}
+            accessibilityLabel="Go back"
+            accessibilityRole="button"
+          >
+            <Ionicons name="chevron-back" size={24} color={colors.ink} />
+          </Pressable>
         )}
         <View style={styles.dots}>
           {Array.from({ length: totalSteps }).map((_, index) => (
@@ -67,15 +68,14 @@ export function OnboardingFrame({
           ))}
         </View>
         {onClose ? (
-          <Ionicons
-            name="close"
-            size={24}
-            color={colors.inkSoft}
+          <Pressable
             onPress={onClose}
-            suppressHighlighting
+            style={styles.iconButton}
             accessibilityLabel="Close"
             accessibilityRole="button"
-          />
+          >
+            <Ionicons name="close" size={24} color={colors.ink} />
+          </Pressable>
         ) : (
           <View style={styles.backPlaceholder} />
         )}
@@ -123,7 +123,17 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingTop: spacing.md,
       paddingBottom: spacing.lg,
     },
-    backPlaceholder: { width: 24, height: 24 },
+    backPlaceholder: { width: 40, height: 40 },
+    iconButton: {
+      width: 40,
+      height: 40,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     dots: { flexDirection: 'row', gap: 6 },
     dot: { width: 18, height: 4, borderRadius: radius.pill },
     body: { flex: 1 },

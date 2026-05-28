@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { ReactNode, useCallback, useMemo, useRef, useState } from 'react';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { AppScreen } from '../../../src/components/AppScreen';
 import {
@@ -20,11 +20,24 @@ import { usePremium } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { buildViewedWallProfileViewModel } from '../../../src/features/social/selectors';
 import type { ColorTokens } from '../../../src/features/theme/themes';
-import { contrastText } from '../../../src/lib/contrastText';
+import { notifyMemoryAuthorRecipientDeveloped } from '../../../src/lib/memoryRecipientDevelopNotifications';
 import { backOnce, pushOnce } from '../../../src/lib/navigationGuard';
+import { showPromptPaywall } from '../../../src/lib/premiumGates';
+import { isPromptExpired } from '../../../src/lib/promptExpiration';
 import { getProfileScreenGradientColors, useEffectiveProfileTheme } from '../../../src/hooks/useEffectiveProfileTheme';
+import { useIncomingMemoryDevelopStarts } from '../../../src/hooks/useIncomingMemoryDevelopStarts';
 import { compareWallPostsByMemoryDateDesc, groupPostsByMemoryDateDay } from '../../../src/lib/memoryDate';
+import {
+  getNotificationIdsForMemoryPrompt,
+  getNotificationIdsForMoviePrompt,
+  getNotificationIdsForWallPost,
+  getUnreadMemoryPromptIds,
+  getUnreadMoviePromptIds,
+  getUnreadWallPostIds,
+  markProfileNotificationIdsRead,
+} from '../../../src/lib/profileNotificationIndicators';
 import { usePrioritizedWallImageLoading } from '../../../src/hooks/usePrioritizedWallImageLoading';
+import { useSyntheticNotificationReads } from '../../../src/hooks/useSyntheticNotificationReads';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import type { FontSet } from '../../../src/theme/typography';
 import { radius, spacing } from '../../../src/theme/tokens';
@@ -34,8 +47,9 @@ export default function ViewYourWallScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ authorId: string | string[] }>();
   const { currentUser } = useAuth();
-  const { loading, getUserById, isConnected, getVisiblePostsByAuthor, getContactAboutMe, notifications, markNotificationRead, isPostOnProfileWall, addPostToProfileWall, cancelGiftNote, getGiftNotesForPair, getMovieReviewRequestsForPair, cancelMovieReviewRequest, getMemoryPromptRequestsForPair, cancelMemoryPromptRequest, getRepliesForWallPost, refresh } = useSocialGraph();
-  const { isUserPremium } = usePremium();
+  const { loading, getUserById, isConnected, getVisiblePostsByAuthor, getContactAboutMe, notifications, markNotificationRead, isPostOnProfileWall, addPostToProfileWall, cancelGiftNote, getGiftNotesForPair, getMovieReviewRequestsForPair, cancelMovieReviewRequest, getMemoryPromptRequestsForPair, cancelMemoryPromptRequest, getRepliesForWallPost, getWallPostById, refresh } = useSocialGraph();
+  const { isPremium, isUserPremium } = usePremium();
+  const { markSyntheticRead } = useSyntheticNotificationReads(currentUser?.id ?? null);
   const [refreshing, setRefreshing] = useState(false);
 
   const authorId = Array.isArray(params.authorId) ? params.authorId[0] : params.authorId;
@@ -51,7 +65,10 @@ export default function ViewYourWallScreen() {
     themedColors,
   } = useEffectiveProfileTheme(theirContactEarly?.profileBg);
 
-  const styles = useMemo(() => makeStyles(effectiveColors, effectiveFonts), [effectiveColors, effectiveFonts]);
+  const styles = useMemo(
+    () => makeStyles(effectiveColors, effectiveFonts, Boolean(theirContactEarly?.profileBgImagePath)),
+    [effectiveColors, effectiveFonts, theirContactEarly?.profileBgImagePath],
+  );
 
   // The contact card the author created about the current user.
   const theirContact = author && currentUser ? getContactAboutMe(author.id, currentUser.id) : undefined;
@@ -61,9 +78,7 @@ export default function ViewYourWallScreen() {
   const [wallMode, setWallMode] = useState<'theirs' | 'shared'>('shared');
   const [memoryWallViewMode, setMemoryWallViewMode] = useState<MemoryWallViewMode>('timeline');
   const [memoryFilter, setMemoryFilter] = useState<MemoryFilter>('all');
-  const [focusedReferencePostId, setFocusedReferencePostId] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView | null>(null);
-  const postLayoutYRef = useRef<Record<string, number>>({});
   const theirPosts = author && currentUser
     ? getVisiblePostsByAuthor(author.id).filter((post) => post.subjectUserId === currentUser.id)
     : [];
@@ -78,23 +93,33 @@ export default function ViewYourWallScreen() {
   }, [wallMode, theirPosts, myPosts]);
   const wallPosts = useMemo(() => filterWallPosts(unfilteredWallPosts, memoryFilter), [unfilteredWallPosts, memoryFilter]);
   const dayGroups = useMemo<DayGroup[]>(() => groupPostsByMemoryDateDay(wallPosts), [wallPosts]);
+  const getIncomingDevelopStartAt = useIncomingMemoryDevelopStarts(wallPosts, currentUser?.id, wallMode === 'shared');
+  const personalityTraits = theirContact?.personalityTraits ?? [];
   const facts = theirContact?.facts ?? [];
   const wallImageLoading = usePrioritizedWallImageLoading(wallPosts, true);
   const lockedGiftNotes = currentUser?.id && author?.id
     ? getGiftNotesForPair(currentUser.id, author.id).filter((note) => note.status === 'locked')
     : [];
   const moviePromptRequests = currentUser?.id && author?.id && wallMode === 'shared'
-    ? getMovieReviewRequestsForPair(currentUser.id, author.id).filter((request) => request.status === 'pending')
+    ? getMovieReviewRequestsForPair(currentUser.id, author.id).filter((request) => request.status === 'pending' && !isPromptExpired(request))
     : [];
   const memoryPromptRequests = currentUser?.id && author?.id && wallMode === 'shared'
-    ? getMemoryPromptRequestsForPair(currentUser.id, author.id).filter((request) => request.status === 'pending')
+    ? getMemoryPromptRequestsForPair(currentUser.id, author.id).filter((request) => request.status === 'pending' && !isPromptExpired(request))
     : [];
-  const incomingPromptCount = currentUser?.id && wallMode === 'shared'
-    ? memoryPromptRequests.filter((request) => request.recipientUserId === currentUser.id).length
-      + moviePromptRequests.filter((request) => request.recipientUserId === currentUser.id).length
+  const unreadMemoryPromptIds = useMemo(() => getUnreadMemoryPromptIds(notifications), [notifications]);
+  const unreadMoviePromptIds = useMemo(() => getUnreadMoviePromptIds(notifications), [notifications]);
+  const unreadWallPostIds = useMemo(() => getUnreadWallPostIds(notifications), [notifications]);
+  const newMemoryPromptIds = memoryPromptRequests
+    .filter((request) => request.recipientUserId === currentUser?.id && unreadMemoryPromptIds.has(request.id))
+    .map((request) => request.id);
+  const newMoviePromptIds = moviePromptRequests
+    .filter((request) => request.recipientUserId === currentUser?.id && unreadMoviePromptIds.has(request.id))
+    .map((request) => request.id);
+  const newIncomingPromptCount = currentUser?.id && wallMode === 'shared'
+    ? newMemoryPromptIds.length + newMoviePromptIds.length
     : 0;
 
-  function openMemoryPrompt() {
+  function openMemoryComposer(kind: 'note' | 'song') {
     if (!author) return;
     pushOnce(router, {
       pathname: '/(app)/memories/add',
@@ -102,9 +127,19 @@ export default function ViewYourWallScreen() {
         subjectId: author.id,
         subjectType: 'user',
         targetKeys: `user:${author.id}`,
+        kind,
         backTo: `/(app)/wall/${author.id}`,
       },
     });
+  }
+
+  function openMemoryPrompt() {
+    if (!author) return;
+    Alert.alert(`Add to ${author.displayName}'s wall`, 'What kind of memory?', [
+      { text: 'Note', onPress: () => openMemoryComposer('note') },
+      { text: 'Song', onPress: () => openMemoryComposer('song') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   }
 
   function openMovieRequest() {
@@ -120,11 +155,20 @@ export default function ViewYourWallScreen() {
   }
 
   function openMovieReviewResponse(requestId: string) {
+    markProfileNotificationIdsRead(
+      getNotificationIdsForMoviePrompt(notifications, requestId),
+      markNotificationRead,
+      markSyntheticRead,
+    );
     pushOnce(router, `/(app)/movies/review/${requestId}`);
   }
 
   function openMemoryPromptRequest() {
     if (!author) return;
+    if (!isPremium) {
+      showPromptPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
     pushOnce(router, {
       pathname: '/(app)/prompts/request',
       params: {
@@ -136,6 +180,11 @@ export default function ViewYourWallScreen() {
   }
 
   function openMemoryPromptResponse(requestId: string) {
+    markProfileNotificationIdsRead(
+      getNotificationIdsForMemoryPrompt(notifications, requestId),
+      markNotificationRead,
+      markSyntheticRead,
+    );
     pushOnce(router, `/(app)/prompts/respond/${requestId}`);
   }
 
@@ -151,23 +200,21 @@ export default function ViewYourWallScreen() {
         const fact = n.message.split('added a fact about you: ')[1];
         if (fact) set.add(fact);
       }
+      if (n.message.includes('added a personality trait about you: ')) {
+        const trait = n.message.split('added a personality trait about you: ')[1];
+        if (trait) set.add(trait);
+      }
     }
     return set;
   }, [authorNotifications]);
-  const glowPostIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const n of authorNotifications) {
-      if (n.type === 'wall_post' && n.referenceId) set.add(n.referenceId);
-    }
-    return set;
-  }, [authorNotifications]);
+  const glowPostIds = unreadWallPostIds;
   const newSharedMemoryCount = wallMode === 'shared'
     ? unfilteredWallPosts.filter((post) => glowPostIds.has(post.id)).length
     : 0;
   const wallViewIndicators = {
     timeline: newSharedMemoryCount,
     grid: newSharedMemoryCount,
-    prompts: incomingPromptCount,
+    prompts: newIncomingPromptCount,
   };
   const glowHero = useMemo(() =>
     authorNotifications.some(
@@ -176,19 +223,6 @@ export default function ViewYourWallScreen() {
     ),
     [authorNotifications],
   );
-
-  // Mark notifications as read when leaving the screen (not immediately).
-  const seenNotificationIds = useRef<string[]>([]);
-  useEffect(() => {
-    if (authorNotifications.length > 0) {
-      seenNotificationIds.current = authorNotifications.map((n) => n.id);
-    }
-  }, [authorNotifications]);
-  useEffect(() => {
-    return () => {
-      seenNotificationIds.current.forEach((id) => markNotificationRead(id));
-    };
-  }, []);
 
   async function handleAddToMyProfile(postId: string, repliesHidden = false) {
     if (!currentUser) return;
@@ -204,24 +238,6 @@ export default function ViewYourWallScreen() {
       { text: 'Add and hide replies', onPress: () => handleAddToMyProfile(post.id, true) },
       { text: 'Cancel', style: 'cancel' },
     ]);
-  }
-
-  function handlePostLayout(postId: string, event: LayoutChangeEvent) {
-    postLayoutYRef.current[postId] = event.nativeEvent.layout.y;
-  }
-
-  function focusReferencedPost(postId: string) {
-    postLayoutYRef.current = {};
-    setMemoryFilter('all');
-    setMemoryWallViewMode('timeline');
-    setFocusedReferencePostId(postId);
-    [180, 420, 800].forEach((delay) => {
-      setTimeout(() => {
-        const y = postLayoutYRef.current[postId];
-        if (typeof y === 'number') scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 120), animated: true });
-      }, delay);
-    });
-    setTimeout(() => setFocusedReferencePostId((current) => current === postId ? null : current), 1800);
   }
 
   // All hooks are above this line. Now guard for auth / loading / missing author.
@@ -305,6 +321,21 @@ export default function ViewYourWallScreen() {
       <Text style={styles.heroSubtitle}>{author.displayName}'s profile of you — tap to flip</Text>
     </View>,
   );
+
+  if (personalityTraits.length > 0) {
+    screenContent.push(
+      <View key="personality-traits" style={styles.section}>
+        <Text style={styles.sectionTitle}>Personality Traits</Text>
+        <View style={styles.factList}>
+          {personalityTraits.map((trait) => (
+            <View key={trait} style={[styles.factChip, glowFactTexts.has(trait) && styles.glowRow]}>
+              <Text style={styles.factChipText}>{trait}</Text>
+            </View>
+          ))}
+        </View>
+      </View>,
+    );
+  }
 
   if (facts.length > 0) {
     screenContent.push(
@@ -394,7 +425,7 @@ export default function ViewYourWallScreen() {
             accessibilityRole="button"
             accessibilityLabel={`Start a memory prompt for ${author.displayName}`}
           >
-            <Ionicons name="sparkles-outline" size={14} color={effectiveColors.white} />
+            <Ionicons name="sparkles-outline" size={14} color={effectiveColors.accentTertiary ?? effectiveColors.accent} />
             <Text style={styles.memoryPromptButtonText}>Start with a prompt</Text>
           </Pressable>
         ) : undefined}
@@ -407,6 +438,8 @@ export default function ViewYourWallScreen() {
             friendName={author.displayName}
             memoryPrompts={memoryPromptRequests}
             moviePrompts={moviePromptRequests}
+            newMemoryPromptIds={newMemoryPromptIds}
+            newMoviePromptIds={newMoviePromptIds}
             onAnswerMemoryPrompt={openMemoryPromptResponse}
             onCancelMemoryPrompt={(requestId) => cancelMemoryPromptRequest(requestId, currentUser.id)}
             onCreateMemoryPrompt={openMemoryPromptRequest}
@@ -417,44 +450,65 @@ export default function ViewYourWallScreen() {
             tint={effectiveColors.accent}
           />
         ) : undefined}
-        getGridExtraHeight={(post) => getReplyGridExtraHeight(getRepliesForWallPost(post.id).length)}
+        getGridExtraHeight={(post) => getReplyGridExtraHeight(getRepliesForWallPost(post.id))}
         themeColors={effectiveColors}
         viewMode={memoryWallViewMode}
         renderPost={(post, context) => {
           const isMine = currentUser ? post.authorUserId === currentUser.id : false;
           const postAuthorName = isMine ? (currentUser?.displayName ?? 'You') : author.displayName;
-          const referencedPost = post.referencedWallPostId
-            ? unfilteredWallPosts.find((candidate) => candidate.id === post.referencedWallPostId) ?? null
-            : null;
+          const promptAuthorName = post.memoryPromptRequestId || post.promptVoice || post.promptText
+            ? (post.subjectUserId ? getUserById(post.subjectUserId)?.displayName : null) ?? 'Someone'
+            : undefined;
+          const referencedPost = post.referencedWallPostId ? getWallPostById(post.referencedWallPostId) ?? null : null;
           const replies = getRepliesForWallPost(post.id);
           const replyItems = replies.map((reply) => ({
             id: reply.id,
             body: reply.body,
+            voice: reply.voice,
             authorName: getUserById(reply.authorUserId)?.displayName ?? 'Someone',
           }));
           return (
             <View
               key={post.id}
-              onLayout={(event) => handlePostLayout(post.id, event)}
-              style={[styles.wallPostWithProfileAction, (glowPostIds.has(post.id) || focusedReferencePostId === post.id) && styles.glowRow]}
+              style={[styles.wallPostWithProfileAction, glowPostIds.has(post.id) && styles.glowRow]}
             >
               <WallPostCard
                 authorName={postAuthorName}
                 post={post}
                 cardColor={post.cardColor}
+                developStartAt={getIncomingDevelopStartAt(post)}
                 themeColors={effectiveColors}
                 imageLoadEnabled={wallImageLoading.isImageLoadEnabled(post)}
                 displayMode={context?.viewMode}
                 referencedPost={referencedPost}
                 referencedPostAuthorName={referencedPost ? getUserById(referencedPost.authorUserId)?.displayName ?? 'Someone' : undefined}
+                promptAuthorName={promptAuthorName}
                 shareable
                 onLongPress={() => handleMemoryLongPress(post)}
-                onReferencedPostPress={post.referencedWallPostId ? focusReferencedPost : undefined}
+                onDeveloped={getIncomingDevelopStartAt(post) ? () => {
+                  notifyMemoryAuthorRecipientDeveloped({
+                    post,
+                    recipientName: currentUser.displayName,
+                    recipientUserId: currentUser.id,
+                  }).catch((error) => console.warn('[notification] recipient developed memory insert failed:', error));
+                } : undefined}
                 onImageReady={wallImageLoading.markImageReady}
               />
+              {glowPostIds.has(post.id) ? (
+                <View style={styles.newMemoryPill}>
+                  <Text style={styles.newMemoryPillText}>New</Text>
+                </View>
+              ) : null}
               <MemoryReplyThreadPreview
                 replies={replyItems}
-                onOpenThread={() => pushOnce(router, `/(app)/memories/replies/${post.id}`)}
+                onOpenThread={() => {
+                  markProfileNotificationIdsRead(
+                    getNotificationIdsForWallPost(notifications, post.id),
+                    markNotificationRead,
+                    markSyntheticRead,
+                  );
+                  pushOnce(router, `/(app)/memories/replies/${post.id}`);
+                }}
                 themeColors={effectiveColors}
               />
             </View>
@@ -466,7 +520,7 @@ export default function ViewYourWallScreen() {
 
   return (
     <View style={styles.screenShell}>
-      <ProfileBackgroundBackdrop colors={effectiveColors} imageUri={profileBgImagePath} />
+      <ProfileBackgroundBackdrop colors={effectiveColors} imageUri={profileBgImagePath} tintColors={themedColors} />
       <AppScreen
         header={topBar}
         floatingHeaderOnScroll
@@ -506,20 +560,32 @@ const MEMORY_FILTER_OPTIONS: { key: MemoryFilter; label: string }[] = [
 
 function filterWallPosts(posts: WallPost[], filter: MemoryFilter) {
   if (filter === 'all') return posts;
-  if (filter === 'photos') return posts.filter((post) => post.postType === 'polaroid');
+  if (filter === 'photos') return posts.filter((post) => post.postType === 'polaroid' || post.postType === 'media');
   if (filter === 'notes') return posts.filter((post) => post.postType === 'note');
   if (filter === 'songs') return posts.filter((post) => post.postType === 'song' || Boolean(post.song));
   if (filter === 'movies') return posts.filter((post) => post.postType === 'movie');
   return posts.filter((post) => Boolean(post.memoryPromptRequestId || post.promptText || post.promptType));
 }
 
-function getReplyGridExtraHeight(replyCount: number) {
-  const visibleReplies = Math.min(replyCount, 3);
-  return 34 + visibleReplies * 28 + (replyCount > visibleReplies ? 24 : 0);
+function getReplyGridExtraHeight(replies: { voice?: unknown }[]) {
+  const visibleReplies = replies.slice(-3);
+  return 34 + visibleReplies.reduce((height, reply) => height + (reply.voice ? 42 : 28), 0) + (replies.length > visibleReplies.length ? 24 : 0);
 }
 
-const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
-  StyleSheet.create({
+const makeStyles = (colors: ColorTokens, fonts: FontSet, hasBackgroundImage = false) => {
+  const altTint = colors.accentAlt ?? colors.accent;
+  const tertiaryTint = colors.accentTertiary ?? colors.accentSoft ?? colors.accent;
+  const backgroundTextColor = hasBackgroundImage ? colors.white : colors.ink;
+  const backgroundMutedTextColor = hasBackgroundImage ? colors.white : colors.inkSoft;
+  const backgroundTextShadow = hasBackgroundImage
+    ? {
+      textShadowColor: 'rgba(0,0,0,0.78)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 4,
+    }
+    : {};
+
+  return StyleSheet.create({
     screenShell: { flex: 1 },
     profileBackgroundLayer: {
       ...StyleSheet.absoluteFillObject,
@@ -538,8 +604,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: colors.canvas + '99',
     },
     topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     topBarFriendButton: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -547,7 +613,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       maxWidth: 168,
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: colors.accent + '35',
+      borderColor: tertiaryTint + '35',
       backgroundColor: colors.paper + 'D9',
       paddingLeft: 3,
       paddingRight: spacing.sm,
@@ -736,7 +802,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       overflow: 'visible' as const,
       ...protectTextFromFontClipping(fonts.handwritten, 15),
     },
-    heroSubtitle: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.inkSoft },
+    heroSubtitle: { fontFamily: fonts.bodyMedium, fontSize: 14, color: backgroundMutedTextColor, ...backgroundTextShadow },
     /* ── Hero back face ── */
     heroCardBack: {
       justifyContent: 'center',
@@ -769,26 +835,28 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     sectionTitle: {
       fontFamily: fonts.heading,
       fontSize: 22,
-      color: colors.ink,
+      color: backgroundTextColor,
       overflow: 'visible' as const,
+      ...backgroundTextShadow,
       ...protectTextFromFontClipping(fonts.heading, 22),
     },
     memoryWallTitle: {
       fontFamily: fonts.handwrittenBold,
       fontSize: 40,
-      color: colors.ink,
+      color: backgroundTextColor,
       textAlign: 'left',
       width: '100%',
       paddingHorizontal: 10,
       overflow: 'visible' as const,
+      ...backgroundTextShadow,
       ...protectTextFromFontClipping(fonts.handwrittenBold, 40),
     },
     factList: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: spacing.sm },
     factChip: {
       borderRadius: radius.pill,
-      backgroundColor: colors.accent + '18',
+      backgroundColor: tertiaryTint + '18',
       borderWidth: 1,
-      borderColor: colors.accent + '40',
+      borderColor: tertiaryTint + '40',
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
@@ -800,7 +868,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       shadowRadius: 12,
       elevation: 6,
     },
-    emptyHint: { fontFamily: fonts.body, fontSize: 14, color: colors.inkMuted },
+    emptyHint: { fontFamily: fonts.body, fontSize: 14, color: backgroundMutedTextColor, ...backgroundTextShadow },
     memoryFilterRow: { flexDirection: 'row', gap: spacing.xs, flexWrap: 'wrap' },
     memoryFilterChip: {
       flexDirection: 'row',
@@ -814,9 +882,9 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: spacing.sm,
       paddingVertical: spacing.xs,
     },
-    memoryFilterChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-    memoryFilterText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkSoft },
-    memoryFilterTextActive: { color: colors.white },
+    memoryFilterChipActive: { backgroundColor: altTint + '1A', borderColor: altTint + '55' },
+    memoryFilterText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink },
+    memoryFilterTextActive: { color: altTint },
     lockedGiftBlock: { gap: spacing.sm },
     memoryPromptButton: {
       flexDirection: 'row',
@@ -824,13 +892,24 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       justifyContent: 'center',
       gap: spacing.xs,
       borderRadius: radius.pill,
-      backgroundColor: colors.accent,
+      borderWidth: 1,
+      borderColor: tertiaryTint + '55',
+      backgroundColor: tertiaryTint + '18',
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
-    memoryPromptButtonText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.white },
+    memoryPromptButtonText: { fontFamily: fonts.bodyBold, fontSize: 12, color: tertiaryTint },
     monthWallPostsBlock: { marginTop: -spacing.md },
     wallPostWithProfileAction: { alignItems: 'center', gap: spacing.xs },
+    newMemoryPill: {
+      alignSelf: 'center',
+      borderRadius: radius.pill,
+      backgroundColor: colors.accent,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 3,
+      marginTop: -spacing.xs,
+    },
+    newMemoryPillText: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.white, textTransform: 'uppercase' },
     wallModeToggle: {
       flexDirection: 'row',
       alignSelf: 'flex-start',
@@ -846,14 +925,17 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderRadius: radius.pill,
     },
     wallModeChipActive: {
-      backgroundColor: colors.accent,
+      backgroundColor: altTint + '1A',
+      borderWidth: 1,
+      borderColor: altTint + '55',
     },
     wallModeLabel: {
       fontFamily: fonts.bodyMedium,
       fontSize: 13,
-      color: colors.inkSoft,
+      color: colors.ink,
     },
     wallModeLabelActive: {
-      color: contrastText(colors.accent),
+      color: altTint,
     },
   });
+};

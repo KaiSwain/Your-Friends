@@ -12,6 +12,8 @@ import { themes, type ThemeName } from './themes';
  */
 export const themeCardUnlocks: Record<ThemeName, string[]> = {
   default:   [colors.lavender, colors.plum,       colors.rose,       colors.sky],
+  custom:    [colors.lavender, colors.apricot,    colors.sage,       colors.sky],
+  yourFriends: [colors.lavender, colors.gold,     colors.red,        colors.teal],
   neon:      [colors.teal,     colors.mint,       colors.sky,        colors.slate],
   synthwave: [colors.rose,     colors.plum,       colors.burgundy,   colors.lavender],
   matcha:    [colors.sage,     colors.forest,     colors.mint,       colors.gold],

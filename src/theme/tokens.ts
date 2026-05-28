@@ -15,9 +15,9 @@ export const colors = {
   // Use this as the brightest text color on dark backgrounds.
   ink: '#F5F5F5',
   // Use this for supporting text that should be readable but less dominant.
-  inkSoft: '#A0A0A0',
+  inkSoft: '#F5F5F5',
   // Use this for low-emphasis text such as hints and placeholders.
-  inkMuted: '#666666',
+  inkMuted: '#DADADA',
   // Use this as the border and divider color across the app.
   line: '#2A2A2A',
   // Use this as the primary brand accent color for actions and highlights.
@@ -74,6 +74,16 @@ export const colors = {
   error: '#FF453A',
 }; // End the shared color token object.
 
+// Semantic accents that should stay fixed across profile themes.
+export const semanticColors = {
+  movieGold: '#F5C242',
+  promptGold: '#F5C242',
+  appleMusicOrange: '#FA5C33',
+  spotifyGreen: '#1DB954',
+  voiceRed: '#C94040',
+  replyPurple: '#7C5CFC',
+};
+
 // Export spacing tokens so components can share the same rhythm and padding scale.
 export const spacing = {
   // Extra-small spacing for tight gaps.
@@ -109,11 +119,11 @@ export const shadow = {
     // Use black as the base shadow color.
     shadowColor: '#000',
     // Offset the shadow slightly downward.
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 10 },
     // Keep the card shadow subtle.
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.16,
     // Blur the shadow enough to feel soft.
-    shadowRadius: 12,
+    shadowRadius: 22,
     // Provide the Android elevation equivalent.
     elevation: 4,
   }, // End the standard card shadow preset.
@@ -122,11 +132,11 @@ export const shadow = {
     // Use black as the base shadow color here as well.
     shadowColor: '#000',
     // Push the shadow farther downward to increase the lifted feel.
-    shadowOffset: { width: 0, height: 8 },
+    shadowOffset: { width: 0, height: 16 },
     // Make the shadow slightly stronger than the regular card preset.
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.22,
     // Increase the blur radius so the shadow feels softer and broader.
-    shadowRadius: 24,
+    shadowRadius: 34,
     // Provide the stronger Android elevation equivalent.
     elevation: 8,
   }, // End the elevated shadow preset.

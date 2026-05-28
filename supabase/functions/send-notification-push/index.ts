@@ -28,6 +28,8 @@ Deno.serve(async (req) => {
 
   const notificationId = typeof payload?.notificationId === 'string' ? payload.notificationId : '';
   if (!notificationId) return jsonResponse({ error: 'notificationId is required.' }, 400);
+  const titleOverride = typeof payload?.title === 'string' && payload.title.trim() ? payload.title.trim() : null;
+  const bodyOverride = typeof payload?.body === 'string' && payload.body.trim() ? payload.body.trim() : null;
 
   const adminSupabase = createClient(supabaseUrl, serviceRoleKey);
   const { data: notification, error: notificationError } = await adminSupabase
@@ -57,8 +59,8 @@ Deno.serve(async (req) => {
     },
     body: JSON.stringify({
       to: pushToken,
-      title: pushTitleFor(notification.type),
-      body: notification.message,
+      title: titleOverride ?? pushTitleFor(notification.type),
+      body: bodyOverride ?? notification.message,
       sound: 'default',
       data: {
         ...(isRecord(notification.metadata) ? notification.metadata : {}),
@@ -84,6 +86,9 @@ function pushTitleFor(type: string) {
   if (type === 'friend_request') return 'Friend update';
   if (type === 'contact_update') return 'Profile update';
   if (type === 'wall_post') return 'New memory';
+  if (type === 'memory_prompt_request') return 'Memory prompt';
+  if (type === 'movie_review_request') return 'Movie prompt';
+  if (type === 'memory_reply') return 'New reply';
   return 'YourFriends';
 }
 

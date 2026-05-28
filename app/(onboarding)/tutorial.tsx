@@ -68,8 +68,8 @@ export default function OnboardingTutorialScreen() {
 
   return (
     <OnboardingFrame
-      step={5}
-      totalSteps={12}
+      step={6}
+      totalSteps={13}
       eyebrow={slide.eyebrow}
       title={slide.title}
       subtitle={slide.body}
@@ -467,7 +467,7 @@ function ShareAnimation({ colors, fonts }: { colors: ColorTokens; fonts: FontSet
           <Text style={[animStyles.journalNameLabel, { color: colors.accent, fontFamily: fonts.bodyBold }]}>You</Text>
         </View>
         <View style={[animStyles.journalNamePill, { backgroundColor: colors.paperMuted, borderColor: colors.line, borderWidth: 1 }]}>
-          <Ionicons name="people" size={11} color={colors.inkSoft} />
+          <Ionicons name="people" size={11} color={colors.ink} />
           <Text style={[animStyles.journalNameLabel, { color: colors.inkSoft, fontFamily: fonts.bodyBold }]}>Friend</Text>
         </View>
       </View>

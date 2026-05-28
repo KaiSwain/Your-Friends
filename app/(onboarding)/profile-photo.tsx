@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -10,6 +11,7 @@ import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
 import { cropAvatarImage } from '../../src/lib/avatarImage';
 import { onCapturedUri } from '../../src/lib/cameraHandoff';
+import { avatarImagePickerOptions } from '../../src/lib/imagePickerPresets';
 import { pushOnce } from '../../src/lib/navigationGuard';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
@@ -41,6 +43,23 @@ export default function OnboardingProfilePhotoScreen() {
     pushOnce(router, { pathname: '/(app)/camera', params: { handoff: '1', avatarHandoff: '1' } });
   }
 
+  async function chooseFromGallery() {
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = await ImagePicker.launchImageLibraryAsync(avatarImagePickerOptions);
+    } catch {
+      Alert.alert('Gallery unavailable', 'We could not open your gallery. Try again in a moment.');
+      return;
+    }
+    if (!result.canceled && result.assets[0]?.uri) {
+      try {
+        setLocalUri(await cropAvatarImage(result.assets[0].uri));
+      } catch {
+        setLocalUri(result.assets[0].uri);
+      }
+    }
+  }
+
   async function handleContinue() {
     if (busy) return;
     setBusy(true);
@@ -64,8 +83,8 @@ export default function OnboardingProfilePhotoScreen() {
 
   return (
     <OnboardingFrame
-      step={8}
-      totalSteps={12}
+      step={9}
+      totalSteps={13}
       eyebrow="Your face"
       title="Add a profile photo."
       subtitle="A photo helps your friends spot you when they connect. You can change it anytime."
@@ -96,6 +115,10 @@ export default function OnboardingProfilePhotoScreen() {
         <Pressable onPress={takePhoto} style={styles.actionTile} accessibilityRole="button">
           <Ionicons name="camera-outline" size={26} color={colors.ink} />
           <Text style={styles.actionTileLabel}>Take photo</Text>
+        </Pressable>
+        <Pressable onPress={chooseFromGallery} style={styles.actionTile} accessibilityRole="button">
+          <Ionicons name="image-outline" size={26} color={colors.ink} />
+          <Text style={styles.actionTileLabel}>Choose from gallery</Text>
         </Pressable>
       </View>
 

@@ -147,7 +147,7 @@ export function MemoryLocationPicker({ value, onChange }: MemoryLocationPickerPr
           <Ionicons name="location-sharp" size={14} color={colors.accent} />
           <Text style={styles.selectedChipText} numberOfLines={2}>{value}</Text>
           <Pressable onPress={handleClearSelection} accessibilityRole="button" accessibilityLabel="Clear location">
-            <Ionicons name="close-circle" size={18} color={colors.inkMuted} />
+            <Ionicons name="close-circle" size={18} color={colors.ink} />
           </Pressable>
         </View>
       ) : null}
@@ -164,7 +164,7 @@ export function MemoryLocationPicker({ value, onChange }: MemoryLocationPickerPr
           kindLabels={KIND_LABELS}
           kindIcons={KIND_ICONS}
           accentColor={colors.accent}
-          inactiveIconColor={colors.inkSoft}
+          inactiveIconColor={colors.ink}
         />
       ) : null}
 
@@ -180,7 +180,7 @@ export function MemoryLocationPicker({ value, onChange }: MemoryLocationPickerPr
           kindLabels={KIND_LABELS}
           kindIcons={KIND_ICONS}
           accentColor={colors.accent}
-          inactiveIconColor={colors.inkSoft}
+          inactiveIconColor={colors.ink}
         />
       ) : null}
 
@@ -188,7 +188,7 @@ export function MemoryLocationPicker({ value, onChange }: MemoryLocationPickerPr
         value={searchText}
         onChangeText={setSearchText}
         placeholder="Search for another place"
-        placeholderTextColor={colors.inkMuted}
+        placeholderTextColor={colors.ink}
         autoCapitalize="words"
         autoCorrect={false}
         maxLength={80}
@@ -280,7 +280,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     label: {
       fontFamily: fonts.bodyBold,
       fontSize: 12,
-      color: colors.inkMuted,
+      color: colors.ink,
       textTransform: 'uppercase',
       letterSpacing: 0.5,
     },
@@ -288,7 +288,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontFamily: fonts.body,
       fontSize: 12,
       lineHeight: 17,
-      color: colors.inkSoft,
+      color: colors.ink,
     },
     selectedChip: {
       flexDirection: 'row',
@@ -296,8 +296,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       gap: spacing.sm,
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: colors.accent + '55',
-      backgroundColor: colors.accent + '12',
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
@@ -325,7 +325,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     suggestionSectionTitle: {
       fontFamily: fonts.bodyBold,
       fontSize: 12,
-      color: colors.inkMuted,
+      color: colors.ink,
       textTransform: 'uppercase',
       letterSpacing: 0.5,
     },
@@ -342,7 +342,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     loadingText: {
       fontFamily: fonts.body,
       fontSize: 13,
-      color: colors.inkSoft,
+      color: colors.ink,
     },
     suggestionChip: {
       minWidth: 112,
@@ -361,7 +361,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     suggestionChipActive: {
       borderColor: colors.accent,
-      backgroundColor: colors.accent + '12',
+      backgroundColor: colors.paper,
     },
     suggestionIcon: {
       width: 30,
@@ -372,13 +372,13 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: colors.line,
     },
     suggestionIconActive: {
-      backgroundColor: colors.accent + '18',
+      backgroundColor: colors.paper,
     },
     suggestionLabel: {
       flex: 1,
       fontFamily: fonts.bodyMedium,
       fontSize: 12,
-      color: colors.inkSoft,
+      color: colors.ink,
     },
     suggestionLabelActive: {
       fontFamily: fonts.bodyBold,

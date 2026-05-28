@@ -9,9 +9,15 @@ export function getWallPostMemoryDate(post: Pick<WallPost, 'createdAt' | 'memory
 }
 
 export function compareWallPostsByMemoryDateDesc(left: WallPost, right: WallPost): number {
-  const byMemoryDate = getWallPostMemoryDate(right).getTime() - getWallPostMemoryDate(left).getTime();
-  if (byMemoryDate !== 0) return byMemoryDate;
+  const leftDayKey = getWallPostMemoryDayKey(left);
+  const rightDayKey = getWallPostMemoryDayKey(right);
+  const byMemoryDay = rightDayKey.localeCompare(leftDayKey);
+  if (byMemoryDay !== 0) return byMemoryDay;
   return right.createdAt.localeCompare(left.createdAt);
+}
+
+export function getWallPostMemoryDayKey(post: Pick<WallPost, 'createdAt' | 'memoryDate'>): string {
+  return getLocalDateKey(getWallPostMemoryDateValue(post));
 }
 
 export function groupPostsByMemoryDateDay<T extends Pick<WallPost, 'createdAt' | 'memoryDate'>>(posts: T[]) {

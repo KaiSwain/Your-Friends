@@ -15,6 +15,7 @@ import { useSocialGraph } from '../../../../src/features/social/SocialGraphConte
 import { useTheme } from '../../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../../src/features/theme/themes';
 import { getProfileScreenGradientColors } from '../../../../src/hooks/useEffectiveProfileTheme';
+import { getReadableSurfaceColors, type ReadableSurfaceColors } from '../../../../src/lib/contrastText';
 import { groupPostsByMemoryDateDay } from '../../../../src/lib/memoryDate';
 import { backOnce, pushOnce, replaceOnce } from '../../../../src/lib/navigationGuard';
 import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
@@ -41,7 +42,12 @@ export default function UserProfileScreen() {
     unlinkContactFromFriend,
   } = useSocialGraph();
   const { colors, fonts } = useTheme();
-  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
+  const readableSurfaces = useMemo(() => ({
+    page: getReadableSurfaceColors(colors.canvas, colors),
+    paper: getReadableSurfaceColors(colors.paper, colors),
+    paperMuted: getReadableSurfaceColors(colors.paperMuted, colors),
+  }), [colors]);
+  const styles = useMemo(() => makeStyles(colors, fonts, readableSurfaces), [colors, fonts, readableSurfaces]);
   const [linkChooserOpen, setLinkChooserOpen] = useState(false);
   const [busyContactId, setBusyContactId] = useState<string | null>(null);
   const [creatingLinkedProfile, setCreatingLinkedProfile] = useState(false);
@@ -306,6 +312,18 @@ export default function UserProfileScreen() {
         </SectionCard>
       ) : null}
 
+      {profileUser.profilePersonalityTraits.length > 0 ? (
+        <SectionCard title="Personality traits">
+          <View style={styles.factList}>
+            {profileUser.profilePersonalityTraits.map((trait) => (
+              <View key={trait} style={styles.factChip}>
+                <Text style={styles.factChipText}>{trait}</Text>
+              </View>
+            ))}
+          </View>
+        </SectionCard>
+      ) : null}
+
       {profileUser.profileFacts.length > 0 ? (
         <SectionCard title="Profile facts">
           <View style={styles.factList}>
@@ -332,18 +350,22 @@ export default function UserProfileScreen() {
           emptyHint={`${profileUser.displayName} has not featured any memories yet.`}
           getGridExtraHeight={(post) => {
             const profileWallItem = profileWallItems.find((item) => item.wallPostId === post.id);
-            return profileWallItem?.repliesHidden ? 0 : getReplyGridExtraHeight(getRepliesForWallPost(post.id).length);
+            return profileWallItem?.repliesHidden ? 0 : getReplyGridExtraHeight(getRepliesForWallPost(post.id));
           }}
           themeColors={colors}
           viewMode={memoryWallViewMode}
           renderPost={(post, context) => {
             const referencedPost = post.referencedWallPostId ? getWallPostById(post.referencedWallPostId) ?? null : null;
+            const promptAuthorName = post.memoryPromptRequestId || post.promptVoice || post.promptText
+              ? (post.subjectUserId ? getUserById(post.subjectUserId)?.displayName : null) ?? 'Someone'
+              : undefined;
             const profileWallItem = profileWallItems.find((item) => item.wallPostId === post.id);
             const repliesHidden = profileWallItem?.repliesHidden ?? false;
             const replies = getRepliesForWallPost(post.id);
             const replyItems = replies.map((reply) => ({
               id: reply.id,
               body: reply.body,
+              voice: reply.voice,
               authorName: getUserById(reply.authorUserId)?.displayName ?? 'Someone',
             }));
             return (
@@ -356,6 +378,7 @@ export default function UserProfileScreen() {
                   displayMode={context?.viewMode}
                   referencedPost={referencedPost}
                   referencedPostAuthorName={referencedPost ? getUserById(referencedPost.authorUserId)?.displayName ?? 'Someone' : undefined}
+                  promptAuthorName={promptAuthorName}
                   shareable
                 />
                 {!repliesHidden ? (
@@ -379,17 +402,25 @@ function getInitials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join('') || '?';
 }
 
-function getReplyGridExtraHeight(replyCount: number) {
-  const visibleReplies = Math.min(replyCount, 3);
-  return 34 + visibleReplies * 28 + (replyCount > visibleReplies ? 24 : 0);
+function getReplyGridExtraHeight(replies: { voice?: unknown }[]) {
+  const visibleReplies = replies.slice(-3);
+  return 34 + visibleReplies.reduce((height, reply) => height + (reply.voice ? 42 : 28), 0) + (replies.length > visibleReplies.length ? 24 : 0);
 }
 
-const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
+const makeStyles = (
+  colors: ColorTokens,
+  fonts: FontSet,
+  readableSurfaces: {
+    page: ReadableSurfaceColors;
+    paper: ReadableSurfaceColors;
+    paperMuted: ReadableSurfaceColors;
+  },
+) =>
   StyleSheet.create({
     screenShell: { flex: 1 },
     topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    backButton: { paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { minHeight: 38, borderRadius: 999, borderWidth: 0, backgroundColor: withAlpha(colors.paper, 0.18), paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     hero: { gap: spacing.sm, alignItems: 'center' },
     avatarFrame: {
       width: 112,
@@ -403,19 +434,19 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     avatarImage: { width: '100%', height: '100%' },
     avatarInitials: { fontFamily: fonts.bodyBold, fontSize: 34, color: colors.white },
-    title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, textAlign: 'center', ...protectTextFromFontClipping(fonts.heading, 28) },
-    subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft, textAlign: 'center' },
+    title: { fontFamily: fonts.heading, fontSize: 28, color: readableSurfaces.page.text, textAlign: 'center', ...protectTextFromFontClipping(fonts.heading, 28) },
+    subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: readableSurfaces.page.mutedText, textAlign: 'center' },
     linkedProfileCard: {
       gap: spacing.xs,
       padding: spacing.md,
       borderRadius: radius.md,
       borderWidth: 1,
-      borderColor: colors.accent + '36',
-      backgroundColor: colors.accent + '12',
+      borderColor: withAlpha(colors.line, 0.38),
+      backgroundColor: colors.paper,
     },
-    linkedProfileTitle: { fontFamily: fonts.bodyBold, fontSize: 16, color: colors.ink },
-    linkedProfileSubtitle: { fontFamily: fonts.body, fontSize: 13, lineHeight: 19, color: colors.inkSoft },
-    connectionCopy: { fontFamily: fonts.body, fontSize: 14, lineHeight: 20, color: colors.inkSoft },
+    linkedProfileTitle: { fontFamily: fonts.bodyBold, fontSize: 16, color: readableSurfaces.paper.text },
+    linkedProfileSubtitle: { fontFamily: fonts.body, fontSize: 13, lineHeight: 19, color: readableSurfaces.paper.mutedText },
+    connectionCopy: { fontFamily: fonts.body, fontSize: 14, lineHeight: 20, color: readableSurfaces.paper.mutedText },
     connectionActions: { gap: spacing.sm, marginTop: spacing.md },
     connectionButton: {
       minHeight: 44,
@@ -426,17 +457,17 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       justifyContent: 'center',
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
-      backgroundColor: colors.paperMuted,
+      backgroundColor: colors.paper,
     },
     primaryConnectionButton: {
       backgroundColor: colors.accent,
-      borderColor: colors.accent,
+      borderColor: withAlpha(colors.white, 0.18),
     },
     dangerConnectionButton: {
-      borderColor: colors.error + '66',
-      backgroundColor: colors.error + '10',
+      borderColor: colors.error,
+      backgroundColor: colors.paper,
     },
-    connectionButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.inkSoft, textAlign: 'center' },
+    connectionButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: readableSurfaces.paper.text, textAlign: 'center' },
     primaryConnectionLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.white, textAlign: 'center' },
     dangerConnectionLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.error, textAlign: 'center' },
     connectionError: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.error, marginTop: spacing.sm },
@@ -445,14 +476,24 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     factChip: {
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: colors.accent + '40',
-      backgroundColor: colors.accent + '16',
+      borderColor: withAlpha(colors.line, 0.38),
+      backgroundColor: colors.paper,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
-    factChipText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.ink },
+    factChipText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: readableSurfaces.paper.text },
     memoryWallSection: { gap: spacing.sm },
     memoryWallTitle: { fontFamily: fonts.heading, fontSize: 24, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 24) },
     emptyHint: { fontFamily: fonts.body, fontSize: 14, lineHeight: 21, color: colors.inkMuted },
     profileMemoryItem: { alignItems: 'center', gap: spacing.xs },
   });
+
+function withAlpha(color: string, alpha: number) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = match[1];
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}

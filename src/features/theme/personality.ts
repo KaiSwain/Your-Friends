@@ -201,6 +201,8 @@ const peachEmoji: EmojiSet = {
 // Keep keys in sync with `ThemeName` in themes.ts.
 export const personalities: Record<string, ThemePersonality> = {
   default: { iconLib: 'lucide', strokeWidth: 1.75, emojis: classicEmoji },
+  custom: { iconLib: 'lucide', strokeWidth: 1.75, emojis: classicEmoji },
+  yourFriends: { iconLib: 'lucide', strokeWidth: 1.75, emojis: classicEmoji },
   neon: { iconLib: 'phosphor', phosphorWeight: 'bold', emojis: neonEmoji },
   synthwave: { iconLib: 'phosphor', phosphorWeight: 'duotone', emojis: synthwaveEmoji },
   matcha: { iconLib: 'feather', strokeWidth: 1.75, emojis: natureEmoji },

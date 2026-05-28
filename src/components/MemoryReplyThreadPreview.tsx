@@ -7,11 +7,14 @@ import type { ColorTokens } from '../features/theme/themes';
 import { protectTextFromFontClipping } from '../theme/fontProtection';
 import type { FontSet } from '../theme/typography';
 import { spacing } from '../theme/tokens';
+import type { VoiceAttachment } from '../types/domain';
+import { VoiceMemoryCard } from './VoiceMemoryCard';
 
 export interface MemoryReplyPreviewItem {
   id: string;
   body: string;
   authorName: string;
+  voice?: VoiceAttachment | null;
 }
 
 interface MemoryReplyThreadPreviewProps {
@@ -43,7 +46,18 @@ export function MemoryReplyThreadPreview({ allowReply = true, replies, onOpenThr
           {visibleReplies.map((reply) => (
             <View key={reply.id} style={styles.replyRow}>
               <View style={styles.node} />
-              <Text style={styles.replyText} numberOfLines={2}>- {reply.body} - {reply.authorName}</Text>
+              {reply.body ? <Text style={styles.replyText} numberOfLines={2}>- {reply.body} - {reply.authorName}</Text> : null}
+              {reply.voice ? (
+                <VoiceMemoryCard
+                  voice={reply.voice}
+                  postId={`reply-preview:${reply.id}`}
+                  authorName={reply.authorName}
+                  themeColors={colors}
+                  variant="embedded"
+                  label={`${reply.authorName}'s voice`}
+                  preview
+                />
+              ) : null}
             </View>
           ))}
           {hiddenCount > 0 ? (
@@ -54,7 +68,7 @@ export function MemoryReplyThreadPreview({ allowReply = true, replies, onOpenThr
 
       {allowReply && onOpenThread ? (
         <Pressable onPress={onOpenThread} style={styles.replyAction} accessibilityRole="button" accessibilityLabel="Reply to memory">
-          <Ionicons name="chatbubble-ellipses-outline" size={13} color={colors.accent} />
+          <Ionicons name="chatbubble-ellipses-outline" size={13} color={colors.white} />
           <Text style={styles.replyActionText}>{replies.length > 0 ? 'Reply' : 'Add a reply'}</Text>
         </Pressable>
       ) : null}
@@ -105,7 +119,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
   moreText: {
     fontFamily: fonts.bodyBold,
     fontSize: 11,
-    color: colors.accent,
+    color: colors.white,
     marginTop: 1,
   },
   replyAction: {
@@ -119,6 +133,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
   replyActionText: {
     fontFamily: fonts.bodyBold,
     fontSize: 12,
-    color: colors.accent,
+    color: colors.inkSoft,
   },
 });

@@ -16,6 +16,28 @@ export function showGalleryPaywall(onUpgrade: () => void) {
   );
 }
 
+export function showMediaMemoryPaywall(onUpgrade: () => void) {
+  Alert.alert(
+    'Premium feature',
+    'Regular media memories are part of Premium. You can still make Memory Cards for free, or unlock Premium to add clean photo/video media cards.',
+    [
+      { text: 'Not now', style: 'cancel' },
+      { text: 'Unlock Premium', onPress: onUpgrade },
+    ],
+  );
+}
+
+export function showGiftNotePaywall(onUpgrade: () => void) {
+  Alert.alert(
+    'Premium feature',
+    'Gift notes are part of Premium. Unlock Premium to lock surprise notes that become memories later.',
+    [
+      { text: 'Not now', style: 'cancel' },
+      { text: 'Unlock Premium', onPress: onUpgrade },
+    ],
+  );
+}
+
 export function showAiCaptionPaywall(onUpgrade: () => void) {
   Alert.alert(
     'Premium feature',
@@ -38,10 +60,10 @@ export function showCalendarPaywall(onUpgrade: () => void) {
   );
 }
 
-export function showShakeDevelopPaywall(onUpgrade: () => void) {
+export function showPromptPaywall(onUpgrade: () => void) {
   Alert.alert(
     'Premium feature',
-    'Shake-to-develop is a Premium memory-card trick. Unlock Premium to shake fresh photos and help them come to life faster.',
+    'Sending memory prompts is part of Premium. Unlock Premium to ask friends for songs, photo memories, voice memories, and notes.',
     [
       { text: 'Not now', style: 'cancel' },
       { text: 'Unlock Premium', onPress: onUpgrade },
@@ -49,10 +71,21 @@ export function showShakeDevelopPaywall(onUpgrade: () => void) {
   );
 }
 
-export function showLivePolaroidPaywall(onUpgrade: () => void) {
+export function showVoiceMemoryPaywall(onUpgrade: () => void) {
   Alert.alert(
     'Premium feature',
-    'Live Memory Cards are part of Premium. Unlock Premium to hold the shutter and save a 5-second memory with sound.',
+    'Voice memories are part of Premium. Unlock Premium to record short audio memories and answer voice prompts.',
+    [
+      { text: 'Not now', style: 'cancel' },
+      { text: 'Unlock Premium', onPress: onUpgrade },
+    ],
+  );
+}
+
+export function showShakeDevelopPaywall(onUpgrade: () => void) {
+  Alert.alert(
+    'Premium feature',
+    'Shake-to-develop is a Premium memory-card trick. Unlock Premium to shake fresh photos and help them come to life faster.',
     [
       { text: 'Not now', style: 'cancel' },
       { text: 'Unlock Premium', onPress: onUpgrade },

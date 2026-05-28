@@ -25,8 +25,8 @@ export default function OnboardingAiCaptionsScreen() {
 
   return (
     <OnboardingFrame
-      step={7}
-      totalSteps={12}
+      step={8}
+      totalSteps={13}
       eyebrow="AI captions"
       title="When the photo says it all, AI can help with the words."
       subtitle="Add a photo, pick a tone, and get caption ideas that still feel like you."
@@ -148,8 +148,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingVertical: 7,
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: colors.accent + '66',
-      backgroundColor: colors.accent + '12',
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
     },
     aiButtonText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent },
     toneRow: { flexDirection: 'row', gap: spacing.xs, paddingVertical: 2 },
@@ -161,8 +161,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderColor: colors.line,
       backgroundColor: colors.paper,
     },
-    toneChipActive: { borderColor: colors.accent, backgroundColor: colors.accent + '14' },
-    toneChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    toneChipActive: { borderColor: colors.accent, backgroundColor: colors.paper },
+    toneChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.ink },
     toneChipTextActive: { fontFamily: fonts.bodyBold, color: colors.accent },
     textInput: {
       minHeight: 74,
@@ -183,6 +183,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
-    captionSuggestionActive: { borderColor: colors.accent, backgroundColor: colors.accent + '10' },
+    captionSuggestionActive: { borderColor: colors.accent, backgroundColor: colors.paper },
     captionSuggestionText: { fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 19, color: colors.ink },
   });

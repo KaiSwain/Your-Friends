@@ -9,7 +9,7 @@ import {
   loadPolaroidShakeBoost,
   subscribePolaroidShakeBoost,
 } from '../lib/polaroidShakeBoost';
-import { notifyMemoryDevelopedNow } from '../lib/memoryDevelopNotifications';
+import { getCachedMemoryDeveloped, loadMemoryDeveloped, markMemoryDeveloped, notifyMemoryDevelopedNow } from '../lib/memoryDevelopNotifications';
 
 const CURE_REFRESH_MS = 250;
 const SHAKE_SAMPLE_MS = 100;
@@ -28,6 +28,7 @@ interface UseMemoryDevelopingOptions {
   imageLoadEnabled?: boolean;
   imageUri?: string | null;
   isPremium: boolean;
+  onDeveloped?: () => void;
   postId: string;
   preview?: boolean;
 }
@@ -38,17 +39,20 @@ export function useMemoryDeveloping({
   imageLoadEnabled = true,
   imageUri,
   isPremium,
+  onDeveloped,
   postId,
   preview = false,
 }: UseMemoryDevelopingOptions) {
   const [now, setNow] = useState(Date.now());
   const [shakeBoostMs, setShakeBoostMs] = useState(() => getCachedPolaroidShakeBoost(postId));
+  const [forceDeveloped, setForceDeveloped] = useState(() => getCachedMemoryDeveloped(postId));
   const [shakeFeedback, setShakeFeedback] = useState<ShakeFeedbackState>('idle');
   const lastShakeMagnitudeRef = useRef(1);
+  const wasDevelopingRef = useRef(false);
   const shakeFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shakeAnim = useRef(new Animated.Value(0)).current;
 
-  const cureProgress = preview ? 1 : getCureProgress(createdAt, now + shakeBoostMs);
+  const cureProgress = preview || forceDeveloped ? 1 : getCureProgress(createdAt, now + shakeBoostMs);
   const cure = getCureStyles(cureProgress);
 
   useEffect(() => {
@@ -58,9 +62,20 @@ export function useMemoryDeveloping({
   }, [cure.developing, preview]);
 
   useEffect(() => {
+    if (preview) return;
+    if (wasDevelopingRef.current && !cure.developing) {
+      setForceDeveloped(true);
+      markMemoryDeveloped(postId).catch(() => undefined);
+      onDeveloped?.();
+    }
+    wasDevelopingRef.current = cure.developing;
+  }, [cure.developing, onDeveloped, postId, preview]);
+
+  useEffect(() => {
     let active = true;
     const cachedBoostMs = getCachedPolaroidShakeBoost(postId);
     setShakeBoostMs(cachedBoostMs);
+    setForceDeveloped(getCachedMemoryDeveloped(postId));
     setShakeFeedback('idle');
     lastShakeMagnitudeRef.current = 1;
     shakeAnim.setValue(0);
@@ -75,6 +90,11 @@ export function useMemoryDeveloping({
       if (!active) return;
       setShakeBoostMs(boostMs);
       setNow(Date.now());
+    }).catch(() => undefined);
+    loadMemoryDeveloped(postId).then((developed) => {
+      if (!active) return;
+      setForceDeveloped(developed);
+      if (developed) setNow(Date.now());
     }).catch(() => undefined);
 
     return () => {

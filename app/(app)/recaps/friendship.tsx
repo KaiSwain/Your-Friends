@@ -108,11 +108,11 @@ export default function FriendshipRecapScreen() {
 
       <View style={styles.periodRow}>
         <Pressable onPress={() => shiftCursor(-1)} style={styles.periodButton} accessibilityRole="button" accessibilityLabel="Previous recap period">
-          <Ionicons name="chevron-back" size={18} color={colors.inkSoft} />
+          <Ionicons name="chevron-back" size={18} color={colors.ink} />
         </Pressable>
         <Text style={styles.periodLabel}>{periodLabel}</Text>
         <Pressable onPress={() => shiftCursor(1)} style={styles.periodButton} accessibilityRole="button" accessibilityLabel="Next recap period">
-          <Ionicons name="chevron-forward" size={18} color={colors.inkSoft} />
+          <Ionicons name="chevron-forward" size={18} color={colors.ink} />
         </Pressable>
       </View>
 
@@ -135,7 +135,7 @@ export default function FriendshipRecapScreen() {
         </View>
       ) : (
         <View style={styles.emptyState}>
-          <Ionicons name="sparkles-outline" size={34} color={colors.inkMuted} />
+          <Ionicons name="sparkles-outline" size={34} color={colors.ink} />
           <Text style={styles.emptyTitle}>Nothing here yet</Text>
           <Text style={styles.emptyText}>Add a memory with {recapFriend.displayName} and this recap will start filling itself in.</Text>
         </View>
@@ -149,9 +149,9 @@ export default function FriendshipRecapScreen() {
               <Text style={styles.groupLabel}>{group.label}</Text>
               {group.posts.slice(0, 3).map((post) => (
                 <View key={post.id} style={styles.timelineRow}>
-                  <Ionicons name={post.postType === 'song' ? 'musical-notes-outline' : post.postType === 'note' ? 'document-text-outline' : 'image-outline'} size={16} color={colors.accent} />
+                  <Ionicons name={post.postType === 'song' ? 'musical-notes-outline' : post.postType === 'voice' ? 'mic-outline' : post.postType === 'note' ? 'document-text-outline' : 'image-outline'} size={16} color={colors.accent} />
                   <Text style={styles.timelineText} numberOfLines={2}>
-                    {post.body.trim() || (post.postType === 'song' ? post.song?.title ?? 'Song memory' : 'Photo memory')}
+                    {post.body.trim() || (post.postType === 'song' ? post.song?.title ?? 'Song memory' : post.postType === 'voice' ? 'Voice memory' : 'Photo memory')}
                   </Text>
                 </View>
               ))}
@@ -192,8 +192,8 @@ function parseDateParam(value: string | undefined) {
 
 const makeStyles = (colors: any, fonts: any) =>
   StyleSheet.create({
-    backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     hero: { gap: spacing.xs },
     eyebrow: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent, textTransform: 'uppercase', letterSpacing: 1 },
     title: { fontFamily: fonts.heading, fontSize: 34, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 34) },

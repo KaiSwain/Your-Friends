@@ -1,28 +1,33 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
+import { TextOrVoiceComposer } from '../../../src/components/TextOrVoiceComposer';
 import { useAuth } from '../../../src/features/auth/AuthContext';
+import { usePremium } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
-import { backOnce, replaceOnce } from '../../../src/lib/navigationGuard';
+import { backOnce, pushOnce, replaceOnce } from '../../../src/lib/navigationGuard';
+import { showPromptPaywall } from '../../../src/lib/premiumGates';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import { radius, spacing } from '../../../src/theme/tokens';
-import type { MemoryPromptType, PeopleListItem } from '../../../src/types/domain';
+import type { MemoryPromptType, PeopleListItem, VoiceAttachment } from '../../../src/types/domain';
 
-const PROMPT_PRESETS: { type: MemoryPromptType; label: string; text: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { type: 'song', label: 'Song', text: 'What song reminds you of us?', icon: 'musical-notes-outline' },
-  { type: 'text', label: 'Question', text: 'What memory should we never forget?', icon: 'chatbubble-ellipses-outline' },
-  { type: 'photo_reference', label: 'Photo memory', text: 'Pick a photo memory that reminds you of us.', icon: 'images-outline' },
+const ANSWER_TYPE_OPTIONS: { type: MemoryPromptType; label: string; defaultPrompt: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { type: 'song', label: 'Song', defaultPrompt: 'What song reminds you of us?', icon: 'musical-notes-outline' },
+  { type: 'text', label: 'Note', defaultPrompt: 'What memory should we never forget?', icon: 'chatbubble-ellipses-outline' },
+  { type: 'photo', label: 'Photo', defaultPrompt: 'Send me a photo that feels like us.', icon: 'camera-outline' },
 ];
+const DEFAULT_PROMPT_TEXTS = ANSWER_TYPE_OPTIONS.map((option) => option.defaultPrompt);
 
 export default function MemoryPromptRequestScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ subjectId?: string | string[]; subjectType?: string | string[]; backTo?: string | string[] }>();
   const { currentUser } = useAuth();
+  const { isPremium } = usePremium();
   const { createMemoryPromptRequest, getPeopleListForUser } = useSocialGraph();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
@@ -39,7 +44,8 @@ export default function MemoryPromptRequestScreen() {
   const selectedTargets = useMemo(() => targets.filter((target) => selectedTargetKeys.includes(targetKey(target))), [selectedTargetKeys, targets]);
   const selectedRecipientIds = useMemo(() => Array.from(new Set(selectedTargets.map(getRecipientUserId).filter((id): id is string => Boolean(id)))), [selectedTargets]);
   const [promptType, setPromptType] = useState<MemoryPromptType>('song');
-  const [promptText, setPromptText] = useState(PROMPT_PRESETS[0].text);
+  const [promptText, setPromptText] = useState(ANSWER_TYPE_OPTIONS[0].defaultPrompt);
+  const [promptVoice, setPromptVoice] = useState<VoiceAttachment | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -59,9 +65,13 @@ export default function MemoryPromptRequestScreen() {
     backOnce(router);
   }
 
-  function selectPromptPreset(preset: (typeof PROMPT_PRESETS)[number]) {
-    setPromptType(preset.type);
-    setPromptText(preset.text);
+  function selectAnswerType(option: (typeof ANSWER_TYPE_OPTIONS)[number]) {
+    setPromptType(option.type);
+    setPromptText((currentText) => {
+      const trimmed = currentText.trim();
+      if (!trimmed || DEFAULT_PROMPT_TEXTS.includes(trimmed)) return option.defaultPrompt;
+      return currentText;
+    });
   }
 
   function toggleTarget(target: PeopleListItem) {
@@ -75,12 +85,16 @@ export default function MemoryPromptRequestScreen() {
 
   async function handleSend() {
     if (!currentUser) return;
+    if (!isPremium) {
+      showPromptPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
     if (selectedRecipientIds.length === 0) {
       setError('Choose at least one friend.');
       return;
     }
-    if (!promptText.trim()) {
-      setError('Write a prompt first.');
+    if (!promptText.trim() && !promptVoice) {
+      setError('Write or record a prompt first.');
       return;
     }
     setBusy(true);
@@ -90,7 +104,8 @@ export default function MemoryPromptRequestScreen() {
         createMemoryPromptRequest(currentUser.id, {
           recipientUserId,
           promptType,
-          promptText,
+          promptText: promptText.trim() || 'Voice prompt',
+          promptVoice,
         }),
       ));
       replaceOnce(router, backTo ? (backTo as any) : '/friends');
@@ -101,9 +116,15 @@ export default function MemoryPromptRequestScreen() {
   }
 
   return (
-    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={busy ? 'Sending...' : selectedRecipientIds.length > 1 ? `Send to ${selectedRecipientIds.length} friends` : 'Send prompt'} onPress={handleSend} disabled={busy || selectedRecipientIds.length === 0} />}>
+    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={!isPremium ? 'Unlock Premium to send prompts' : busy ? 'Sending...' : selectedRecipientIds.length > 1 ? `Send to ${selectedRecipientIds.length} friends` : 'Send prompt'} onPress={handleSend} disabled={busy || (isPremium && selectedRecipientIds.length === 0)} />}>
       <Text style={styles.title}>Send a Memory Prompt</Text>
-      <Text style={styles.subtitle}>Ask friends to answer with a song, a note, or a photo memory from your shared wall.</Text>
+      <Text style={styles.subtitle}>Write any prompt, then choose how your friend should answer it.</Text>
+      {!isPremium ? (
+        <View style={styles.premiumNotice}>
+          <Ionicons name="lock-closed-outline" size={16} color={colors.accent} />
+          <Text style={styles.premiumNoticeText}>Sending prompts is a Premium feature. You can still answer prompts friends send you.</Text>
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Ask {selectedRecipientIds.length > 0 ? `(${selectedRecipientIds.length} selected)` : ''}</Text>
@@ -128,14 +149,14 @@ export default function MemoryPromptRequestScreen() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Prompt type</Text>
+        <Text style={styles.sectionLabel}>Answer format</Text>
         <View style={styles.typeGrid}>
-          {PROMPT_PRESETS.map((preset) => {
-            const active = promptType === preset.type;
+          {ANSWER_TYPE_OPTIONS.map((option) => {
+            const active = promptType === option.type;
             return (
-              <Pressable key={preset.type} onPress={() => selectPromptPreset(preset)} style={[styles.typeCard, active && styles.typeCardActive]} accessibilityRole="button" accessibilityState={{ selected: active }}>
-                <Ionicons name={preset.icon} size={20} color={active ? colors.white : colors.accent} />
-                <Text style={[styles.typeLabel, active && styles.typeLabelActive]}>{preset.label}</Text>
+              <Pressable key={option.type} onPress={() => selectAnswerType(option)} style={[styles.typeCard, active && styles.typeCardActive]} accessibilityRole="button" accessibilityState={{ selected: active }}>
+                <Ionicons name={option.icon} size={20} color={active ? colors.white : colors.accent} />
+                <Text style={[styles.typeLabel, active && styles.typeLabelActive]}>{option.label}</Text>
               </Pressable>
             );
           })}
@@ -144,13 +165,19 @@ export default function MemoryPromptRequestScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Prompt</Text>
-        <TextInput
-          multiline
-          value={promptText}
-          onChangeText={setPromptText}
-          placeholder="Write the question you want them to answer..."
-          placeholderTextColor={colors.inkMuted}
-          style={styles.promptInput}
+        <TextOrVoiceComposer
+          text={promptText}
+          onTextChange={setPromptText}
+          voice={promptVoice}
+          onVoiceChange={(voice) => {
+            setPromptVoice(voice);
+            setError('');
+          }}
+          previewAuthorName={currentUser.displayName}
+          placeholder="Write whatever you want them to answer..."
+          voiceLabel="Record prompt"
+          voiceHelperText="Say the prompt out loud. Friends will hear it before answering."
+          textInputStyle={styles.promptInput}
         />
       </View>
 
@@ -172,15 +199,17 @@ function getInitials(name: string) {
 }
 
 const makeStyles = (colors: ReturnType<typeof useTheme>['colors'], fonts: ReturnType<typeof useTheme>['fonts']) => StyleSheet.create({
-  backButton: { paddingVertical: spacing.xs },
-  backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+  backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+  backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
   title: { fontFamily: fonts.heading, fontSize: 32, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 32) },
   subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
+  premiumNotice: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.accent, backgroundColor: colors.paper, padding: spacing.md },
+  premiumNoticeText: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 18, color: colors.ink },
   section: { gap: spacing.sm },
   sectionLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.inkSoft, textTransform: 'uppercase', letterSpacing: 0.8 },
   targetScroll: { gap: spacing.sm, paddingRight: spacing.md },
   targetChip: { width: 104, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: spacing.sm, alignItems: 'center', gap: spacing.xs },
-  targetChipActive: { borderColor: colors.accent, backgroundColor: colors.accent + '14' },
+  targetChipActive: { borderColor: colors.accent, backgroundColor: colors.paper },
   targetAvatar: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   targetAvatarImage: { width: '100%', height: '100%' },
   targetCheck: { position: 'absolute', right: 0, bottom: 0, width: 18, height: 18, borderRadius: 9, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.paper },

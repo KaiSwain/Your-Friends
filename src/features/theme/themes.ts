@@ -1,3 +1,5 @@
+import { createCustomThemePair, DEFAULT_CUSTOM_THEME_SETTINGS } from './customTheme';
+
 export interface ColorTokens {
   canvas: string;
   canvasAlt: string;
@@ -9,6 +11,8 @@ export interface ColorTokens {
   line: string;
   accent: string;
   accentSoft: string;
+  accentAlt?: string;
+  accentTertiary?: string;
   terracotta: string;
   apricot: string;
   gold: string;
@@ -25,6 +29,8 @@ export type ThemeMode = 'light' | 'dark' | 'system';
 
 export type ThemeName =
   | 'default'
+  | 'custom'
+  | 'yourFriends'
   | 'neon'
   | 'synthwave'
   | 'matcha'
@@ -47,6 +53,26 @@ export interface ThemePair {
   swatch: string; // representative color for the theme picker
 }
 
+export const themeComplementColors: Record<ThemeName, { accentAlt: string; accentTertiary: string }> = {
+  default: { accentAlt: '#2EC4B6', accentTertiary: '#FFB86B' },
+  custom: { accentAlt: '#A992EE', accentTertiary: '#D0A56E' },
+  yourFriends: { accentAlt: '#9A83F8', accentTertiary: '#D8CCFF' },
+  neon: { accentAlt: '#FF3DF2', accentTertiary: '#FFE66D' },
+  synthwave: { accentAlt: '#00E5FF', accentTertiary: '#FFB000' },
+  matcha: { accentAlt: '#E9A66A', accentTertiary: '#D8C95F' },
+  bubblegum: { accentAlt: '#4FD6B0', accentTertiary: '#B28CFF' },
+  lava: { accentAlt: '#FFC857', accentTertiary: '#7BDFF2' },
+  arctic: { accentAlt: '#B28CFF', accentTertiary: '#FFB4A2' },
+  vintage: { accentAlt: '#6F9E8C', accentTertiary: '#B58ACB' },
+  grape: { accentAlt: '#70D6C7', accentTertiary: '#FF9F68' },
+  cocoa: { accentAlt: '#7DAF8B', accentTertiary: '#C58ED8' },
+  mint: { accentAlt: '#F2B56B', accentTertiary: '#9FA8FF' },
+  noir: { accentAlt: '#B23A48', accentTertiary: '#6C8EAD' },
+  sunset: { accentAlt: '#7BDFF2', accentTertiary: '#F6C85F' },
+  forest: { accentAlt: '#D6A85F', accentTertiary: '#79B7C7' },
+  peach: { accentAlt: '#7BC6A4', accentTertiary: '#B894E6' },
+};
+
 // Shared avatar / decorative colors re-used across all themes.
 const shared = {
   terracotta: '#CC8B74',
@@ -61,32 +87,69 @@ const shared = {
   error: '#FF453A',
 };
 
+// ── Your Friends (house palette: meaning-based color system) ─────────
+const yourFriendsDark: ColorTokens = {
+  canvas: '#100D18',
+  canvasAlt: '#1A1524',
+  paper: '#241E30',
+  paperMuted: '#30283E',
+  ink: '#FFF7EC',
+  inkSoft: '#D4C8DC',
+  inkMuted: '#9F93AC',
+  line: '#3A3148',
+  accent: '#8E72F2',
+  accentSoft: '#7359D6',
+  accentAlt: '#B7A6FF',
+  accentTertiary: '#D9C7A6',
+  ...shared,
+};
+
+const yourFriendsLight: ColorTokens = {
+  canvas: '#FFF7ED',
+  canvasAlt: '#F5E8D8',
+  paper: '#FFFFFB',
+  paperMuted: '#F7EEE2',
+  ink: '#251C2D',
+  inkSoft: '#655B70',
+  inkMuted: '#A2949F',
+  line: '#E8DCCB',
+  accent: '#7359D6',
+  accentSoft: '#8E72F2',
+  accentAlt: '#A992EE',
+  accentTertiary: '#D0A56E',
+  ...shared,
+};
+
 // ── Default (current purple accent) ─────────────────────────────────
 const defaultDark: ColorTokens = {
-  canvas: '#0A0A0A',
-  canvasAlt: '#111111',
-  paper: '#1A1A1A',
-  paperMuted: '#222222',
-  ink: '#F5F5F5',
-  inkSoft: '#A0A0A0',
-  inkMuted: '#666666',
-  line: '#2A2A2A',
-  accent: '#7C5CFC',
-  accentSoft: '#6B4FD8',
+  canvas: '#0D0D12',
+  canvasAlt: '#15151C',
+  paper: '#20202A',
+  paperMuted: '#2A2A35',
+  ink: '#F7F3EA',
+  inkSoft: '#CBC4D0',
+  inkMuted: '#928B9A',
+  line: '#34323D',
+  accent: '#8370D8',
+  accentSoft: '#6E5BC2',
+  accentAlt: '#AFA0EA',
+  accentTertiary: '#BDA67D',
   ...shared,
 };
 
 const defaultLight: ColorTokens = {
-  canvas: '#F5F3EF',
-  canvasAlt: '#EAE7E1',
+  canvas: '#FAF7F1',
+  canvasAlt: '#EFE9DF',
   paper: '#FFFFFF',
-  paperMuted: '#F0EDE8',
-  ink: '#1A1A1A',
-  inkSoft: '#5A5A5A',
-  inkMuted: '#999999',
-  line: '#E0DDD7',
-  accent: '#7C5CFC',
-  accentSoft: '#6B4FD8',
+  paperMuted: '#F2EDE5',
+  ink: '#24222A',
+  inkSoft: '#66616E',
+  inkMuted: '#A09AA7',
+  line: '#E3DDD3',
+  accent: '#7561D8',
+  accentSoft: '#8A78E0',
+  accentAlt: '#A79BE5',
+  accentTertiary: '#C4A36F',
   ...shared,
 };
 
@@ -180,30 +243,34 @@ const matchaLight: ColorTokens = {
 
 // ── Bubblegum (hot pink + mint) ─────────────────────────────────────
 const bubblegumDark: ColorTokens = {
-  canvas: '#120A12',
-  canvasAlt: '#1A101A',
-  paper: '#241628',
-  paperMuted: '#2E1C34',
-  ink: '#FFECF5',
-  inkSoft: '#E098C0',
-  inkMuted: '#A0607C',
-  line: '#3A2238',
-  accent: '#FF6FB7',
-  accentSoft: '#E85AA0',
+  canvas: '#171018',
+  canvasAlt: '#221723',
+  paper: '#2D2031',
+  paperMuted: '#39283D',
+  ink: '#FFF0F7',
+  inkSoft: '#E3C1D2',
+  inkMuted: '#A8899B',
+  line: '#443448',
+  accent: '#E879B1',
+  accentSoft: '#CC629B',
+  accentAlt: '#F0A4C8',
+  accentTertiary: '#B9A7E8',
   ...shared,
 };
 
 const bubblegumLight: ColorTokens = {
-  canvas: '#FFF2F8',
-  canvasAlt: '#FFE4EE',
-  paper: '#FFFFFF',
-  paperMuted: '#FFECF2',
-  ink: '#2A0E20',
-  inkSoft: '#8A3868',
-  inkMuted: '#C88AA8',
-  line: '#FACDDE',
-  accent: '#FF4D9E',
-  accentSoft: '#E6388C',
+  canvas: '#FFF4F8',
+  canvasAlt: '#FCE5EE',
+  paper: '#FFFFFC',
+  paperMuted: '#FBEAF1',
+  ink: '#2C1B27',
+  inkSoft: '#765A69',
+  inkMuted: '#B99AA9',
+  line: '#EBD6E0',
+  accent: '#D86B9F',
+  accentSoft: '#E58AB6',
+  accentAlt: '#C897E9',
+  accentTertiary: '#F0B7C9',
   ...shared,
 };
 
@@ -267,30 +334,34 @@ const arcticLight: ColorTokens = {
 
 // ── Vintage (sepia film tones) ──────────────────────────────────────
 const vintageDark: ColorTokens = {
-  canvas: '#120C08',
-  canvasAlt: '#1A140E',
-  paper: '#241C14',
-  paperMuted: '#2E241A',
-  ink: '#F0E4CC',
-  inkSoft: '#B89C78',
-  inkMuted: '#7E6850',
-  line: '#33281A',
-  accent: '#C89455',
-  accentSoft: '#B0803E',
+  canvas: '#15100A',
+  canvasAlt: '#21190F',
+  paper: '#2B2116',
+  paperMuted: '#362A1D',
+  ink: '#F4E8CF',
+  inkSoft: '#C9AD83',
+  inkMuted: '#8E7658',
+  line: '#443421',
+  accent: '#C18A46',
+  accentSoft: '#A9783B',
+  accentAlt: '#D4AA6F',
+  accentTertiary: '#7FA08A',
   ...shared,
 };
 
 const vintageLight: ColorTokens = {
-  canvas: '#F6EED8',
-  canvasAlt: '#EDE2C4',
-  paper: '#FBF5E4',
-  paperMuted: '#F2E8D0',
-  ink: '#2E2414',
-  inkSoft: '#78603E',
-  inkMuted: '#B09870',
-  line: '#E0D2AE',
-  accent: '#9A6D2E',
-  accentSoft: '#865C20',
+  canvas: '#F8EFD8',
+  canvasAlt: '#EBDDBD',
+  paper: '#FFF8E8',
+  paperMuted: '#F2E5C8',
+  ink: '#302514',
+  inkSoft: '#765E3B',
+  inkMuted: '#AA936B',
+  line: '#DECDA8',
+  accent: '#8F642B',
+  accentSoft: '#B5813D',
+  accentAlt: '#6E8B76',
+  accentTertiary: '#C49A5B',
   ...shared,
 };
 
@@ -384,29 +455,33 @@ const mintLight: ColorTokens = {
 // ── Noir (monochrome film, high contrast) ───────────────────────────
 const noirDark: ColorTokens = {
   canvas: '#050505',
-  canvasAlt: '#0C0C0C',
-  paper: '#141414',
-  paperMuted: '#1C1C1C',
-  ink: '#F8F8F8',
-  inkSoft: '#A8A8A8',
-  inkMuted: '#6A6A6A',
-  line: '#242424',
-  accent: '#E8E8E8',
-  accentSoft: '#BFBFBF',
+  canvasAlt: '#0F0F0F',
+  paper: '#191919',
+  paperMuted: '#232323',
+  ink: '#FAFAF7',
+  inkSoft: '#BDBDB8',
+  inkMuted: '#7C7C78',
+  line: '#303030',
+  accent: '#EFECE5',
+  accentSoft: '#C7C3B8',
+  accentAlt: '#FFFFFF',
+  accentTertiary: '#9A9386',
   ...shared,
 };
 
 const noirLight: ColorTokens = {
-  canvas: '#FAFAFA',
-  canvasAlt: '#F0F0F0',
+  canvas: '#F8F7F3',
+  canvasAlt: '#EBE9E3',
   paper: '#FFFFFF',
-  paperMuted: '#F5F5F5',
-  ink: '#0A0A0A',
-  inkSoft: '#3A3A3A',
-  inkMuted: '#7A7A7A',
-  line: '#D8D8D8',
-  accent: '#1A1A1A',
-  accentSoft: '#3A3A3A',
+  paperMuted: '#F0EEE8',
+  ink: '#111111',
+  inkSoft: '#45433F',
+  inkMuted: '#85817A',
+  line: '#DCD8CF',
+  accent: '#161616',
+  accentSoft: '#3D3A35',
+  accentAlt: '#777168',
+  accentTertiary: '#B8B0A0',
   ...shared,
 };
 
@@ -498,7 +573,11 @@ const peachLight: ColorTokens = {
 };
 
 // ── Exported themes map ─────────────────────────────────────────────
+const customThemePair = createCustomThemePair(DEFAULT_CUSTOM_THEME_SETTINGS);
+
 export const themes: Record<ThemeName, ThemePair> = {
+  yourFriends: { light: yourFriendsLight, dark: yourFriendsDark, label: 'Your Friends', swatch: '#7C5CFC' },
+  custom: { light: customThemePair.light, dark: customThemePair.dark, label: 'Custom', swatch: customThemePair.light.accent },
   default: { light: defaultLight, dark: defaultDark, label: 'Default', swatch: '#7C5CFC' },
   neon: { light: neonLight, dark: neonDark, label: 'Neon', swatch: '#00F0FF' },
   synthwave: { light: synthwaveLight, dark: synthwaveDark, label: 'Synthwave', swatch: '#FF2A9E' },
@@ -517,3 +596,7 @@ export const themes: Record<ThemeName, ThemePair> = {
 };
 
 export const themeNames = Object.keys(themes) as ThemeName[];
+
+export const featuredThemeNames = ['yourFriends', 'custom', 'default', 'vintage', 'bubblegum', 'noir'] as const satisfies readonly ThemeName[];
+const featuredThemeNameSet = new Set<ThemeName>(featuredThemeNames);
+export const legacyThemeNames = themeNames.filter((name) => !featuredThemeNameSet.has(name));

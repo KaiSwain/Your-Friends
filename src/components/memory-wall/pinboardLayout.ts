@@ -30,6 +30,9 @@ const PINBOARD_COLUMN_GAP = spacing.xl;
 const PINBOARD_ROW_GAP = 54;
 const POLAROID_REAL_WIDTH = 260;
 const ATTACHED_SONG_REAL_WIDTH = 360;
+const ATTACHED_VOICE_REAL_HEIGHT = 48;
+const PROMPT_TEXT_REAL_HEIGHT = 56;
+const PROMPT_VOICE_REAL_HEIGHT = 34;
 
 const PIN_COLORS = ['#D66A5C', '#E6B450', '#8DAF8F', '#8AA4C4'];
 
@@ -86,10 +89,13 @@ export function getPinColor(postId: string) {
 }
 
 export function getRealCardHeight(post: WallPost) {
-  if (post.song && post.postType !== 'song') return 780;
-  if (post.postType === 'song') return 530;
-  if (post.postType === 'note') return 220;
-  return 440;
+  const voiceExtra = post.voice && post.postType !== 'voice' ? ATTACHED_VOICE_REAL_HEIGHT : 0;
+  const promptExtra = (post.promptText ? PROMPT_TEXT_REAL_HEIGHT : 0) + (post.promptVoice ? PROMPT_VOICE_REAL_HEIGHT : 0);
+  if (post.song && post.postType !== 'song') return 780 + voiceExtra + promptExtra;
+  if (post.postType === 'song') return (promptExtra > 0 ? 255 : 530) + voiceExtra + promptExtra;
+  if (post.postType === 'voice') return 360 + promptExtra;
+  if (post.postType === 'note') return 220 + voiceExtra + promptExtra;
+  return 440 + voiceExtra + promptExtra;
 }
 
 export function getRealCardWidth(post: WallPost) {
@@ -108,6 +114,7 @@ export function hashString(value: string) {
 function getPinboardScale(post: WallPost) {
   if (post.song && post.postType !== 'song') return 0.54;
   if (post.postType === 'song') return 0.6;
+  if (post.postType === 'voice') return 0.66;
   if (post.postType === 'note') return 0.78;
   return 0.64;
 }

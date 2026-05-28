@@ -35,6 +35,9 @@ create index if not exists idx_premium_qr_grants_grantor
 create index if not exists idx_premium_qr_grants_recipient
   on public.premium_qr_grants(recipient_user_id);
 
+create index if not exists idx_premium_qr_grants_grantor_active
+  on public.premium_qr_grants(grantor_user_id, recipient_premium_until);
+
 create or replace function public.apply_premium_qr_grant(recipient_id uuid, grantor_code text)
 returns table (
   grantor_user_id uuid,
@@ -55,6 +58,7 @@ declare
   current_recipient_premium_until timestamptz;
   current_recipient_paid_until timestamptz;
   current_recipient_free_until timestamptz;
+  active_grant_count integer;
 begin
   if auth.uid() is null or auth.uid() <> recipient_id then
     raise exception 'Premium QR grants can only be applied by the scanning user.';
@@ -87,6 +91,15 @@ begin
     raise exception 'This QR code belongs to someone without active Premium.';
   end if;
 
+  if not exists (
+    select 1
+    from public.friendships f
+    where f.user_low_id = least(matched_grantor_id, recipient_id)
+      and f.user_high_id = greatest(matched_grantor_id, recipient_id)
+  ) then
+    raise exception 'You need to be friends before this Premium QR can unlock free Premium.';
+  end if;
+
   select * into existing_grant
   from public.premium_qr_grants qr_grant
   where qr_grant.grantor_user_id = matched_grantor_id
@@ -108,6 +121,15 @@ begin
     granted := false;
     return next;
     return;
+  end if;
+
+  select count(*) into active_grant_count
+  from public.premium_qr_grants qr_grant
+  where qr_grant.grantor_user_id = matched_grantor_id
+    and qr_grant.recipient_premium_until > now();
+
+  if active_grant_count >= 3 then
+    raise exception 'This Premium friend already has 3 active free Premium grants. Try again after one expires.';
   end if;
 
   select p.premium_until, p.premium_paid_until, p.premium_free_until

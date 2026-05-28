@@ -50,7 +50,7 @@ export function buildFriendshipRecap({
       ? `You and ${friendName} made ${memoryCount} ${memoryCount === 1 ? 'memory' : 'memories'} in ${label}.`
       : `No memories with ${friendName} in ${label} yet.`,
     memoryCount,
-    photoCount: rangePosts.filter((post) => post.postType === 'polaroid').length,
+    photoCount: rangePosts.filter((post) => post.postType === 'polaroid' || post.postType === 'media').length,
     noteCount: rangePosts.filter((post) => post.postType === 'note').length,
     songCount: rangePosts.filter((post) => post.postType === 'song').length,
     featuredPost: rangePosts[0] ?? null,

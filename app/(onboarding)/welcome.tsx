@@ -8,7 +8,6 @@ import { FormField } from '../../src/components/FormField';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
 import { useTheme } from '../../src/features/theme/ThemeContext';
-import { getDefaultBirthdayIso } from '../../src/lib/birthday';
 import { pushOnce } from '../../src/lib/navigationGuard';
 
 export default function OnboardingWelcomeScreen() {
@@ -26,7 +25,7 @@ export default function OnboardingWelcomeScreen() {
   const [displayName, setDisplayName] = useState(
     isPlaceholderName ? '' : currentUser?.displayName ?? '',
   );
-  const [birthday, setBirthday] = useState(currentUser?.birthday ?? getDefaultBirthdayIso());
+  const [birthday, setBirthday] = useState<string | null>(currentUser?.birthday ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -34,6 +33,10 @@ export default function OnboardingWelcomeScreen() {
     const trimmed = displayName.trim();
     if (!trimmed) {
       setError('Please add a display name so your friends can find you.');
+      return;
+    }
+    if (!birthday) {
+      setError('Please choose your birthday before continuing.');
       return;
     }
     setBusy(true);
@@ -54,7 +57,7 @@ export default function OnboardingWelcomeScreen() {
   return (
     <OnboardingFrame
       step={0}
-      totalSteps={12}
+      totalSteps={13}
       eyebrow="Welcome"
       title="What should your friends know first?"
       subtitle="Your name and birthday help friends find you and remember your day automatically."

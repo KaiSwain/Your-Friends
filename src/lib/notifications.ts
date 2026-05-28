@@ -61,25 +61,42 @@ export async function createNotifications(inputs: CreateNotificationInput[]): Pr
   for (const listener of notificationInsertListeners) {
     listener(notifications);
   }
-  for (const notification of notifications) {
-    const source = inputs.find(
-      (input) =>
-        input.recipientUserId === notification.recipientUserId
-        && input.actorUserId === notification.actorUserId
-        && input.type === notification.type
-        && input.message === notification.message,
-    );
-    if (source?.sendPush === false) continue;
-    void sendNotificationPush(notification.id);
+  const pushable = notifications.filter((notification) => {
+    const source = findSourceInput(inputs, notification);
+    return source?.sendPush !== false;
+  });
+  const byRecipient = new Map<string, Notification[]>();
+  for (const notification of pushable) {
+    byRecipient.set(notification.recipientUserId, [...(byRecipient.get(notification.recipientUserId) ?? []), notification]);
+  }
+  for (const recipientNotifications of byRecipient.values()) {
+    if (recipientNotifications.length > 1) {
+      void sendNotificationPush(recipientNotifications[0].id, {
+        title: 'New notifications',
+        body: `You have ${recipientNotifications.length} new notifications`,
+      });
+    } else if (recipientNotifications[0]) {
+      void sendNotificationPush(recipientNotifications[0].id);
+    }
   }
   return notifications;
 }
 
-async function sendNotificationPush(notificationId: string) {
+export async function sendNotificationPush(notificationId: string, override?: { title?: string; body?: string }) {
   const { error } = await supabase.functions.invoke('send-notification-push', {
-    body: { notificationId },
+    body: { notificationId, ...override },
   });
   if (error) console.warn('[notification] push send failed:', error.message);
+}
+
+function findSourceInput(inputs: CreateNotificationInput[], notification: Notification) {
+  return inputs.find(
+    (input) =>
+      input.recipientUserId === notification.recipientUserId
+      && input.actorUserId === notification.actorUserId
+      && input.type === notification.type
+      && input.message === notification.message,
+  );
 }
 
 function rowToNotification(row: any): Notification {

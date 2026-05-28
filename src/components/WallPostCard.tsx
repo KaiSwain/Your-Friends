@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, LayoutChangeEvent, Pressable, StyleSheet, Text, TextInput, View, type GestureResponderEvent } from 'react-native';
+import { Animated, Image as RNImage, LayoutChangeEvent, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
+import { BlurView } from 'expo-blur';
 
 import { retryPendingMemory } from '../features/memories/pendingMemorySync';
 import { usePremium } from '../features/premium/PremiumContext';
@@ -17,19 +18,22 @@ import { getWallPostMemoryDate, getWallPostMemoryDateValue } from '../lib/memory
 import { useFlipCard } from '../hooks/useFlipCard';
 import { useMemoryDeveloping } from '../hooks/useMemoryDeveloping';
 import { usePolaroidImageReady } from '../hooks/usePolaroidImageReady';
+import { CachedRemoteImage } from './CachedRemoteImage';
 import { LivePolaroidLayer } from './LivePolaroidLayer';
 import { MemoryPhotoEffects, MemoryPhotoGhost } from './memory-card';
 import { MemoryStyledText } from './MemoryStyledText';
 import { SongMemoryCard } from './SongMemoryCard';
+import { VoiceMemoryCard } from './VoiceMemoryCard';
 import { WallPost } from '../types/domain';
 import { protectTextFromFontClipping } from '../theme/fontProtection';
 import type { FontSet } from '../theme/typography';
-import { spacing } from '../theme/tokens';
+import { semanticColors, spacing } from '../theme/tokens';
 
 interface WallPostCardProps {
   authorName: string;
   post: WallPost;
   cardColor?: string | null;
+  developStartAt?: string | null;
   themeColors?: ColorTokens;
   imageLoadEnabled?: boolean;
   displayMode?: 'timeline' | 'grid';
@@ -41,18 +45,21 @@ interface WallPostCardProps {
   autoPlaySongPreviewKey?: string | number | null;
   referencedPost?: WallPost | null;
   referencedPostAuthorName?: string;
+  promptAuthorName?: string;
+  suppressAttachments?: boolean;
+  suppressAttachedVoice?: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
-  onReferencedPostPress?: (postId: string) => void;
   onFlip?: (showingBack: boolean) => void;
+  onDeveloped?: () => void;
   onImageReady?: (postId: string) => void;
   onSaveBackText?: (postId: string, text: string) => void;
 }
 
-export function WallPostCard({ authorName, post, cardColor, themeColors, imageLoadEnabled = true, displayMode = 'timeline', editing: editMode, preview, shareable, livePolaroidScope, livePolaroidForcePlayback, autoPlaySongPreviewKey, referencedPost, referencedPostAuthorName, onPress, onLongPress, onReferencedPostPress, onFlip, onImageReady, onSaveBackText }: WallPostCardProps) {
+export function WallPostCard({ authorName, post, cardColor, developStartAt, themeColors, imageLoadEnabled = true, displayMode = 'timeline', editing: editMode, preview, shareable, livePolaroidScope, livePolaroidForcePlayback, autoPlaySongPreviewKey, referencedPost, referencedPostAuthorName, promptAuthorName, suppressAttachments, suppressAttachedVoice, onPress, onLongPress, onFlip, onDeveloped, onImageReady, onSaveBackText }: WallPostCardProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { colors: appColors, fonts } = useTheme();
+  const { colors: appColors, fonts, resolvedMode } = useTheme();
   const { isPremium } = usePremium();
   const colors = themeColors ?? appColors;
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
@@ -83,9 +90,11 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
       textSize: post.textSize,
       textEffect: post.textEffect,
       textColor: post.textColor,
-      song: post.song ?? referencedPost.song,
+      song: post.song ?? null,
+      voice: post.voice ?? null,
     };
   }, [displayMode, post, referencedPost]);
+  const isRegularMedia = cardPost.postType === 'media';
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
   const [frameWidth, setFrameWidth] = useState(0);
   const [frontHeight, setFrontHeight] = useState(0);
@@ -116,11 +125,12 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
     onFlip,
   });
   const { cure, developingLabel, shakeFeedback, shakeRotateZ, shakeTranslateX } = useMemoryDeveloping({
-    createdAt: cardPost.createdAt,
-    disabled: showBack,
+    createdAt: developStartAt ?? cardPost.createdAt,
+    disabled: showBack || isRegularMedia,
     imageLoadEnabled,
     imageUri: cardPost.imageUri,
     isPremium,
+    onDeveloped,
     postId: post.id,
     preview,
   });
@@ -129,17 +139,17 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
   const tilt = useMemo(() => getStablePolaroidTilt(post.id), [post.id]);
 
   useEffect(() => {
-    if (!cardPost.imageUri || !imageLoadEnabled) {
+    if (!isRegularMedia || !cardPost.imageUri || !imageLoadEnabled) {
       setAspectRatio(null);
       return;
     }
 
-    Image.getSize(
+    RNImage.getSize(
       cardPost.imageUri,
       (w, h) => { if (h > 0) setAspectRatio(w / h); },
       () => setAspectRatio(null),
     );
-  }, [cardPost.imageUri, imageLoadEnabled]);
+  }, [cardPost.imageUri, imageLoadEnabled, isRegularMedia]);
 
   useEffect(() => {
     if (!cardPost.imageUri || !imageLoadEnabled || !imageState.imageReady) return;
@@ -158,9 +168,10 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
     ? `${String(date.getFullYear()).slice(-2)}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
     : null;
 
-  const imageHeight = aspectRatio && frameWidth > 0
-    ? frameWidth / aspectRatio
-    : 260;
+  const imageHeight = POLAROID_PHOTO_HEIGHT;
+  const mediaAspectHeight = aspectRatio && frameWidth > 0 ? frameWidth / aspectRatio : null;
+  const mediaFrameHeight = displayMode === 'grid' ? 180 : mediaAspectHeight;
+  const mediaFallbackHeight = displayMode === 'grid' ? 180 : 292;
 
   const bg = cardColor || cardPost.cardColor || POLAROID_FRAME;
   // On the default ivory frame, always use dark ink (readable in any theme mode).
@@ -169,23 +180,32 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
   const ct = frameDefault ? FRAME_INK : contrastText(cardColor);
   const ctSoft = frameDefault ? FRAME_INK_SOFT : contrastTextSoft(cardColor);
   const ctAccent = frameDefault ? colors.accent : contrastAccent(cardColor, colors.accent);
+  const editBorderColor = getMemoryEditBorderColor(cardPost, colors);
 
   const standaloneSong = cardPost.postType === 'song' ? cardPost.song : null;
-  const attachedSong = cardPost.postType !== 'song' ? cardPost.song : null;
+  const standaloneVoice = cardPost.postType === 'voice' ? cardPost.voice : null;
+  const attachedSong = !suppressAttachments && cardPost.postType !== 'song' ? cardPost.song : null;
+  const attachedVoice = !suppressAttachments && !suppressAttachedVoice && cardPost.postType !== 'voice' ? cardPost.voice : null;
   const movie = cardPost.postType === 'movie' ? cardPost.movie : null;
   const showInlineShareButton = !!shareable && !attachedSong;
   const standaloneSongKey = standaloneSong ? `${standaloneSong.provider}:${standaloneSong.providerTrackId}` : null;
   const attachedSongKey = attachedSong ? `${attachedSong.provider}:${attachedSong.providerTrackId}` : null;
-  const isTextOnly = !standaloneSong && !cardPost.imageUri;
+  const compactSong = Boolean(cardPost.memoryPromptRequestId || cardPost.promptText || cardPost.promptVoice || cardPost.promptType);
+  const compactVoice = Boolean(cardPost.memoryPromptRequestId || cardPost.promptText || cardPost.promptVoice || cardPost.promptType);
+  const isTextOnly = !standaloneSong && !standaloneVoice && !cardPost.imageUri && !cardPost.videoUri;
+  const thumbnailUri = cardPost.imageThumbUri && cardPost.imageThumbUri !== cardPost.imageUri ? cardPost.imageThumbUri : null;
+  const showThumbnailOnly = Boolean(thumbnailUri && !imageLoadEnabled);
+  const displayImageUri = showThumbnailOnly ? thumbnailUri : cardPost.imageUri;
+  const showAnyImage = imageState.showImage || showThumbnailOnly;
   const textOnlyTypography = useMemo(
     () => resolveWallPostTextStyle(fonts, cardPost.textFont, cardPost.textSize),
     [cardPost.textFont, cardPost.textSize, fonts],
   );
   const textOnlyColor = useMemo(() => resolveWallPostTextColor(cardPost.textColor, colors), [cardPost.textColor, colors]);
-  const showDevelopingStatus = imageLoadEnabled && cure.developing && (editMode || !showBack);
-  const isPolaroidGhost = !!cardPost.imageUri && !imageState.imageReady;
+  const showDevelopingStatus = !isRegularMedia && imageLoadEnabled && cure.developing && (editMode || !showBack);
+  const isPolaroidGhost = !isRegularMedia && !!cardPost.imageUri && !imageState.imageReady && !thumbnailUri;
   const showShareButton = !cardPost.imageUri || imageState.imageReady;
-  const syncStatus = post.syncStatus && post.syncStatus !== 'synced' ? post.syncStatus : null;
+  const syncStatus = !suppressAttachments && post.syncStatus && post.syncStatus !== 'synced' ? post.syncStatus : null;
   const syncLabel = syncStatus === 'saving'
     ? 'Saving...'
     : syncStatus === 'waiting'
@@ -228,39 +248,74 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
       <Ionicons
         name={syncStatus === 'failed' ? 'refresh-outline' : syncStatus === 'waiting' ? 'cloud-offline-outline' : 'cloud-upload-outline'}
         size={12}
-        color={syncStatus === 'failed' ? colors.error : colors.inkSoft}
+        color={syncStatus === 'failed' ? colors.error : colors.ink}
       />
       <Text style={[styles.syncStatusText, syncStatus === 'failed' && { color: colors.error }]}>{syncLabel}</Text>
     </Pressable>
   ) : null;
-  const promptIconName = cardPost.promptType === 'photo_reference' ? 'images-outline' : cardPost.promptType === 'text' ? 'chatbubble-ellipses-outline' : 'sparkles-outline';
-  const promptQuestionElement = cardPost.promptText ? (
+  const promptIconName = cardPost.promptType === 'photo'
+    ? 'camera-outline'
+    : cardPost.promptType === 'photo_reference'
+      ? 'images-outline'
+      : cardPost.promptType === 'text'
+      ? 'chatbubble-ellipses-outline'
+      : cardPost.promptType === 'voice'
+        ? 'mic-outline'
+        : 'sparkles-outline';
+  const promptText = cardPost.promptText?.trim() || null;
+  const promptDisplayText = promptText && !(cardPost.promptVoice && /^voice prompt$/i.test(promptText)) ? promptText : null;
+  const promptQuestionLabel = promptAuthorName ? `${promptAuthorName} asked` : 'Asked';
+  const responseTypeLabel = getResponseTypeLabel(cardPost);
+  const hasPromptContext = !suppressAttachments && Boolean(cardPost.memoryPromptRequestId || cardPost.promptText?.trim() || cardPost.promptVoice || cardPost.promptType);
+  const responseSummaryLabel = hasPromptContext
+    ? responseTypeLabel ? `${authorName} responded with ${responseTypeLabel}` : `${authorName} responded`
+    : undefined;
+  const promptVoiceElement = cardPost.promptVoice ? (
+    <VoiceMemoryCard
+      key={`${post.id}:prompt-voice:${cardPost.promptVoice.uri}`}
+      voice={cardPost.promptVoice}
+      postId={`${post.id}:prompt-voice`}
+      themeColors={colors}
+      variant="embedded"
+      emphasis="secondary"
+      label={promptDisplayText ? 'By voice' : undefined}
+      preview={preview}
+    />
+  ) : null;
+  const promptQuestionElement = !suppressAttachments && (promptDisplayText || promptVoiceElement) ? (
     <View style={styles.promptQuestion}>
       <View style={styles.promptQuestionHeader}>
-        <Ionicons name={promptIconName} size={13} color={colors.accent} />
-        <Text style={styles.promptQuestionLabel}>Prompt question</Text>
+        <Ionicons name={promptIconName} size={13} color={semanticColors.promptGold} />
+        <Text style={styles.promptQuestionLabel}>{promptQuestionLabel}</Text>
       </View>
-      <Text style={styles.promptQuestionText}>{cardPost.promptText}</Text>
+      {promptDisplayText ? (
+        <>
+          <Text style={styles.promptQuestionText}>{promptDisplayText}</Text>
+          {promptVoiceElement}
+        </>
+      ) : (
+        <View style={styles.promptVoiceOnlyRow}>{promptVoiceElement}</View>
+      )}
     </View>
   ) : null;
-  const showPromptInPhotoFrame = displayMode === 'grid' && !!cardPost.promptText;
-  const polaroidPromptQuestionElement = cardPost.promptText && !showPromptInPhotoFrame ? (
+  const showPromptInPhotoFrame = !suppressAttachments && displayMode === 'grid' && !!promptDisplayText;
+  const polaroidPromptQuestionElement = !suppressAttachments && (promptDisplayText || promptVoiceElement) && !showPromptInPhotoFrame ? (
     <View style={styles.polaroidPromptQuestion}>
       <View style={styles.promptQuestionHeader}>
-        <Ionicons name={promptIconName} size={12} color={ctAccent} />
-        <Text style={[styles.polaroidPromptQuestionLabel, { color: ctAccent }]}>Prompt question</Text>
+        <Ionicons name={promptIconName} size={12} color={semanticColors.promptGold} />
+        <Text style={[styles.polaroidPromptQuestionLabel, { color: semanticColors.promptGold }]}>{promptQuestionLabel}</Text>
       </View>
-      <Text style={[styles.polaroidPromptQuestionText, { color: ct }]}>{cardPost.promptText}</Text>
+      {promptDisplayText ? <Text style={[styles.polaroidPromptQuestionText, { color: ct }]}>{promptDisplayText}</Text> : null}
     </View>
   ) : null;
   const photoFramePromptOverlay = showPromptInPhotoFrame ? (
     <View pointerEvents="none" style={styles.photoFramePrompt}>
       <View style={styles.photoFramePromptHeader}>
-        <Ionicons name={promptIconName} size={10} color={colors.accent} />
+        <Ionicons name={promptIconName} size={10} color={semanticColors.promptGold} />
         <Text style={styles.photoFramePromptLabel}>Prompt</Text>
       </View>
       <Text style={styles.photoFramePromptText} numberOfLines={3}>
-        {cardPost.promptText}
+        {promptDisplayText}
       </Text>
     </View>
   ) : null;
@@ -271,21 +326,51 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
       fallbackText="Referenced photo memory"
       styles={styles}
       colors={colors}
-      onPress={onReferencedPostPress ? () => onReferencedPostPress(post.referencedWallPostId!) : undefined}
     />
   ) : null;
-  const photoContent = imageState.showImage ? (
+  const hasReferencedPhotoResponse = !!referencedPhotoElement;
+  const attachedVoiceElement = attachedVoice ? (
+    <View style={styles.attachedVoiceWrap}>
+      <VoiceMemoryCard
+        key={`${post.id}:attached-voice:${attachedVoice.uri}`}
+        voice={attachedVoice}
+        postId={`${post.id}:voice-attachment`}
+        authorName={authorName}
+        themeColors={colors}
+        variant="embedded"
+        emphasis="secondary"
+        label="Voice"
+        preview={preview}
+      />
+    </View>
+  ) : null;
+  const polaroidVoiceElement = attachedVoice && cardPost.imageUri ? (
+    <View style={styles.polaroidVoiceSlot}>
+      <VoiceMemoryCard
+        key={`${post.id}:polaroid-voice:${attachedVoice.uri}`}
+        voice={attachedVoice}
+        postId={`${post.id}:polaroid-voice`}
+        themeColors={colors}
+        variant="embedded"
+        emphasis="secondary"
+        label="Voice"
+        labelColor={ct}
+        preview={preview}
+      />
+    </View>
+  ) : null;
+  const photoContent = showAnyImage && displayImageUri ? (
     <>
       {isPolaroidGhost ? (
         <MemoryPhotoGhost style={styles.photoGhostSurface} />
       ) : null}
-      <Image
-        source={{ uri: cardPost.imageUri! }}
+      <CachedRemoteImage
+        uri={displayImageUri}
+        placeholderUri={thumbnailUri}
         style={[styles.image, { height: imageHeight }, isPolaroidGhost && styles.imageLoading]}
-        fadeDuration={0}
         blurRadius={cure.imageBlur}
-        onLoad={imageState.handleImageLoad}
-        onError={imageState.handleImageError}
+        onLoad={showThumbnailOnly ? undefined : imageState.handleImageLoad}
+        onError={showThumbnailOnly ? undefined : imageState.handleImageError}
       />
       {cardPost.videoUri && !isPolaroidGhost ? (
         <LivePolaroidLayer videoUri={cardPost.videoUri} colors={colors} scope={livePolaroidScope} forceMuted={cardPost.videoMuted} forcePlayback={livePolaroidForcePlayback} />
@@ -294,7 +379,7 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
         <>
           <MemoryPhotoEffects
             dateStamp={stampText}
-            dateStampStyle={styles.dateStamp}
+            dateStampStyle={[styles.dateStamp, { color: ct }]}
             developingDateOpacity={cure.developing ? 1 - cure.darkOverlay : undefined}
             filterKey={cardPost.filter}
           >
@@ -318,6 +403,56 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
     </View>
   );
 
+  const mediaContent = cardPost.videoUri && !cardPost.imageUri ? (
+    <View style={[styles.mediaVideoOnlyFrame, { height: mediaFrameHeight ?? mediaFallbackHeight }]}>
+      <LivePolaroidLayer videoUri={cardPost.videoUri} colors={colors} scope={livePolaroidScope} forceMuted={cardPost.videoMuted} forcePlayback={livePolaroidForcePlayback} />
+    </View>
+  ) : cardPost.imageUri ? (
+    <View style={styles.mediaFrame} onLayout={onFrameLayout}>
+      {showAnyImage && displayImageUri && mediaFrameHeight ? (
+        <>
+          <CachedRemoteImage
+            uri={displayImageUri}
+            placeholderUri={thumbnailUri}
+            style={[styles.mediaImage, { height: mediaFrameHeight }]}
+            onLoad={showThumbnailOnly ? undefined : imageState.handleImageLoad}
+            onError={showThumbnailOnly ? undefined : imageState.handleImageError}
+          />
+          {cardPost.videoUri ? (
+            <LivePolaroidLayer videoUri={cardPost.videoUri} colors={colors} scope={livePolaroidScope} forceMuted={cardPost.videoMuted} forcePlayback={livePolaroidForcePlayback} />
+          ) : null}
+        </>
+      ) : (
+        <View style={[styles.mediaImageFallback, { height: mediaFrameHeight ?? mediaFallbackHeight }]}>
+          <Ionicons name="image-outline" size={32} color={colors.ink} />
+        </View>
+      )}
+    </View>
+  ) : null;
+
+  if (isRegularMedia) {
+    return (
+      <Pressable onPress={onPress} onLongPress={onLongPress} disabled={!onPress && !onLongPress} style={({ pressed }) => [styles.mediaCardShell, pressed && (onPress || onLongPress) && styles.pressed]}>
+        <View style={[styles.mediaCard, displayMode === 'grid' && styles.mediaCardGrid, editMode && { borderColor: editBorderColor }]}>
+          <BlurView intensity={28} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={[styles.mediaCardBlur, displayMode === 'grid' && styles.mediaCardBlurGrid]}>
+            <View pointerEvents="none" style={styles.memoryGlassTint} />
+            <View pointerEvents="none" style={styles.memoryGlassHighlight} />
+            {promptQuestionElement}
+            {responseSummaryLabel ? <Text style={styles.responseSummaryText}>{responseSummaryLabel}</Text> : null}
+            {mediaContent}
+            {cardPost.body ? <Text style={[styles.mediaCaption, displayMode === 'grid' && styles.mediaCaptionGrid]} numberOfLines={displayMode === 'grid' ? 3 : undefined}>{cardPost.body}</Text> : null}
+            {attachedVoiceElement ? <View style={styles.photoReferenceResponseFooter}>{attachedVoiceElement}</View> : null}
+            <View style={styles.mediaMetaRow}>
+              <Text style={styles.textOnlyAuthor}>{authorName} - {formatted}</Text>
+            </View>
+            {surfaceBackLocation}
+            {syncStatusElement}
+          </BlurView>
+        </View>
+      </Pressable>
+    );
+  }
+
   if (standaloneSong) {
     return (
       <View style={styles.promptWrappedCard}>
@@ -331,8 +466,36 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
           themeColors={colors}
           preview={preview}
           editing={editMode}
+          compact={compactSong}
           autoPlayKey={autoPlaySongPreviewKey}
           promptContent={promptQuestionElement}
+          responseLabel={responseSummaryLabel}
+          footerContent={attachedVoiceElement}
+          onPress={onPress}
+        />
+        {surfaceBackLocation}
+        {syncStatusElement}
+      </View>
+    );
+  }
+
+  if (standaloneVoice) {
+    return (
+      <View style={styles.promptWrappedCard}>
+        <VoiceMemoryCard
+          key={`${post.id}:${standaloneVoice.uri}`}
+          voice={standaloneVoice}
+          postId={post.id}
+          body={cardPost.body}
+          authorName={authorName}
+          createdAt={getWallPostMemoryDateValue(post)}
+          themeColors={colors}
+          displayMode={displayMode}
+          preview={preview}
+          compact={compactVoice}
+          promptContent={promptQuestionElement}
+          editing={editMode}
+          editingAccentColor={editBorderColor}
           onPress={onPress}
         />
         {surfaceBackLocation}
@@ -344,33 +507,38 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
   if (movie) {
     return (
       <Pressable onPress={onPress} onLongPress={onLongPress} disabled={!onPress && !onLongPress} style={({ pressed }) => [styles.movieCardShell, pressed && (onPress || onLongPress) && styles.pressed]}>
-        <View style={[styles.movieCard, displayMode === 'grid' && styles.movieCardGrid]}>
-          {promptQuestionElement}
-          <View style={[styles.movieHeader, displayMode === 'grid' && styles.movieHeaderGrid]}>
-            <View style={[styles.moviePosterFrame, displayMode === 'grid' && styles.moviePosterFrameGrid]}>
-              {movie.posterUrl ? (
-                <Image source={{ uri: movie.posterUrl }} style={styles.moviePoster} />
-              ) : (
-                <View style={[styles.moviePosterFallback, displayMode === 'grid' && styles.moviePosterFallbackGrid]}>
-                  <Ionicons name="film-outline" size={displayMode === 'grid' ? 36 : 58} color={colors.accent} />
-                </View>
-              )}
-            </View>
-            <View style={styles.movieBody}>
-              <Text style={styles.movieEyebrow}>Movie review</Text>
-              <Text style={[styles.movieTitle, displayMode === 'grid' && styles.movieTitleGrid]} numberOfLines={displayMode === 'grid' ? 2 : 3}>{movie.title}{movie.year ? ` (${movie.year})` : ''}</Text>
-              <View style={[styles.movieRatingRow, displayMode === 'grid' && styles.movieRatingRowGrid]}>
-                {[1, 2, 3, 4, 5].map((value) => (
-                  <Ionicons key={value} name={getStarIcon(movie.reviewRating ?? 0, value)} size={displayMode === 'grid' ? 15 : 20} color={colors.accent} />
-                ))}
-                <Text style={[styles.movieRatingText, displayMode === 'grid' && styles.movieRatingTextGrid]}>{formatStars(movie.reviewRating)}</Text>
+        <View style={[styles.movieCard, displayMode === 'grid' && styles.movieCardGrid, editMode && { borderColor: editBorderColor }]}>
+          <BlurView intensity={28} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={[styles.movieCardBlur, displayMode === 'grid' && styles.movieCardBlurGrid]}>
+            <View pointerEvents="none" style={styles.memoryGlassTint} />
+            <View pointerEvents="none" style={styles.memoryGlassHighlight} />
+            {promptQuestionElement}
+            <View style={[styles.movieHeader, displayMode === 'grid' && styles.movieHeaderGrid]}>
+              <View style={[styles.moviePosterFrame, displayMode === 'grid' && styles.moviePosterFrameGrid]}>
+                {movie.posterUrl ? (
+                  <CachedRemoteImage uri={movie.posterUrl} style={styles.moviePoster} />
+                ) : (
+                  <View style={[styles.moviePosterFallback, displayMode === 'grid' && styles.moviePosterFallbackGrid]}>
+                    <Ionicons name="film-outline" size={displayMode === 'grid' ? 36 : 58} color={colors.accent} />
+                  </View>
+                )}
               </View>
-              {cardPost.body ? <Text style={[styles.movieReviewText, displayMode === 'grid' && styles.movieReviewTextGrid]} numberOfLines={displayMode === 'grid' ? 4 : undefined}>{cardPost.body}</Text> : null}
-              <Text style={styles.movieAuthor} numberOfLines={1}>— {authorName}</Text>
+              <View style={styles.movieBody}>
+                <Text style={styles.movieEyebrow}>Movie review</Text>
+                <Text style={[styles.movieTitle, displayMode === 'grid' && styles.movieTitleGrid]} numberOfLines={displayMode === 'grid' ? 2 : 3}>{movie.title}{movie.year ? ` (${movie.year})` : ''}</Text>
+                <View style={[styles.movieRatingRow, displayMode === 'grid' && styles.movieRatingRowGrid]}>
+                  {[1, 2, 3, 4, 5].map((value) => (
+                    <Ionicons key={value} name={getStarIcon(movie.reviewRating ?? 0, value)} size={displayMode === 'grid' ? 15 : 20} color={semanticColors.movieGold} />
+                  ))}
+                  <Text style={[styles.movieRatingText, displayMode === 'grid' && styles.movieRatingTextGrid]}>{formatStars(movie.reviewRating)}</Text>
+                </View>
+                {cardPost.body ? <Text style={[styles.movieReviewText, displayMode === 'grid' && styles.movieReviewTextGrid]} numberOfLines={displayMode === 'grid' ? 4 : undefined}>{cardPost.body}</Text> : null}
+                <Text style={styles.movieAuthor} numberOfLines={1}>— {authorName}</Text>
+              </View>
             </View>
-          </View>
-          {surfaceBackLocation}
-          {syncStatusElement}
+            {attachedVoiceElement ? <View style={styles.photoReferenceResponseFooter}>{attachedVoiceElement}</View> : null}
+            {surfaceBackLocation}
+            {syncStatusElement}
+          </BlurView>
         </View>
       </Pressable>
     );
@@ -383,28 +551,53 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
   };
 
   const textOnlyMemory = (
-    <View style={styles.cardWithStatus}>
-      <Pressable onPress={onPress} onLongPress={onLongPress} disabled={!onPress && !onLongPress} style={({ pressed }) => [styles.wrapper, pressed && (onPress || onLongPress) && styles.pressed]}>
-        <View style={[styles.textOnlyCard, displayMode === 'grid' && styles.textOnlyCardGrid, { transform: [{ rotate: `${tilt}deg` }] }]}> 
-          {promptQuestionElement}
-          {referencedPhotoElement}
-          <View style={styles.textOnlyMetaRow}>
-            <Text style={styles.textOnlyDate}>{formatted}</Text>
-          </View>
-          {cardPost.body ? (
-            <MemoryStyledText
-              text={cardPost.body}
-              effect={cardPost.textEffect}
-              color={textOnlyColor}
-              accentColor={textOnlyColor}
-              paperColor={colors.paper}
-              style={[styles.textOnlyBody, textOnlyTypography]}
-            />
-          ) : null}
-          <Text style={styles.textOnlyAuthor}>— {authorName}</Text>
-          {surfaceBackLocation}
+    <View style={[styles.cardWithStatus, styles.photoReferenceResponseHost]}>
+      {hasReferencedPhotoResponse ? (
+        <View style={[styles.photoReferenceResponseShell, displayMode === 'grid' && styles.photoReferenceResponseShellGrid, editMode && { borderColor: editBorderColor }]}>
+          <BlurView intensity={28} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={styles.photoReferenceResponseBlur}>
+            <View pointerEvents="none" style={styles.memoryGlassTint} />
+            <View pointerEvents="none" style={styles.memoryGlassHighlight} />
+            {promptQuestionElement}
+            {responseSummaryLabel ? <Text style={styles.responseSummaryText}>{responseSummaryLabel}</Text> : null}
+            <View style={styles.photoReferenceResponseContent}>{referencedPhotoElement}</View>
+            {cardPost.body ? (
+              <MemoryStyledText
+                text={cardPost.body}
+                effect={cardPost.textEffect}
+                color={textOnlyColor}
+                accentColor={textOnlyColor}
+                paperColor={colors.paper}
+                style={[styles.textOnlyBody, textOnlyTypography]}
+              />
+            ) : null}
+            {attachedVoiceElement ? <View style={styles.photoReferenceResponseFooter}>{attachedVoiceElement}</View> : null}
+            {surfaceBackLocation}
+          </BlurView>
         </View>
-      </Pressable>
+      ) : (
+        <Pressable onPress={onPress} onLongPress={onLongPress} disabled={!onPress && !onLongPress} style={({ pressed }) => [styles.wrapper, pressed && (onPress || onLongPress) && styles.pressed]}>
+          <View style={[styles.textOnlyCard, displayMode === 'grid' && styles.textOnlyCardGrid, editMode && { borderColor: editBorderColor }]}>
+            <BlurView intensity={28} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={styles.textOnlyCardBlur}>
+              <View pointerEvents="none" style={styles.memoryGlassTint} />
+              <View pointerEvents="none" style={styles.memoryGlassHighlight} />
+              {promptQuestionElement}
+              {promptQuestionElement && responseSummaryLabel ? <Text style={styles.responseSummaryText}>{responseSummaryLabel}</Text> : null}
+              {cardPost.body ? (
+                <MemoryStyledText
+                  text={cardPost.body}
+                  effect={cardPost.textEffect}
+                  color={textOnlyColor}
+                  accentColor={textOnlyColor}
+                  paperColor={colors.paper}
+                  style={[styles.textOnlyBody, textOnlyTypography]}
+                />
+              ) : null}
+              <Text style={styles.textOnlyAuthor}>{authorName} - {formatted}</Text>
+              {surfaceBackLocation}
+            </BlurView>
+          </View>
+        </Pressable>
+      )}
       {syncStatusElement}
     </View>
   );
@@ -419,15 +612,16 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
             <View style={styles.cardWithStatus}>
               <View onLayout={onFrontLayout} style={styles.ambientShadow}>
                 <View style={[styles.tape, isPolaroidGhost && styles.tapeGhost]} />
-                <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, isPolaroidGhost && styles.cardGhost, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}> 
+                <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, isPolaroidGhost && styles.cardGhost, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}> 
+                  <View pointerEvents="none" style={styles.polaroidLiquidSheen} />
                   {polaroidPromptQuestionElement}
                   <View style={[styles.photoFrame, isPolaroidGhost && styles.photoFrameGhost]} onLayout={onFrameLayout}>
                     {photoContent}
                   </View>
                   <View style={styles.bottomStrip}>
-                    <Text style={[styles.date, { color: ctAccent }]}>{formatted}</Text>
+                    <Text style={[styles.date, { color: ct }]}>{formatted}</Text>
                     <View style={styles.textSlot}>
-                      {cardPost.body ? <Text style={[styles.text, { color: ct }]} numberOfLines={FRONT_TEXT_LINES}>{cardPost.body}</Text> : null}
+                      {cardPost.body ? <Text style={[styles.text, { color: ct }]} numberOfLines={FRONT_TEXT_LINES}>{cardPost.body}</Text> : polaroidVoiceElement}
                     </View>
                     <Text style={[styles.author, { color: ctSoft }]}>— {authorName}</Text>
                   </View>
@@ -456,16 +650,17 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
                   <View pointerEvents={showBack ? 'none' : 'auto'} style={[styles.flipFace, showBack && styles.hiddenFace]}>
                     <View style={styles.ambientShadow}>
                       <View style={[styles.tape, isPolaroidGhost && styles.tapeGhost]} />
-                      <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, isPolaroidGhost && styles.cardGhost, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}> 
+                      <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, isPolaroidGhost && styles.cardGhost, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}>
+                        <View pointerEvents="none" style={styles.polaroidLiquidSheen} />
                         {polaroidPromptQuestionElement}
                         <View style={[styles.photoFrame, isPolaroidGhost && styles.photoFrameGhost]} onLayout={onFrameLayout}>
                           {photoContent}
                           {photoFramePromptOverlay}
                         </View>
                         <View style={styles.bottomStrip}>
-                          <Text style={[styles.date, { color: ctAccent }]}>{formatted}</Text>
+                          <Text style={[styles.date, { color: ct }]}>{formatted}</Text>
                           <View style={styles.textSlot}>
-                            {cardPost.body ? <Text style={[styles.text, { color: ct }]} numberOfLines={FRONT_TEXT_LINES}>{cardPost.body}</Text> : null}
+                            {cardPost.body ? <Text style={[styles.text, { color: ct }]} numberOfLines={FRONT_TEXT_LINES}>{cardPost.body}</Text> : polaroidVoiceElement}
                           </View>
                           <Text style={[styles.author, { color: ctSoft }]}>— {authorName}</Text>
                         </View>
@@ -476,7 +671,8 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
                   <View pointerEvents={showBack ? 'auto' : 'none'} style={[styles.flipFaceOverlay, !showBack && styles.hiddenFace]}>
                     <View style={styles.ambientShadow}>
                       <View style={styles.tape} />
-                      <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, styles.backCard, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }, frontHeight > 0 && { height: frontHeight }]}> 
+                      <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, styles.backCard, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }, frontHeight > 0 && { height: frontHeight }]}>
+                        <View pointerEvents="none" style={styles.polaroidLiquidSheen} />
                         <View style={styles.backContent}>
                           {editingBack ? (
                             <TextInput
@@ -520,20 +716,26 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
       </Animated.View>
       {showInlineShareButton && !editingBack && showShareButton && (
         <Pressable onPress={handleShare} style={styles.shareButton} accessibilityRole="button" accessibilityLabel={showBack ? 'Share memory card back' : 'Share memory card'}>
-          <Ionicons name="share-outline" size={18} color={colors.inkSoft} />
+          <Ionicons name="share-outline" size={18} color={colors.ink} />
         </Pressable>
       )}
     </View>
   );
 
   const memoryContent = isTextOnly ? textOnlyMemory : polaroidMemory;
+  const memoryContentWithVoice = attachedVoiceElement && !hasReferencedPhotoResponse && !cardPost.imageUri ? (
+    <View style={styles.attachedVoiceStack}>
+      {memoryContent}
+      {attachedVoiceElement}
+    </View>
+  ) : memoryContent;
 
   if (attachedSong) {
     const attachedMemoryContent = shareable ? (
       <View ref={memoryOnlyCaptureRef} collapsable={false} style={styles.memoryOnlyCapture}>
-        {memoryContent}
+        {memoryContentWithVoice}
       </View>
-    ) : memoryContent;
+    ) : memoryContentWithVoice;
     return (
       <SongMemoryCard
         key={attachedSongKey}
@@ -544,9 +746,11 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
         themeColors={colors}
         preview={preview}
         editing={editMode}
+        compact={compactSong}
         autoPlayKey={autoPlaySongPreviewKey}
         shareable={shareable}
         shareMemoryRef={memoryOnlyCaptureRef}
+        responseLabel={responseSummaryLabel}
         onPress={editMode ? onPress : undefined}
       >
         {attachedMemoryContent}
@@ -554,12 +758,21 @@ export function WallPostCard({ authorName, post, cardColor, themeColors, imageLo
     );
   }
 
-  return memoryContent;
+  return memoryContentWithVoice;
+}
+
+function getMemoryEditBorderColor(post: WallPost, colors: ColorTokens) {
+  if (post.postType === 'voice' || post.voice) return semanticColors.voiceRed;
+  if (post.postType === 'movie' || post.movie) return semanticColors.movieGold;
+  if (post.postType === 'media') return colors.accentTertiary ?? '#3A8C8C';
+  if (post.postType === 'polaroid' || post.imageUri) return colors.accentAlt ?? colors.accent;
+  return semanticColors.replyPurple;
 }
 
 const CARD_PADDING_SIDE = 14;
 const CARD_PADDING_TOP = 12;
 const CARD_PADDING_BOTTOM = 38;
+const POLAROID_PHOTO_HEIGHT = 260;
 const FRONT_TEXT_LINE_HEIGHT = 22;
 const FRONT_TEXT_LINES = 2;
 const FRONT_TEXT_SLOT_HEIGHT = FRONT_TEXT_LINE_HEIGHT * FRONT_TEXT_LINES;
@@ -584,62 +797,54 @@ function getStarIcon(rating: number, starValue: number) {
   return 'star-outline' as const;
 }
 
+function getResponseTypeLabel(post: WallPost) {
+  const parts: string[] = [];
+  if (post.song) parts.push('song');
+  if (post.movie) parts.push('movie');
+  if (post.postType === 'media' && post.videoUri && !post.imageUri) parts.push('video');
+  else if (post.imageUri || post.referencedWallPostId) parts.push('photo');
+  if (post.body?.trim() && !post.song && !post.movie && !post.imageUri && !post.referencedWallPostId) parts.push('note');
+  if (post.voice) parts.push('voice');
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(', ')} + ${parts[parts.length - 1]}`;
+}
+
 function ReferencedPolaroidPreview({
   post,
   authorName,
   fallbackText,
   styles,
   colors,
-  onPress,
 }: {
   post: WallPost | null;
   authorName?: string;
   fallbackText: string;
   styles: ReturnType<typeof makeStyles>;
   colors: ColorTokens;
-  onPress?: () => void;
 }) {
-  const preview = (
+  return (
     <View style={styles.referencePreviewBlock}>
-      <View style={styles.referenceHeader}>
-        <Ionicons name="albums-outline" size={13} color={colors.accent} />
-        <Text style={styles.referenceLabel}>Referenced photo memory</Text>
-      </View>
       <View style={styles.referencePolaroidViewport}>
         {post ? (
-          <View pointerEvents="none" style={styles.referenceScaledPolaroidStage}>
+          <View style={styles.referenceScaledPolaroidStage}>
             <WallPostCard
               authorName={authorName ?? 'Someone'}
               post={post}
               cardColor={post.cardColor}
               themeColors={colors}
               preview
+              suppressAttachments
             />
           </View>
         ) : (
           <View style={styles.referenceFallback}>
-            <Ionicons name="image-outline" size={36} color={colors.inkMuted} />
+            <Ionicons name="image-outline" size={36} color={colors.ink} />
             <Text style={styles.referenceFallbackText}>{fallbackText}</Text>
           </View>
         )}
       </View>
-      {onPress ? <Text style={styles.referenceHint}>Tap to find this photo memory</Text> : null}
     </View>
-  );
-
-  if (!onPress) return preview;
-  return (
-    <Pressable
-      onPress={(event: GestureResponderEvent) => {
-        event.stopPropagation();
-        onPress();
-      }}
-      onStartShouldSetResponder={() => true}
-      accessibilityRole="button"
-      accessibilityLabel="Find referenced photo memory"
-    >
-      {preview}
-    </Pressable>
   );
 }
 
@@ -649,6 +854,16 @@ function getStablePolaroidTilt(id: string) {
     hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
   }
   return (hash / 0xffffffff - 0.5) * 5;
+}
+
+function withAlpha(color: string, alpha: number) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = match[1];
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
@@ -663,16 +878,24 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     pressed: { transform: [{ scale: 0.985 }] },
     promptWrappedCard: {
+      width: '100%',
+      alignSelf: 'stretch',
       alignItems: 'center',
-      gap: spacing.xs,
+      gap: spacing.sm,
+      paddingVertical: spacing.sm,
+    },
+    attachedVoiceStack: {
+      width: '100%',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    attachedVoiceWrap: {
+      width: '100%',
+      maxWidth: 390,
+      alignSelf: 'center',
     },
     promptQuestion: {
       alignSelf: 'stretch',
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: colors.accent + '33',
-      backgroundColor: colors.accent + '10',
-      padding: spacing.sm,
       gap: 4,
     },
     promptQuestionHeader: {
@@ -683,7 +906,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     promptQuestionLabel: {
       fontFamily: fonts.bodyBold,
       fontSize: 10,
-      color: colors.accent,
+      color: semanticColors.promptGold,
       textTransform: 'uppercase',
       letterSpacing: 0.6,
     },
@@ -692,6 +915,15 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontSize: 13,
       lineHeight: 18,
       color: colors.ink,
+    },
+    responseSummaryText: {
+      alignSelf: 'stretch',
+      fontFamily: fonts.bodyBold,
+      fontSize: 13,
+      color: semanticColors.promptGold,
+    },
+    promptVoiceOnlyRow: {
+      marginTop: -2,
     },
     polaroidPromptQuestion: {
       borderRadius: 8,
@@ -736,7 +968,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     photoFramePromptLabel: {
       fontFamily: fonts.bodyBold,
       fontSize: 9,
-      color: colors.accent,
+      color: semanticColors.promptGold,
       textTransform: 'uppercase' as const,
       letterSpacing: 0.5,
     },
@@ -753,29 +985,10 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     referencePreviewBlock: {
       alignSelf: 'stretch',
       alignItems: 'center',
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: colors.accent + '26',
-      backgroundColor: colors.paper + 'D9',
-      padding: spacing.md,
-      gap: spacing.sm,
-      marginTop: spacing.xs,
-    },
-    referenceHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.xs,
-    },
-    referenceLabel: {
-      fontFamily: fonts.bodyBold,
-      fontSize: 11,
-      color: colors.accent,
-      textTransform: 'uppercase',
-      letterSpacing: 0.6,
     },
     referencePolaroidViewport: {
-      width: 214,
-      height: 306,
+      width: 212,
+      height: 300,
       alignItems: 'center',
       justifyContent: 'flex-start',
       overflow: 'visible',
@@ -783,7 +996,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     referenceScaledPolaroidStage: {
       width: 260,
       alignItems: 'center',
-      transform: [{ scale: 0.76 }],
+      transform: [{ scale: 0.72 }],
       transformOrigin: 'top center',
     },
     referenceFallback: {
@@ -803,11 +1016,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       color: colors.inkMuted,
       textAlign: 'center',
     },
-    referenceHint: {
-      fontFamily: fonts.bodyBold,
-      fontSize: 11,
-      color: colors.accent,
-    },
     captureStage: {
       paddingHorizontal: spacing.md,
       paddingTop: spacing.md,
@@ -817,6 +1025,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     cardWithStatus: {
       alignItems: 'center',
+    },
+    photoReferenceResponseHost: {
+      alignSelf: 'stretch',
+      width: '100%',
+      alignItems: 'stretch',
     },
     syncStatusPill: {
       flexDirection: 'row',
@@ -866,16 +1079,83 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
 
     /* ── Text-only (plain, no card) ── */
     textOnlyCard: {
-      alignItems: 'center' as const,
-      paddingVertical: spacing.md,
-      gap: spacing.xs,
+      alignItems: 'stretch' as const,
+      width: '100%',
+      maxWidth: 390,
+      borderRadius: 26,
+      borderWidth: 1,
+      borderColor: withAlpha(colors.white, 0.18),
+      backgroundColor: withAlpha(colors.paper, 0.56),
+      overflow: 'hidden',
+      shadowColor: colors.black,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.16,
+      shadowRadius: 18,
+      elevation: 5,
     },
     textOnlyCardGrid: {
       width: 260,
-      paddingHorizontal: spacing.md,
+      maxWidth: 260,
+      borderRadius: 18,
+    },
+    textOnlyCardBlur: {
+      padding: spacing.lg,
+      gap: spacing.md,
+      backgroundColor: 'transparent',
+      overflow: 'hidden',
+    },
+    photoReferenceResponseShell: {
+      width: '100%',
+      alignSelf: 'stretch',
+      maxWidth: 390,
+      borderRadius: 26,
+      borderWidth: 1,
+      borderColor: withAlpha(colors.white, 0.18),
+      backgroundColor: withAlpha(colors.paper, 0.56),
+      overflow: 'hidden',
+      shadowColor: colors.black,
+      shadowOpacity: 0.16,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 5,
+    },
+    photoReferenceResponseShellGrid: {
+      width: 260,
+      maxWidth: 260,
+      borderRadius: 18,
+      shadowOpacity: 0.08,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 2,
+    },
+    photoReferenceResponseBlur: {
+      padding: spacing.lg,
+      gap: spacing.md,
+      backgroundColor: 'transparent',
+      overflow: 'hidden',
+    },
+    memoryGlassTint: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(colors.paper, 0.12),
+    },
+    memoryGlassHighlight: {
+      position: 'absolute' as const,
+      top: 1,
+      left: 18,
+      right: 18,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: withAlpha(colors.white, 0.72),
+    },
+    photoReferenceResponseContent: {
+      alignItems: 'center',
+    },
+    photoReferenceResponseFooter: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.line + '66',
+      paddingTop: spacing.sm,
     },
     textOnlyBody: {
-      textAlign: 'center' as const,
+      textAlign: 'left' as const,
     },
     textOnlyMetaRow: {
       flexDirection: 'row' as const,
@@ -906,28 +1186,26 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       ...protectTextFromFontClipping(fonts.handwritten, 13),
     },
     textOnlyAuthor: {
-      fontFamily: fonts.handwritten,
-      fontSize: 14,
+      fontFamily: fonts.body,
+      fontSize: 12,
       color: colors.inkSoft,
-      ...protectTextFromFontClipping(fonts.handwritten, 14),
     },
     movieCardShell: {
       width: '100%',
       paddingVertical: spacing.sm,
-      alignItems: 'center',
+      alignItems: 'stretch',
     },
     movieCard: {
       width: '100%',
       maxWidth: 390,
-      borderRadius: 24,
-      backgroundColor: colors.paper,
+      borderRadius: 26,
+      backgroundColor: withAlpha(colors.paper, 0.56),
       borderWidth: 1,
-      borderColor: colors.line,
-      padding: spacing.md,
-      gap: spacing.md,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: 0.12,
+      borderColor: withAlpha(colors.white, 0.18),
+      overflow: 'hidden',
+      shadowColor: colors.black,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.16,
       shadowRadius: 18,
       elevation: 5,
     },
@@ -935,8 +1213,15 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: 260,
       maxWidth: 260,
       borderRadius: 18,
+    },
+    movieCardBlur: {
+      padding: spacing.md,
+      gap: spacing.md,
+      backgroundColor: 'transparent',
+      overflow: 'hidden',
+    },
+    movieCardBlurGrid: {
       padding: spacing.sm,
-      gap: spacing.sm,
     },
     movieHeader: {
       flexDirection: 'row',
@@ -982,7 +1267,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     movieEyebrow: {
       fontFamily: fonts.bodyBold,
       fontSize: 12,
-      color: colors.accent,
+      color: semanticColors.movieGold,
       textTransform: 'uppercase',
       letterSpacing: 0.8,
     },
@@ -1011,7 +1296,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     movieRatingText: {
       fontFamily: fonts.bodyBold,
       fontSize: 13,
-      color: colors.accent,
+      color: semanticColors.movieGold,
       marginLeft: 4,
     },
     movieRatingTextGrid: {
@@ -1034,6 +1319,77 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontSize: 16,
       color: colors.inkSoft,
     },
+    mediaCardShell: {
+      width: '100%',
+      paddingVertical: spacing.sm,
+      alignItems: 'stretch',
+    },
+    mediaCard: {
+      width: '100%',
+      maxWidth: 390,
+      borderRadius: 26,
+      borderWidth: 1,
+      borderColor: withAlpha(colors.white, 0.18),
+      backgroundColor: withAlpha(colors.paper, 0.56),
+      overflow: 'hidden',
+      shadowColor: colors.black,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.16,
+      shadowRadius: 18,
+      elevation: 5,
+    },
+    mediaCardGrid: {
+      width: 260,
+      maxWidth: 260,
+      borderRadius: 18,
+    },
+    mediaCardBlur: {
+      padding: spacing.md,
+      gap: spacing.md,
+      backgroundColor: 'transparent',
+      overflow: 'hidden',
+    },
+    mediaCardBlurGrid: {
+      padding: spacing.xs,
+    },
+    mediaFrame: {
+      alignSelf: 'stretch',
+      borderRadius: 20,
+      overflow: 'hidden',
+      backgroundColor: colors.canvasAlt,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.line + '66',
+    },
+    mediaVideoOnlyFrame: {
+      alignSelf: 'stretch',
+      borderRadius: 20,
+      overflow: 'hidden',
+      backgroundColor: '#111',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.line + '66',
+    },
+    mediaImage: {
+      width: '100%',
+      resizeMode: 'cover',
+    },
+    mediaImageFallback: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.canvasAlt,
+    },
+    mediaCaption: {
+      fontFamily: fonts.body,
+      fontSize: 15,
+      lineHeight: 21,
+      color: colors.ink,
+    },
+    mediaCaptionGrid: {
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    mediaMetaRow: {
+      alignItems: 'center',
+    },
 
     /* ── Polaroid card ── */
     tape: {
@@ -1050,19 +1406,26 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     card: {
       width: 260,
-      borderRadius: 3,
+      borderRadius: 5,
       backgroundColor: POLAROID_FRAME,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(180,170,155,0.4)',
+      borderWidth: 1,
+      borderColor: 'rgba(180,170,155,0.34)',
       paddingTop: CARD_PADDING_TOP,
       paddingHorizontal: CARD_PADDING_SIDE,
       paddingBottom: 0,
-      // Contact shadow (tight, dark)
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.25,
-      shadowRadius: 3,
-      elevation: 5,
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.18,
+      shadowRadius: 8,
+      elevation: 6,
+      overflow: 'hidden',
+    },
+    polaroidLiquidSheen: {
+      ...StyleSheet.absoluteFillObject,
+      borderRadius: 5,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: 'rgba(255,255,255,0.72)',
+      backgroundColor: 'rgba(255,255,255,0.035)',
     },
     cardGhost: {
       borderColor: 'rgba(180,170,155,0.22)',
@@ -1157,6 +1520,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     textSlot: {
       minHeight: FRONT_TEXT_SLOT_HEIGHT,
       justifyContent: 'flex-start',
+    },
+    polaroidVoiceSlot: {
+      minHeight: FRONT_TEXT_SLOT_HEIGHT,
+      justifyContent: 'center',
+      marginTop: -2,
     },
     date: {
       fontFamily: fonts.handwrittenBold,
@@ -1268,7 +1636,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     developingLabel: {
       fontFamily: fonts.bodyMedium,
       fontSize: 11,
-      color: colors.inkMuted,
+      color: colors.error,
       textAlign: 'center',
       fontStyle: 'italic',
       marginTop: spacing.xs,
@@ -1326,8 +1694,9 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     /* ── Ambient shadow wrapper ── */
     ambientShadow: {
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.1,
-      shadowRadius: 20,
+      shadowOffset: { width: 0, height: 12 },
+      shadowOpacity: 0.16,
+      shadowRadius: 26,
+      elevation: 4,
     },
   });

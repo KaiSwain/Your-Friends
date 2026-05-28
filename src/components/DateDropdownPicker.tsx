@@ -248,15 +248,15 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     previewCard: {
       borderRadius: radius.lg,
       borderWidth: 1,
-      borderColor: colors.accent + '35',
-      backgroundColor: colors.accent + '10',
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
       padding: spacing.md,
       gap: spacing.xs,
     },
     previewLabel: {
       fontFamily: fonts.bodyMedium,
       fontSize: 12,
-      color: colors.inkSoft,
+      color: colors.ink,
       textTransform: 'uppercase',
       letterSpacing: 1,
     },
@@ -284,7 +284,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     dropdownLabel: {
       fontFamily: fonts.bodyMedium,
       fontSize: 13,
-      color: colors.inkSoft,
+      color: colors.ink,
     },
     dropdownValueRow: {
       flexDirection: 'row',
@@ -300,7 +300,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: 12,
       fontFamily: fonts.bodyBold,
       fontSize: 14,
-      color: colors.inkSoft,
+      color: colors.ink,
       textAlign: 'center',
     },
     optionList: {
@@ -314,8 +314,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
-    optionSelected: { backgroundColor: colors.accent + '14' },
-    optionPressed: { backgroundColor: colors.accent + '0F' },
+    optionSelected: { backgroundColor: colors.paper },
+    optionPressed: { backgroundColor: colors.paper },
     optionText: {
       fontFamily: fonts.bodyMedium,
       fontSize: 15,

@@ -58,8 +58,8 @@ export default function OnboardingFactScreen() {
 
   return (
     <OnboardingFrame
-      step={9}
-      totalSteps={12}
+      step={10}
+      totalSteps={13}
       eyebrow="One little thing"
       title="Tell us a fact about you."
       subtitle="A small detail your friends will smile at — a habit, a quirk, something you love."

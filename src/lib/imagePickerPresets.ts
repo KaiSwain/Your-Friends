@@ -12,6 +12,14 @@ export const memoryImagePickerOptions = {
   allowsEditing: true,
   aspect: [1, 1],
   quality: 0.9,
+  exif: true,
+} satisfies ImagePicker.ImagePickerOptions;
+
+export const memoryMediaPickerOptions = {
+  mediaTypes: ['images', 'videos'],
+  quality: 0.9,
+  videoMaxDuration: 5,
+  exif: true,
 } satisfies ImagePicker.ImagePickerOptions;
 
 export const profileBackgroundImagePickerOptions = {

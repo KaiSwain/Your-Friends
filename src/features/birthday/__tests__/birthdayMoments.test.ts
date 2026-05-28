@@ -13,6 +13,7 @@ function user(overrides: Partial<AppUser>): AppUser {
     birthday: '1998-05-19',
     profileBgImagePublic: false,
     profileFacts: [],
+    profilePersonalityTraits: [],
     createdAt: '2026-01-01T00:00:00Z',
     ...overrides,
   };

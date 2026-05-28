@@ -1,4 +1,6 @@
-import type { MovieAttachment, MovieReviewRequest, MovieReviewRequestStatus } from '../../types/domain';
+import type { MovieAttachment, MovieReviewRequest, MovieReviewRequestStatus, VoiceAttachment } from '../../types/domain';
+import { rowToVoiceAttachment, voiceToDbColumns } from '../../lib/voiceAttachmentDb';
+import { getPromptExpiresAt } from '../../lib/promptExpiration';
 
 export function rowToMovieReviewRequest(row: any): MovieReviewRequest {
   return {
@@ -7,14 +9,29 @@ export function rowToMovieReviewRequest(row: any): MovieReviewRequest {
     recipientUserId: row.recipient_user_id,
     movie: rowToMovieSnapshot(row),
     prompt: row.prompt ?? null,
+    promptVoice: rowToVoiceAttachment(row, 'prompt'),
     status: normalizeMovieReviewRequestStatus(row.status),
     reviewRating: row.review_rating == null ? null : Number(row.review_rating),
     reviewBody: row.review_body ?? null,
+    reviewVoice: rowToVoiceAttachment(row, 'review'),
     completedWallPostId: row.completed_wall_post_id ?? null,
     createdAt: row.created_at,
+    expiresAt: row.expires_at ?? getPromptExpiresAt(row.created_at),
     updatedAt: row.updated_at ?? row.created_at,
     completedAt: row.completed_at ?? null,
   };
+}
+
+export function moviePromptVoiceToDbColumns(voice: VoiceAttachment | null | undefined) {
+  return voiceToDbColumns('prompt', voice);
+}
+
+export function movieReviewVoiceToDbColumns(voice: VoiceAttachment | null | undefined) {
+  return voiceToDbColumns('review', voice);
+}
+
+export function movieReviewVoiceToWallPostDbColumns(voice: VoiceAttachment | null | undefined) {
+  return voiceToDbColumns('', voice);
 }
 
 export function movieToDbColumns(movie: MovieAttachment) {

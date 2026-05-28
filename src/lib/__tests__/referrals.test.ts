@@ -36,6 +36,7 @@ jest.mock('../supabase', () => ({
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
+  applyQrPremiumGrantForUser,
   applyReferralRewardForUser,
   clearIncomingReferralCode,
   consumeIncomingReferralCode,
@@ -45,6 +46,7 @@ import {
   isPremiumUntilActive,
   peekIncomingReferralCode,
   premiumUntilKey,
+  qrPremiumGrantCountKey,
   readLocalPremiumUntil,
   referralRewardCountKey,
   referralRewardGrantedKey,
@@ -228,5 +230,74 @@ describe('applyReferralRewardForUser', () => {
     ).resolves.toEqual({ ok: false, error: 'This account already received a referral reward.' });
 
     expect(mockFrom).not.toHaveBeenCalled();
+  });
+});
+
+describe('applyQrPremiumGrantForUser', () => {
+  beforeEach(() => {
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        id: 'grantor-user',
+        friend_code: 'GRANT123',
+        premium_until: isoFromFixedNow(10),
+        premium_paid_until: null,
+        premium_free_until: null,
+      },
+      error: null,
+    });
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          grantor_user_id: 'grantor-user',
+          recipient_premium_until: isoFromFixedNow(3),
+          recipient_free_until: isoFromFixedNow(3),
+          granted: true,
+        },
+      ],
+      error: null,
+    });
+  });
+
+  it('uses the backend QR grant RPC and mirrors recipient expiry locally', async () => {
+    const result = await applyQrPremiumGrantForUser({
+      recipientUserId: 'recipient-user',
+      recipientFriendCode: 'MINE1234',
+      grantorCode: 'grant123',
+    });
+
+    expectOk(result);
+    expect(result).toEqual({
+      ok: true,
+      code: 'GRANT123',
+      grantorUserId: 'grantor-user',
+      recipientPremiumUntil: isoFromFixedNow(3),
+      recipientFreeUntil: isoFromFixedNow(3),
+      granted: true,
+    });
+    expect(mockRpc).toHaveBeenCalledWith('apply_premium_qr_grant', {
+      recipient_id: 'recipient-user',
+      grantor_code: 'GRANT123',
+    });
+    await expect(AsyncStorage.getItem(premiumUntilKey('recipient-user'))).resolves.toBe(isoFromFixedNow(3));
+    await expect(AsyncStorage.getItem(qrPremiumGrantCountKey('grantor-user'))).resolves.toBe('1');
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back locally when the QR grant backend is unavailable', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: null,
+      error: { code: '42883', message: 'function public.apply_premium_qr_grant does not exist' },
+    });
+
+    await expect(
+      applyQrPremiumGrantForUser({
+        recipientUserId: 'recipient-user',
+        recipientFriendCode: 'MINE1234',
+        grantorCode: 'GRANT123',
+      }),
+    ).resolves.toEqual({ ok: false, error: 'Update required before Premium QR grants can be used.' });
+
+    await expect(AsyncStorage.getItem(premiumUntilKey('recipient-user'))).resolves.toBeNull();
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });

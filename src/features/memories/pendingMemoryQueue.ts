@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { scheduleMemoryDevelopedNotification } from '../../lib/memoryDevelopNotifications';
-import { uploadMemoryImage, uploadMemoryVideo } from '../../lib/memoryMediaUpload';
+import { uploadMemoryAudio, uploadMemoryImageVariants, uploadMemoryVideo } from '../../lib/memoryMediaUpload';
 import { createNotification } from '../../lib/notifications';
 import { supabase } from '../../lib/supabase';
 import { encodeWallPostTextStyle } from '../../lib/wallPostTextStyle';
@@ -21,6 +21,8 @@ export interface PendingMemoryRecord {
   imageUri: string | null;
   videoUri: string | null;
   videoMuted: boolean;
+  audioUri: string | null;
+  audioDurationMs: number | null;
   memoryDate: string | null;
   posts: CreateWallPostInput[];
   status: PendingMemoryStatus;
@@ -33,6 +35,8 @@ export interface AddPendingMemoryInput {
   imageUri: string | null;
   videoUri?: string | null;
   videoMuted?: boolean;
+  audioUri?: string | null;
+  audioDurationMs?: number | null;
   memoryDate?: string | null;
   post?: CreateWallPostInput;
   posts?: CreateWallPostInput[];
@@ -46,6 +50,7 @@ export async function createPendingMemory(input: AddPendingMemoryInput) {
   const createdAt = new Date().toISOString();
   const imageUri = input.imageUri ? await persistPendingMemoryMedia(input.imageUri, id, 'image') : null;
   const videoUri = input.videoUri ? await persistPendingMemoryMedia(input.videoUri, id, 'video') : null;
+  const audioUri = input.audioUri ? await persistPendingMemoryMedia(input.audioUri, id, 'audio') : null;
   const record: PendingMemoryRecord = {
     id,
     authorUserId: input.authorUserId,
@@ -53,6 +58,8 @@ export async function createPendingMemory(input: AddPendingMemoryInput) {
     imageUri,
     videoUri,
     videoMuted: input.videoMuted ?? false,
+    audioUri,
+    audioDurationMs: input.audioDurationMs ?? null,
     memoryDate: input.memoryDate ?? null,
     posts,
     status: 'saving',
@@ -65,7 +72,10 @@ export async function createPendingMemory(input: AddPendingMemoryInput) {
 
 export function buildOptimisticWallPosts(record: PendingMemoryRecord): WallPost[] {
   return record.posts.map((entry, index) => {
-    const postType = entry.postType ?? (entry.song ? 'song' : record.imageUri ? 'polaroid' : 'note');
+    const voice = record.audioUri
+      ? { uri: record.audioUri, durationMs: entry.voice?.durationMs ?? record.audioDurationMs }
+      : entry.voice ?? null;
+    const postType = entry.postType ?? (entry.movie ? 'movie' : entry.song ? 'song' : voice ? 'voice' : record.imageUri ? 'polaroid' : 'note');
     return {
       id: `local_post_${record.id}_${index}`,
       authorUserId: record.authorUserId,
@@ -75,6 +85,7 @@ export function buildOptimisticWallPosts(record: PendingMemoryRecord): WallPost[
       postType,
       body: entry.body,
       imageUri: record.imageUri,
+      imageThumbUri: entry.imageThumbUri ?? record.imageUri,
       videoUri: record.videoUri,
       videoMuted: entry.videoMuted ?? record.videoMuted,
       cardColor: entry.cardColor ?? null,
@@ -88,6 +99,7 @@ export function buildOptimisticWallPosts(record: PendingMemoryRecord): WallPost[
       textColor: entry.textColor ?? null,
       dateStamp: entry.dateStamp ?? false,
       song: entry.song ?? null,
+      voice,
       movie: entry.movie ?? null,
       memoryDate: entry.memoryDate ?? record.memoryDate,
       locationName: entry.locationName ?? null,
@@ -143,20 +155,31 @@ export async function removePendingMemory(id: string) {
 export async function syncPendingMemory(record: PendingMemoryRecord): Promise<WallPost[]> {
   await updatePendingMemoryStatus(record.id, 'saving');
   let storedImagePath: string | null = null;
+  let storedImageThumbPath: string | null = null;
   let storedVideoPath: string | null = null;
+  let storedAudioPath: string | null = null;
 
   if (record.imageUri) {
-    storedImagePath = await uploadMemoryImage(record.imageUri, { prefix: record.authorUserId, randomSuffix: false });
+    const uploadedImage = await uploadMemoryImageVariants(record.imageUri, { prefix: record.authorUserId, randomSuffix: false });
+    storedImagePath = uploadedImage.imageUri;
+    storedImageThumbPath = uploadedImage.imageThumbUri;
   }
 
   if (record.videoUri) {
     storedVideoPath = await uploadMemoryVideo(record.videoUri, { prefix: record.authorUserId });
   }
 
+  if (record.audioUri) {
+    storedAudioPath = await uploadMemoryAudio(record.audioUri, { prefix: `${record.authorUserId}/voice` });
+  }
+
   const { data, error } = await supabase
     .from('wall_posts')
     .insert(record.posts.map((entry) => {
-      const postType = entry.postType ?? (entry.movie ? 'movie' : entry.song ? 'song' : storedImagePath ? 'polaroid' : 'note');
+      const voice = storedAudioPath
+        ? { uri: storedAudioPath, durationMs: entry.voice?.durationMs ?? record.audioDurationMs }
+        : entry.voice ?? null;
+      const postType = entry.postType ?? (entry.movie ? 'movie' : entry.song ? 'song' : voice ? 'voice' : storedImagePath ? 'polaroid' : 'note');
       return {
         author_user_id: record.authorUserId,
         subject_user_id: entry.subjectUserId,
@@ -164,8 +187,9 @@ export async function syncPendingMemory(record: PendingMemoryRecord): Promise<Wa
         visibility: entry.visibility,
         post_type: postType,
         body: entry.body,
-        image_path: storedImagePath,
-        video_path: storedVideoPath,
+        image_path: entry.imageUri ?? storedImagePath,
+        image_thumb_path: entry.imageThumbUri ?? storedImageThumbPath ?? entry.imageUri ?? storedImagePath,
+        video_path: entry.videoUri ?? storedVideoPath,
         video_muted: entry.videoMuted ?? record.videoMuted,
         card_color: entry.cardColor ?? null,
         back_text: entry.backText ?? null,
@@ -182,6 +206,8 @@ export async function syncPendingMemory(record: PendingMemoryRecord): Promise<Wa
         song_artwork_url: entry.song?.artworkUrl ?? null,
         song_preview_url: entry.song?.previewUrl ?? null,
         song_external_url: entry.song?.externalUrl ?? null,
+        audio_path: voice?.uri ?? null,
+        audio_duration_ms: voice?.durationMs ?? null,
         movie_tmdb_id: entry.movie?.tmdbId ?? null,
         movie_title: entry.movie?.title ?? null,
         movie_year: entry.movie?.year ?? null,
@@ -191,6 +217,12 @@ export async function syncPendingMemory(record: PendingMemoryRecord): Promise<Wa
         movie_vote_average: entry.movie?.voteAverage ?? null,
         movie_review_rating: entry.movie?.reviewRating ?? null,
         movie_review_request_id: entry.movie?.reviewRequestId ?? null,
+        memory_prompt_request_id: entry.memoryPromptRequestId ?? null,
+        referenced_wall_post_id: entry.referencedWallPostId ?? null,
+        prompt_text: entry.promptText ?? null,
+        prompt_type: entry.promptType ?? null,
+        prompt_audio_path: entry.promptVoice?.uri ?? null,
+        prompt_audio_duration_ms: entry.promptVoice?.durationMs ?? null,
       };
     }))
     .select()
@@ -201,7 +233,7 @@ export async function syncPendingMemory(record: PendingMemoryRecord): Promise<Wa
 
   await Promise.all(
     wallPosts
-      .filter((wallPost) => wallPost.imageUri)
+      .filter((wallPost) => wallPost.postType === 'polaroid' && wallPost.imageUri)
       .map((wallPost) => scheduleMemoryDevelopedNotification(wallPost.id, wallPost.createdAt)
         .catch((err) => console.warn('[cure notification] schedule failed:', err))),
   );
@@ -225,7 +257,7 @@ export async function syncPendingMemory(record: PendingMemoryRecord): Promise<Wa
           postType: wallPost.postType,
           source: 'wall_post',
         },
-        message: `${authorName} added a ${wallPost.postType === 'song' ? 'song memory' : 'memory'} about you`,
+        message: `${authorName} added a ${wallPost.postType === 'song' ? 'song memory' : wallPost.postType === 'voice' ? 'voice memory' : 'memory'} about you`,
       }).catch((notificationError) => console.warn('[notification] wall_post insert failed:', notificationError));
     }
   }));
@@ -234,10 +266,10 @@ export async function syncPendingMemory(record: PendingMemoryRecord): Promise<Wa
   return wallPosts;
 }
 
-async function persistPendingMemoryMedia(uri: string, pendingId: string, kind: 'image' | 'video') {
+async function persistPendingMemoryMedia(uri: string, pendingId: string, kind: 'image' | 'video' | 'audio') {
   if (!FileSystem.documentDirectory) return uri;
   await ensurePendingMediaDirectory();
-  const ext = getUriExtension(uri, kind === 'image' ? 'jpg' : 'mp4');
+  const ext = getUriExtension(uri, kind === 'image' ? 'jpg' : kind === 'video' ? 'mp4' : 'm4a');
   const targetUri = `${PENDING_MEDIA_DIR}/${pendingId}_${kind}.${ext}`;
   await FileSystem.copyAsync({ from: uri, to: targetUri });
   return targetUri;
@@ -257,7 +289,7 @@ function getUriExtension(uri: string, fallback: string) {
 }
 
 async function cleanupPendingMemoryMedia(record: PendingMemoryRecord) {
-  await Promise.all([record.imageUri, record.videoUri].filter(Boolean).map(async (uri) => {
+  await Promise.all([record.imageUri, record.videoUri, record.audioUri].filter(Boolean).map(async (uri) => {
     if (!uri?.startsWith(PENDING_MEDIA_DIR)) return;
     const info = await FileSystem.getInfoAsync(uri);
     if (info.exists) await FileSystem.deleteAsync(uri, { idempotent: true });

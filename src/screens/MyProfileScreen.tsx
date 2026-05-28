@@ -12,18 +12,16 @@ import { MemoryReplyThreadPreview } from '../../src/components/MemoryReplyThread
 import { ProfileBackgroundBackdrop } from '../../src/components/profile';
 import { WallPostCard } from '../../src/components/WallPostCard';
 import { useAuth } from '../../src/features/auth/AuthContext';
-import { usePremium } from '../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
 import { cropAvatarImage } from '../../src/lib/avatarImage';
-import { contrastText, contrastTextSoft } from '../../src/lib/contrastText';
+import { getReadableSurfaceColors, type ReadableSurfaceColors } from '../../src/lib/contrastText';
 import { groupPostsByMemoryDateDay } from '../../src/lib/memoryDate';
 import { onCapturedUri } from '../../src/lib/cameraHandoff';
 import { avatarImagePickerOptions } from '../../src/lib/imagePickerPresets';
 import { getProfileScreenGradientColors } from '../../src/hooks/useEffectiveProfileTheme';
 import { backOnce, pushOnce } from '../../src/lib/navigationGuard';
-import { showGalleryPaywall } from '../../src/lib/premiumGates';
 import { protectTextFromFontClipping } from '../../src/theme/fontProtection';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
@@ -32,15 +30,22 @@ import type { WallPost } from '../../src/types/domain';
 export default function MyProfileScreen() {
   const router = useRouter();
   const { currentUser, updateProfile } = useAuth();
-  const { isPremium } = usePremium();
   const { getProfileWallItemsForUser, getRepliesForWallPost, getUserById, getWallPostById, removePostFromProfileWall } = useSocialGraph();
   const { colors, fonts } = useTheme();
-  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
+  const readableSurfaces = useMemo(() => ({
+    page: getReadableSurfaceColors(colors.canvas, colors),
+    paper: getReadableSurfaceColors(colors.paper, colors),
+    paperMuted: getReadableSurfaceColors(colors.paperMuted, colors),
+  }), [colors]);
+  const styles = useMemo(() => makeStyles(colors, fonts, readableSurfaces), [colors, fonts, readableSurfaces]);
 
   const [displayName, setDisplayName] = useState(currentUser?.displayName ?? '');
   const [localImageUri, setLocalImageUri] = useState<string | null>(null);
+  const [personalityTraits, setPersonalityTraits] = useState<string[]>(currentUser?.profilePersonalityTraits ?? []);
+  const [newPersonalityTrait, setNewPersonalityTrait] = useState('');
   const [facts, setFacts] = useState<string[]>(currentUser?.profileFacts ?? []);
   const [newFact, setNewFact] = useState('');
+  const [profileChipSaving, setProfileChipSaving] = useState(false);
   const [saving, setSaving] = useState(false);
   const [removingProfilePostId, setRemovingProfilePostId] = useState<string | null>(null);
   const [memoryWallViewMode, setMemoryWallViewMode] = useState<MemoryWallViewMode>('timeline');
@@ -69,19 +74,18 @@ export default function MyProfileScreen() {
   const displayImage = localImageUri ?? currentUser.avatarPath ?? null;
   const profileBackgroundUri = currentUser.profileBgImagePath ?? null;
   const previewName = displayName.trim() || currentUser.displayName;
+  const savedPersonalityTraits = currentUser.profilePersonalityTraits ?? [];
   const savedFacts = currentUser.profileFacts ?? [];
   const hasProfileChanges =
     displayName.trim() !== currentUser.displayName ||
     localImageUri !== null ||
+    personalityTraits.length !== savedPersonalityTraits.length ||
+    personalityTraits.some((trait, index) => trait !== savedPersonalityTraits[index]) ||
     facts.length !== savedFacts.length ||
     facts.some((fact, index) => fact !== savedFacts[index]);
   const topBar = undefined;
 
   async function pickPhoto() {
-    if (!isPremium) {
-      showGalleryPaywall(() => pushOnce(router, '/(app)/store'));
-      return;
-    }
     const result = await ImagePicker.launchImageLibraryAsync(avatarImagePickerOptions);
     if (!result.canceled && result.assets[0]) {
       try {
@@ -96,15 +100,73 @@ export default function MyProfileScreen() {
     pushOnce(router, { pathname: '/(app)/camera', params: { handoff: '1', avatarHandoff: '1' } });
   }
 
-  function addFact() {
-    const t = newFact.trim();
-    if (!t || facts.includes(t)) return;
-    setFacts((prev) => [...prev, t]);
-    setNewFact('');
+  async function saveProfileChips(
+    updates: { profileFacts?: string[]; profilePersonalityTraits?: string[] },
+    rollback: () => void,
+  ) {
+    setProfileChipSaving(true);
+    try {
+      await updateProfile(updates);
+      return true;
+    } catch (err: any) {
+      rollback();
+      Alert.alert('Could not save profile details', err.message ?? 'Try again in a moment.');
+      return false;
+    } finally {
+      setProfileChipSaving(false);
+    }
   }
 
-  function removeFact(fact: string) {
-    setFacts((prev) => prev.filter((f) => f !== fact));
+  async function addPersonalityTrait() {
+    if (profileChipSaving) return;
+    const trait = newPersonalityTrait.trim();
+    if (!trait || personalityTraits.some((entry) => entry.toLowerCase() === trait.toLowerCase())) return;
+    const previousTraits = personalityTraits;
+    const nextTraits = [...personalityTraits, trait];
+    setPersonalityTraits(nextTraits);
+    setNewPersonalityTrait('');
+    const saved = await saveProfileChips(
+      { profilePersonalityTraits: nextTraits },
+      () => setPersonalityTraits(previousTraits),
+    );
+    if (!saved) setNewPersonalityTrait(trait);
+  }
+
+  async function removePersonalityTrait(trait: string) {
+    if (profileChipSaving) return;
+    const previousTraits = personalityTraits;
+    const nextTraits = personalityTraits.filter((entry) => entry !== trait);
+    setPersonalityTraits(nextTraits);
+    await saveProfileChips(
+      { profilePersonalityTraits: nextTraits },
+      () => setPersonalityTraits(previousTraits),
+    );
+  }
+
+  async function addFact() {
+    if (profileChipSaving) return;
+    const t = newFact.trim();
+    if (!t || facts.includes(t)) return;
+    const previousFacts = facts;
+    const nextFacts = [...facts, t];
+    setFacts(nextFacts);
+    setNewFact('');
+    const saved = await saveProfileChips(
+      { profileFacts: nextFacts },
+      () => setFacts(previousFacts),
+    );
+    if (!saved) setNewFact(t);
+  }
+
+  async function removeFact(fact: string) {
+    if (profileChipSaving) return;
+    const previousFacts = facts;
+    const nextFacts = facts.filter((f) => f !== fact);
+    setFacts(nextFacts);
+    await saveProfileChips(
+      { profileFacts: nextFacts },
+      () => setFacts(previousFacts),
+    );
   }
 
   async function handleSave() {
@@ -114,6 +176,7 @@ export default function MyProfileScreen() {
       await updateProfile({
         displayName: displayName.trim() || undefined,
         avatarLocalUri: localImageUri,
+        profilePersonalityTraits: personalityTraits,
         profileFacts: facts,
       });
       backOnce(router);
@@ -151,6 +214,7 @@ export default function MyProfileScreen() {
         header={topBar}
         floatingHeaderOnScroll
         gradientColors={getProfileScreenGradientColors(profileBackgroundUri, null)}
+        footerAvoidsFloatingTabBar
         footer={hasProfileChanges ? (
           <ActionButton label={saving ? 'Saving…' : 'Save Profile'} onPress={handleSave} disabled={saving} />
         ) : undefined}
@@ -192,8 +256,39 @@ export default function MyProfileScreen() {
           value={displayName}
           onChangeText={setDisplayName}
           placeholder={currentUser.displayName}
-          placeholderTextColor={colors.inkMuted}
+          placeholderTextColor={colors.ink}
         />
+      </View>
+
+      <View style={styles.fieldGroup}>
+        <Text style={styles.fieldLabel}>Personality Traits</Text>
+        <Text style={styles.fieldHint}>Short traits friends can see and AI captions can use.</Text>
+        {personalityTraits.length > 0 && (
+          <View style={styles.factList}>
+            {personalityTraits.map((trait) => (
+              <View key={trait} style={styles.factChip}>
+                <Text style={styles.factChipText}>{trait}</Text>
+                <Pressable disabled={profileChipSaving} onPress={() => void removePersonalityTrait(trait)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Remove trait: ${trait}`}>
+                  <Ionicons name="close" size={14} color={colors.error} />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
+        <View style={styles.addFactRow}>
+          <TextInput
+            style={styles.addFactInput}
+            value={newPersonalityTrait}
+            onChangeText={setNewPersonalityTrait}
+            placeholder="Add a trait..."
+            placeholderTextColor={colors.ink}
+            onSubmitEditing={() => void addPersonalityTrait()}
+            returnKeyType="done"
+          />
+          <Pressable disabled={profileChipSaving} onPress={() => void addPersonalityTrait()} style={[styles.addFactButton, profileChipSaving && styles.addFactButtonDisabled]} accessibilityRole="button" accessibilityLabel="Add personality trait">
+            <Text style={styles.addFactButtonLabel}>{profileChipSaving ? '...' : '+'}</Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* Profile Facts */}
@@ -205,7 +300,7 @@ export default function MyProfileScreen() {
             {facts.map((f) => (
               <View key={f} style={styles.factChip}>
                 <Text style={styles.factChipText}>{f}</Text>
-                <Pressable onPress={() => removeFact(f)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Remove fact: ${f}`}>
+                <Pressable disabled={profileChipSaving} onPress={() => void removeFact(f)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Remove fact: ${f}`}>
                   <Ionicons name="close" size={14} color={colors.error} />
                 </Pressable>
               </View>
@@ -218,12 +313,12 @@ export default function MyProfileScreen() {
             value={newFact}
             onChangeText={setNewFact}
             placeholder="Add a fact…"
-            placeholderTextColor={colors.inkMuted}
-            onSubmitEditing={addFact}
+            placeholderTextColor={colors.ink}
+            onSubmitEditing={() => void addFact()}
             returnKeyType="done"
           />
-          <Pressable onPress={addFact} style={styles.addFactButton} accessibilityRole="button" accessibilityLabel="Add fact">
-            <Text style={styles.addFactButtonLabel}>+</Text>
+          <Pressable disabled={profileChipSaving} onPress={() => void addFact()} style={[styles.addFactButton, profileChipSaving && styles.addFactButtonDisabled]} accessibilityRole="button" accessibilityLabel="Add fact">
+            <Text style={styles.addFactButtonLabel}>{profileChipSaving ? '...' : '+'}</Text>
           </Pressable>
         </View>
       </View>
@@ -244,7 +339,7 @@ export default function MyProfileScreen() {
           emptyHint="No memories featured yet. Add favorites from a shared memory wall."
           getGridExtraHeight={(post) => {
             const profileWallItem = profileWallItems.find((item) => item.wallPostId === post.id);
-            return profileWallItem?.repliesHidden ? 0 : getReplyGridExtraHeight(getRepliesForWallPost(post.id).length);
+            return profileWallItem?.repliesHidden ? 0 : getReplyGridExtraHeight(getRepliesForWallPost(post.id));
           }}
           themeColors={colors}
           viewMode={memoryWallViewMode}
@@ -252,6 +347,9 @@ export default function MyProfileScreen() {
             const authorName = post.authorUserId === currentUser.id
               ? currentUser.displayName
               : getUserById(post.authorUserId)?.displayName ?? 'Friend';
+            const promptAuthorName = post.memoryPromptRequestId || post.promptVoice || post.promptText
+              ? (post.subjectUserId ? getUserById(post.subjectUserId)?.displayName : null) ?? 'Someone'
+              : undefined;
             const referencedPost = post.referencedWallPostId ? getWallPostById(post.referencedWallPostId) ?? null : null;
             const profileWallItem = profileWallItems.find((item) => item.wallPostId === post.id);
             const repliesHidden = profileWallItem?.repliesHidden ?? false;
@@ -259,6 +357,7 @@ export default function MyProfileScreen() {
             const replyItems = replies.map((reply) => ({
               id: reply.id,
               body: reply.body,
+              voice: reply.voice,
               authorName: getUserById(reply.authorUserId)?.displayName ?? 'Someone',
             }));
             return (
@@ -271,6 +370,7 @@ export default function MyProfileScreen() {
                   displayMode={context?.viewMode}
                   referencedPost={referencedPost}
                   referencedPostAuthorName={referencedPost ? getUserById(referencedPost.authorUserId)?.displayName ?? 'Someone' : undefined}
+                  promptAuthorName={promptAuthorName}
                   shareable
                 />
                 {!repliesHidden ? (
@@ -302,13 +402,21 @@ export default function MyProfileScreen() {
   );
 }
 
-function getReplyGridExtraHeight(replyCount: number) {
-  const visibleReplies = Math.min(replyCount, 3);
-  return 34 + visibleReplies * 28 + (replyCount > visibleReplies ? 24 : 0);
+function getReplyGridExtraHeight(replies: { voice?: unknown }[]) {
+  const visibleReplies = replies.slice(-3);
+  return 34 + visibleReplies.reduce((height, reply) => height + (reply.voice ? 42 : 28), 0) + (replies.length > visibleReplies.length ? 24 : 0);
 }
 
 const AVATAR_SIZE = 100;
-const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
+const makeStyles = (
+  colors: ColorTokens,
+  fonts: FontSet,
+  readableSurfaces: {
+    page: ReadableSurfaceColors;
+    paper: ReadableSurfaceColors;
+    paperMuted: ReadableSurfaceColors;
+  },
+) =>
   StyleSheet.create({
     screenShell: { flex: 1 },
     profileBackgroundLayer: {
@@ -327,10 +435,10 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       ...StyleSheet.absoluteFillObject,
       backgroundColor: colors.canvas + '99',
     },
-    backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
-    title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, marginTop: spacing.sm, ...protectTextFromFontClipping(fonts.heading, 28) },
-    subtitle: { fontFamily: fonts.body, fontSize: 14, color: colors.inkSoft, marginBottom: spacing.lg },
+    backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
+    title: { fontFamily: fonts.heading, fontSize: 28, color: readableSurfaces.page.text, marginTop: spacing.sm, ...protectTextFromFontClipping(fonts.heading, 28) },
+    subtitle: { fontFamily: fonts.body, fontSize: 14, color: readableSurfaces.page.mutedText, marginBottom: spacing.lg },
 
     avatarSection: { alignItems: 'center', gap: spacing.sm, marginBottom: spacing.lg },
     avatarFrame: {
@@ -352,11 +460,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
       borderRadius: radius.pill, backgroundColor: colors.paper,
     },
-    photoPillLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.ink },
+    photoPillLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: readableSurfaces.paper.text },
 
     fieldGroup: { marginBottom: spacing.lg },
-    fieldLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft, marginBottom: spacing.xs, textTransform: 'uppercase', letterSpacing: 0.5 },
-    fieldHint: { fontFamily: fonts.body, fontSize: 13, color: colors.inkMuted, marginBottom: spacing.sm },
+    fieldLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: readableSurfaces.page.text, marginBottom: spacing.xs, textTransform: 'uppercase', letterSpacing: 0.5 },
+    fieldHint: { fontFamily: fonts.body, fontSize: 13, color: readableSurfaces.page.mutedText, marginBottom: spacing.sm },
     textInput: {
       fontFamily: fonts.body, fontSize: 16, color: colors.ink,
       backgroundColor: colors.paper, borderRadius: radius.md,
@@ -369,8 +477,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: colors.paper, borderRadius: radius.pill,
       paddingHorizontal: spacing.sm, paddingVertical: 4,
     },
-    factChipText: { fontFamily: fonts.body, fontSize: 13, color: colors.ink },
-    factChipRemove: { fontFamily: fonts.bodyMedium, fontSize: 16, color: colors.inkMuted },
+    factChipText: { fontFamily: fonts.body, fontSize: 13, color: readableSurfaces.paper.text },
+    factChipRemove: { fontFamily: fonts.bodyMedium, fontSize: 16, color: readableSurfaces.paper.mutedText },
 
     addFactRow: { flexDirection: 'row', gap: spacing.xs },
     addFactInput: {
@@ -382,6 +490,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: 40, height: 40, borderRadius: 20,
       backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
     },
+    addFactButtonDisabled: { opacity: 0.55 },
     addFactButtonLabel: { fontFamily: fonts.heading, fontSize: 20, color: colors.white, ...protectTextFromFontClipping(fonts.heading, 20) },
 
     memoryWallSection: { gap: spacing.sm, marginTop: spacing.sm, marginBottom: spacing.xl },

@@ -1,9 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { CachedRemoteImage } from './CachedRemoteImage';
+import { useMusicPreference } from '../features/music/MusicPreferenceContext';
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
+import { resolveSongForPreferredService } from '../lib/musicLinks';
 import { searchSongPreviews } from '../lib/songSearch';
 import { spacing } from '../theme/tokens';
 import type { FontSet } from '../theme/typography';
@@ -17,10 +20,12 @@ interface SongSearchPickerProps {
 
 export function SongSearchPicker({ selectedSong, onSelect, onRemove }: SongSearchPickerProps) {
   const { colors, fonts } = useTheme();
+  const { musicOpenPreference } = useMusicPreference();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SongAttachment[]>([]);
   const [loading, setLoading] = useState(false);
+  const [resolvingSongKey, setResolvingSongKey] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -58,8 +63,17 @@ export function SongSearchPicker({ selectedSong, onSelect, onRemove }: SongSearc
     };
   }, [query]);
 
-  function handleSelectSong(song: SongAttachment) {
-    onSelect(song);
+  async function handleSelectSong(song: SongAttachment) {
+    const songKey = `${song.provider}-${song.providerTrackId}`;
+    setResolvingSongKey(songKey);
+    setError('');
+    try {
+      onSelect(await resolveSongForPreferredService(song, musicOpenPreference));
+    } catch {
+      onSelect(song);
+    } finally {
+      setResolvingSongKey(null);
+    }
   }
 
   function handleRemoveSong() {
@@ -70,12 +84,12 @@ export function SongSearchPicker({ selectedSong, onSelect, onRemove }: SongSearc
     <View style={styles.container}>
       <Text style={styles.label}>Song</Text>
       <View style={styles.searchBox}>
-        <Ionicons name="search" size={18} color={colors.inkMuted} />
+        <Ionicons name="search" size={18} color={colors.ink} />
         <TextInput
           value={query}
           onChangeText={setQuery}
           placeholder="Search a song or artist"
-          placeholderTextColor={colors.inkMuted}
+          placeholderTextColor={colors.ink}
           style={styles.searchInput}
           autoCorrect={false}
           returnKeyType="search"
@@ -90,7 +104,7 @@ export function SongSearchPicker({ selectedSong, onSelect, onRemove }: SongSearc
             <Text style={styles.resultArtist} numberOfLines={1}>{selectedSong.artist}</Text>
           </View>
           <Pressable onPress={handleRemoveSong} style={styles.removeButton} accessibilityRole="button" accessibilityLabel="Remove selected song">
-            <Ionicons name="close" size={18} color={colors.inkSoft} />
+            <Ionicons name="close" size={18} color={colors.ink} />
           </Pressable>
         </View>
       ) : null}
@@ -101,10 +115,12 @@ export function SongSearchPicker({ selectedSong, onSelect, onRemove }: SongSearc
       <View style={styles.resultsList}>
         {results.map((song) => {
           const selected = selectedSong?.provider === song.provider && selectedSong.providerTrackId === song.providerTrackId;
+          const resolving = resolvingSongKey === `${song.provider}-${song.providerTrackId}`;
           return (
             <Pressable
               key={`${song.provider}-${song.providerTrackId}`}
               onPress={() => handleSelectSong(song)}
+              disabled={!!resolvingSongKey}
               style={[styles.resultRow, selected && styles.activeResultRow]}
               accessibilityRole="button"
               accessibilityLabel={`Select ${song.title} by ${song.artist}`}
@@ -114,7 +130,11 @@ export function SongSearchPicker({ selectedSong, onSelect, onRemove }: SongSearc
                 <Text style={styles.resultTitle} numberOfLines={1}>{song.title}</Text>
                 <Text style={styles.resultArtist} numberOfLines={1}>{song.artist}</Text>
               </View>
-              {selected ? <Ionicons name="checkmark-circle" size={20} color={colors.accent} /> : null}
+              {resolving ? (
+                <Text style={styles.resolvingText}>Matching...</Text>
+              ) : selected ? (
+                <Ionicons name="checkmark-circle" size={20} color={colors.accent} />
+              ) : null}
             </Pressable>
           );
         })}
@@ -124,7 +144,7 @@ export function SongSearchPicker({ selectedSong, onSelect, onRemove }: SongSearc
 }
 
 function SongThumb({ song, colors }: { song: SongAttachment; colors: ColorTokens }) {
-  if (song.artworkUrl) return <Image source={{ uri: song.artworkUrl }} style={thumbStyles.artwork} />;
+  if (song.artworkUrl) return <CachedRemoteImage uri={song.artworkUrl} style={thumbStyles.artwork} />;
   return (
     <View style={[thumbStyles.fallback, { backgroundColor: colors.paperMuted }]}>
       <Ionicons name="musical-notes" size={18} color={colors.accent} />
@@ -196,7 +216,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
   },
   resultArtist: {
     marginTop: 2,
-    color: colors.inkSoft,
+    color: colors.ink,
     fontFamily: fonts.body,
     fontSize: 12,
   },
@@ -217,6 +237,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
     color: colors.error,
     fontFamily: fonts.body,
     fontSize: 12,
+  },
+  resolvingText: {
+    color: colors.inkMuted,
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
   },
   resultsList: {
     gap: spacing.xs,

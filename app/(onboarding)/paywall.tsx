@@ -22,19 +22,34 @@ interface Perk {
 
 const PERKS: Perk[] = [
   {
-    icon: 'videocam-outline',
-    title: 'Live Memory Cards',
-    body: 'Hold the shutter to save a short video with sound, then keep a beautiful still cover on the wall.',
-  },
-  {
     icon: 'images-outline',
     title: 'Use your whole camera roll',
     body: 'Turn old photos, screenshots, trips, and favorite moments into memory cards anytime.',
   },
   {
+    icon: 'camera-outline',
+    title: 'Media memories',
+    body: 'Add clean photo and short video memories that are separate from Memory Cards.',
+  },
+  {
+    icon: 'gift-outline',
+    title: 'Gift notes',
+    body: 'Lock surprise notes for friends that unlock later and become memories.',
+  },
+  {
     icon: 'sparkles-outline',
     title: 'AI captions that sound like you',
     body: 'Get witty, sweet, or heartfelt caption ideas using the photo and your friendship context.',
+  },
+  {
+    icon: 'chatbubbles-outline',
+    title: 'Send memory prompts',
+    body: 'Ask friends for songs, photo memories, voice memories, or notes when you want something new on the wall.',
+  },
+  {
+    icon: 'mic-outline',
+    title: 'Voice memories',
+    body: 'Record quick audio memories and reply to voice prompts when words are better said out loud.',
   },
   {
     icon: 'calendar-outline',
@@ -107,12 +122,10 @@ export default function OnboardingPaywallScreen() {
     }
   }
 
-  async function handleLater() {
+  function handleLater() {
     if (busy) return;
     setBusy(true);
-    try {
-      await finish();
-    } catch {
+    if (!replaceOnce(router, '/(onboarding)/free-features')) {
       setBusy(false);
     }
   }
@@ -128,8 +141,8 @@ export default function OnboardingPaywallScreen() {
 
   return (
     <OnboardingFrame
-      step={11}
-      totalSteps={12}
+      step={12}
+      totalSteps={13}
       eyebrow="One last thing"
       title="Make every friendship feel personal."
       subtitle={`Unlock every creative tool for ${PRICE_LABEL}. Cancel anytime in Settings.`}
@@ -208,7 +221,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     planCardBest: {
       borderColor: colors.accent,
-      backgroundColor: colors.accent + '18',
+      backgroundColor: colors.paper,
     },
     bestBadge: {
       alignSelf: 'flex-start',
@@ -226,7 +239,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     planLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     planPrice: { fontFamily: fonts.heading, fontSize: 25, color: colors.ink },
-    planPeriod: { fontFamily: fonts.body, fontSize: 12, color: colors.inkSoft },
+    planPeriod: { fontFamily: fonts.body, fontSize: 12, color: colors.ink },
     planSavings: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent, marginTop: spacing.xs },
     errorText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
     perkRow: {
@@ -243,13 +256,13 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: 36,
       height: 36,
       borderRadius: 18,
-      backgroundColor: colors.accent + '18',
+      backgroundColor: colors.paper,
       alignItems: 'center',
       justifyContent: 'center',
     },
     perkBody: { flex: 1, gap: 2 },
     perkTitle: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
-    perkBodyText: { fontFamily: fonts.body, fontSize: 13, lineHeight: 19, color: colors.inkSoft },
+    perkBodyText: { fontFamily: fonts.body, fontSize: 13, lineHeight: 19, color: colors.ink },
     fineprint: {
       fontFamily: fonts.body,
       fontSize: 12,

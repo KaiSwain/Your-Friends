@@ -5,11 +5,11 @@
     "scheme": "yourfriends",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/yf-icon-3.png",
+    "icon": "./assets/Op 1.png",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/Op 1 splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#0A0A0A"
     },
@@ -20,7 +20,7 @@
       "usesAppleSignIn": true,
       "infoPlist": {
         "NSCameraUsageDescription": "YourFriends needs access to your camera to scan QR codes and capture memories.",
-        "NSMicrophoneUsageDescription": "YourFriends needs access to your microphone to record sound for Live Memory Cards.",
+        "NSMicrophoneUsageDescription": "YourFriends needs access to your microphone to record sound for Live Memory Cards and voice memories.",
         "NSPhotoLibraryUsageDescription": "YourFriends needs access to your photos to add memories.",
         "NSPhotoLibraryAddUsageDescription": "YourFriends needs permission to save photos to your library.",
         "NSMotionUsageDescription": "YourFriends uses motion to detect gentle shakes while a memory card develops.",
@@ -30,7 +30,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/yf-icon-3.png",
         "backgroundColor": "#0A0A0A"
       },
       "package": "com.yourfriends.app",
@@ -65,7 +65,7 @@
         "expo-camera",
         {
           "cameraPermission": "YourFriends needs access to your camera to scan QR codes and capture memories.",
-          "microphonePermission": "YourFriends needs access to your microphone to record sound for Live Memory Cards.",
+          "microphonePermission": "YourFriends needs access to your microphone to record sound for Live Memory Cards and voice memories.",
           "recordAudioAndroid": true
         }
       ],
@@ -78,16 +78,22 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/yf-icon-3.png",
+          "icon": "./assets/Op 1.png",
           "color": "#0A0A0A"
         }
       ],
       "expo-iap",
       [
+        "expo-av",
+        {
+          "microphonePermission": "YourFriends needs access to your microphone to record voice memories."
+        }
+      ],
+      [
         "expo-audio",
         {
-          "microphonePermission": false,
-          "recordAudioAndroid": false,
+          "microphonePermission": "YourFriends needs access to your microphone to record voice memories.",
+          "recordAudioAndroid": true,
           "enableBackgroundRecording": false
         }
       ],

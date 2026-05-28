@@ -1,17 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../../../src/components/ActionButton';
 import { AppScreen } from '../../../../src/components/AppScreen';
+import { TextOrVoiceComposer } from '../../../../src/components/TextOrVoiceComposer';
+import { VoiceMemoryCard } from '../../../../src/components/VoiceMemoryCard';
 import { WallPostCard } from '../../../../src/components/WallPostCard';
 import { useAuth } from '../../../../src/features/auth/AuthContext';
 import { useSocialGraph } from '../../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../../src/features/theme/ThemeContext';
 import { backOnce } from '../../../../src/lib/navigationGuard';
+import { uploadMemoryAudio } from '../../../../src/lib/memoryMediaUpload';
 import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
-import { radius, spacing } from '../../../../src/theme/tokens';
+import { radius, semanticColors, spacing } from '../../../../src/theme/tokens';
+import type { VoiceAttachment } from '../../../../src/types/domain';
 
 export default function MemoryRepliesScreen() {
   const router = useRouter();
@@ -24,6 +28,7 @@ export default function MemoryRepliesScreen() {
   const post = postId ? getWallPostById(postId) : undefined;
   const replies = postId ? getRepliesForWallPost(postId) : [];
   const [replyDraft, setReplyDraft] = useState('');
+  const [replyVoice, setReplyVoice] = useState<VoiceAttachment | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -37,15 +42,22 @@ export default function MemoryRepliesScreen() {
 
   async function handleSendReply() {
     if (!post || !currentUser) return;
-    if (!replyDraft.trim()) {
-      setError('Write a reply first.');
+    if (!replyDraft.trim() && !replyVoice) {
+      setError('Write or record a reply first.');
       return;
     }
     setBusy(true);
     setError('');
     try {
-      await addMemoryReply(post.id, currentUser.id, replyDraft);
+      const uploadedVoice = replyVoice
+        ? {
+          ...replyVoice,
+          uri: await uploadMemoryAudio(replyVoice.uri, { prefix: `${currentUser.id}/voice-replies` }),
+        }
+        : null;
+      await addMemoryReply(post.id, currentUser.id, replyDraft, uploadedVoice);
       setReplyDraft('');
+      setReplyVoice(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add reply.');
     } finally {
@@ -72,7 +84,7 @@ export default function MemoryRepliesScreen() {
   }
 
   return (
-    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={busy ? 'Replying...' : 'Send reply'} onPress={handleSendReply} disabled={busy || !replyDraft.trim()} />}>
+    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={busy ? 'Replying...' : 'Send reply'} onPress={handleSendReply} disabled={busy || (!replyDraft.trim() && !replyVoice)} accentColor={semanticColors.replyPurple} />}>
       <Text style={styles.title}>Memory Replies</Text>
       <Text style={styles.subtitle}>Keep the conversation tied to this memory.</Text>
 
@@ -100,7 +112,19 @@ export default function MemoryRepliesScreen() {
                   <Text style={styles.replyAuthor}>{author?.displayName ?? 'Someone'}</Text>
                   <Text style={styles.replyTime}>{formatReplyDate(reply.createdAt)}</Text>
                 </View>
-                <Text style={styles.replyText}>{reply.body}</Text>
+                {reply.body ? <Text style={styles.replyText}>{reply.body}</Text> : null}
+                {reply.voice ? (
+                  <VoiceMemoryCard
+                    key={`${reply.id}:${reply.voice.uri}`}
+                    voice={reply.voice}
+                    postId={`reply:${reply.id}`}
+                    authorName={author?.displayName ?? 'Someone'}
+                    themeColors={colors}
+                    variant="embedded"
+                    label={`${author?.displayName ?? 'Someone'}'s voice`}
+                    preview
+                  />
+                ) : null}
               </View>
             </Pressable>
           );
@@ -111,13 +135,19 @@ export default function MemoryRepliesScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Add a reply</Text>
-        <TextInput
-          multiline
-          value={replyDraft}
-          onChangeText={setReplyDraft}
+        <TextOrVoiceComposer
+          text={replyDraft}
+          onTextChange={setReplyDraft}
+          voice={replyVoice}
+          onVoiceChange={(voice) => {
+            setReplyVoice(voice);
+            setError('');
+          }}
+          previewAuthorName={currentUser.displayName}
           placeholder="Write a quick reply..."
-          placeholderTextColor={colors.inkMuted}
-          style={styles.replyInput}
+          voiceLabel="Voice reply"
+          voiceHelperText="Record a voice reply instead of typing."
+          textInputStyle={styles.replyInput}
         />
       </View>
 
@@ -133,8 +163,8 @@ function formatReplyDate(value: string) {
 }
 
 const makeStyles = (colors: ReturnType<typeof useTheme>['colors'], fonts: ReturnType<typeof useTheme>['fonts']) => StyleSheet.create({
-  backButton: { paddingVertical: spacing.xs },
-  backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+  backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+  backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
   title: { fontFamily: fonts.heading, fontSize: 32, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 32) },
   subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
   preview: { alignItems: 'center' },

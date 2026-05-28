@@ -21,6 +21,7 @@ export const seedUsers: AppUser[] = [
     profileBgImagePublic: false,
     // Store example facts that appear on Avery's profile.
     profileFacts: ['Keeps birthday notes in a paper journal.', 'Collects tiny cafe receipts while traveling.'],
+    profilePersonalityTraits: ['Sentimental', 'Thoughtful'],
     // Store Avery's profile creation timestamp.
     createdAt: '2026-03-01T09:00:00.000Z',
   },
@@ -42,6 +43,7 @@ export const seedUsers: AppUser[] = [
     profileBgImagePublic: false,
     // Store example facts that appear on Noah's profile.
     profileFacts: ['Remembers everyone’s coffee order.', 'Calls after hard weeks instead of texting.'],
+    profilePersonalityTraits: ['Loyal', 'Grounded'],
     // Store Noah's profile creation timestamp.
     createdAt: '2026-02-18T18:20:00.000Z',
   },
@@ -63,6 +65,7 @@ export const seedUsers: AppUser[] = [
     profileBgImagePublic: false,
     // Store example facts that appear on Mina's profile.
     profileFacts: ['Sends voice notes from Sunday walks.', 'Finds vintage photo booths in every city.'],
+    profilePersonalityTraits: ['Playful', 'Adventurous'],
     // Store Mina's profile creation timestamp.
     createdAt: '2026-02-28T14:40:00.000Z',
   },
@@ -84,6 +87,7 @@ export const seedUsers: AppUser[] = [
     profileBgImagePublic: false,
     // Store example facts that appear on Lina's profile.
     profileFacts: ['Leaves annotated books as gifts.', 'Never forgets an anniversary dinner.'],
+    profilePersonalityTraits: ['Warm', 'Intentional'],
     // Store Lina's profile creation timestamp.
     createdAt: '2026-03-06T12:05:00.000Z',
   },
@@ -105,6 +109,7 @@ export const seedContacts: Contact[] = [
     nickname: 'Aunt Rosa',
     // Store example facts tied to this private contact.
     facts: ['Prefers handwritten thank-you notes.', 'Always brings apricot jam in summer.'],
+    personalityTraits: ['Generous', 'Nostalgic'],
     // Start with no relationship tags in the seed data.
     tags: [],
     // Leave the optional note empty.
@@ -138,6 +143,7 @@ export const seedContacts: Contact[] = [
     nickname: 'Lin',
     // Store example facts for the linked contact.
     facts: ['Met through design school.', 'Still sends screenshots of moonlit train rides.'],
+    personalityTraits: ['Creative', 'Tender'],
     // Start with no relationship tags in the seed data.
     tags: [],
     // Leave the optional note empty.

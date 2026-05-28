@@ -2,17 +2,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from 'expo-audio';
 import { useCallback, useEffect, useMemo, type ReactNode, type RefObject } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { CachedRemoteImage } from './CachedRemoteImage';
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
 import { safePauseAudioPlayer, safePlayAudioPlayer, safeSeekAudioPlayer } from '../lib/audioPlayerControls';
-import { useMusicPreference } from '../features/music/MusicPreferenceContext';
+import { getReadableSurfaceColors } from '../lib/contrastText';
+import { type MusicOpenPreference, useMusicPreference } from '../features/music/MusicPreferenceContext';
 import { getMusicServiceLabel, openSongInPreferredService } from '../lib/musicLinks';
 import { announceActiveSongPreview, subscribeActiveSongPreview } from '../lib/songPreviewPlayback';
 import { buildSongWaveform } from '../lib/songWaveform';
 import { shareMemoryWithSong } from '../lib/shareMemoryWithSong';
-import { spacing } from '../theme/tokens';
+import { semanticColors, spacing } from '../theme/tokens';
 import { protectTextFromFontClipping } from '../theme/fontProtection';
 import type { FontSet } from '../theme/typography';
 import type { SongAttachment } from '../types/domain';
@@ -26,31 +28,32 @@ interface SongMemoryCardProps {
   themeColors?: ColorTokens;
   preview?: boolean;
   editing?: boolean;
+  compact?: boolean;
   autoPlayKey?: string | number | null;
   onPress?: () => void;
   promptContent?: ReactNode;
+  responseLabel?: string;
+  footerContent?: ReactNode;
   children?: ReactNode;
   shareable?: boolean;
   shareMemoryRef?: RefObject<any>;
+  editingAccentColor?: string;
 }
 
-export function SongMemoryCard({ song, postId, body, authorName, createdAt, themeColors, preview, editing, autoPlayKey, onPress, promptContent, children, shareable, shareMemoryRef }: SongMemoryCardProps) {
+export function SongMemoryCard({ song, postId, body, themeColors, preview, editing, compact, autoPlayKey, onPress, promptContent, responseLabel, footerContent, children, shareable, shareMemoryRef, editingAccentColor }: SongMemoryCardProps) {
   const { colors: appColors, fonts, resolvedMode } = useTheme();
   const { musicOpenPreference } = useMusicPreference();
   const colors = themeColors ?? appColors;
-  const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
+  const providerColor = getMusicPreferenceColor(musicOpenPreference);
+  const editBorderColor = editingAccentColor ?? providerColor;
+  const surfaceText = useMemo(() => getReadableSurfaceColors(colors.canvas, colors), [colors]);
+  const styles = useMemo(() => makeStyles(colors, fonts, providerColor, editBorderColor, surfaceText.text), [colors, editBorderColor, fonts, providerColor, surfaceText.text]);
   const source = song.previewUrl ?? null;
   const player = useAudioPlayer(source, { updateInterval: 250 });
   const status = useAudioPlayerStatus(player);
   const waveform = useMemo(() => buildSongWaveform(`${song.provider}:${song.providerTrackId}:${song.title}:${song.artist}`), [song]);
   const progress = status.duration > 0 ? Math.min(1, Math.max(0, status.currentTime / status.duration)) : 0;
   const activeBars = Math.round(waveform.length * progress);
-  const dateLabel = useMemo(() => {
-    const date = new Date(createdAt);
-    if (Number.isNaN(date.getTime())) return '';
-    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  }, [createdAt]);
-
   useEffect(() => {
     setAudioModeAsync({
       playsInSilentMode: true,
@@ -113,26 +116,27 @@ export function SongMemoryCard({ song, postId, body, authorName, createdAt, them
     shareMemoryWithSong(shareMemoryRef, { song, preference: musicOpenPreference }).catch(() => undefined);
   }, [musicOpenPreference, shareMemoryRef, song]);
   const serviceLabel = getMusicServiceLabel(musicOpenPreference);
+  const isCompact = !!compact;
 
   const playerControls = (
-    <View style={styles.playerRow}>
+    <View style={[styles.playerRow, isCompact && styles.playerRowCompact]}>
       <Pressable
         onPress={handlePreviewPress}
-        style={styles.playButton}
+        style={[styles.playButton, isCompact && styles.playButtonCompact]}
         accessibilityRole="button"
         accessibilityLabel={status.playing ? 'Pause song preview' : 'Play song preview'}
       >
-        <Ionicons name={status.playing ? 'pause' : 'play'} size={20} color={colors.white} />
+        <Ionicons name={status.playing ? 'pause' : 'play'} size={isCompact ? 17 : 20} color={colors.white} />
       </Pressable>
-      <View style={styles.waveform}>
+      <View style={[styles.waveform, isCompact && styles.waveformCompact]}>
         {waveform.map((height, index) => (
           <View
             key={`${height}-${index}`}
             style={[
               styles.waveBar,
               {
-                height,
-                backgroundColor: index < activeBars ? colors.accent : colors.line,
+                height: isCompact ? Math.max(6, Math.round(height * 0.45)) : height,
+                backgroundColor: index < activeBars ? providerColor : colors.line,
               },
             ]}
           />
@@ -144,18 +148,21 @@ export function SongMemoryCard({ song, postId, body, authorName, createdAt, them
   const standaloneSong = !children;
 
   const card = (
-    <View style={[styles.card, editing && styles.editingCard]}>
-      <BlurView intensity={42} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={styles.cardBlur}>
+    <View style={[styles.card, isCompact && styles.cardCompact, editing && styles.editingCard]}>
+      <BlurView intensity={isCompact ? 28 : 42} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={[styles.cardBlur, isCompact && styles.cardBlurCompact]}>
+      <View pointerEvents="none" style={styles.memoryGlassTint} />
+      <View pointerEvents="none" style={styles.memoryGlassHighlight} />
       {promptContent}
+      {responseLabel ? <Text style={styles.responseLabel}>{responseLabel}</Text> : null}
 
-      {standaloneSong ? (
+      {standaloneSong && !isCompact ? (
         <View style={styles.standaloneHeader}>
           <View style={styles.bigArtworkWrap}>
             {song.artworkUrl ? (
-              <Image source={{ uri: song.artworkUrl }} style={styles.bigArtwork} />
+              <CachedRemoteImage uri={song.artworkUrl} style={styles.bigArtwork} />
             ) : (
               <View style={styles.bigArtworkFallback}>
-                <Ionicons name="musical-notes" size={72} color={colors.accent} />
+                <Ionicons name="musical-notes" size={72} color={providerColor} />
               </View>
             )}
             <Pressable
@@ -170,27 +177,25 @@ export function SongMemoryCard({ song, postId, body, authorName, createdAt, them
           <View style={styles.standaloneTitleBlock}>
             <Text style={styles.bigTitle} numberOfLines={2}>{song.title}</Text>
             <Text style={styles.bigArtist} numberOfLines={1}>{song.artist}</Text>
-            <Text style={styles.meta} numberOfLines={1}>{authorName}{dateLabel ? ` - ${dateLabel}` : ''}</Text>
           </View>
         </View>
       ) : (
         <View style={styles.headerRow}>
           <View style={styles.artworkWrap}>
             {song.artworkUrl ? (
-              <Image source={{ uri: song.artworkUrl }} style={styles.artwork} />
+              <CachedRemoteImage uri={song.artworkUrl} style={styles.artwork} />
             ) : (
               <View style={styles.artworkFallback}>
-                <Ionicons name="musical-notes" size={28} color={colors.accent} />
+                <Ionicons name="musical-notes" size={28} color={providerColor} />
               </View>
             )}
           </View>
           <View style={styles.titleBlock}>
             <Text style={styles.title} numberOfLines={2}>{song.title}</Text>
             <Text style={styles.artist} numberOfLines={1}>{song.artist}</Text>
-            <Text style={styles.meta} numberOfLines={1}>{authorName}{dateLabel ? ` - ${dateLabel}` : ''}</Text>
           </View>
           <Pressable onPress={openExternal} style={styles.iconButton} accessibilityRole="button" accessibilityLabel={`Open song in ${serviceLabel}`}>
-            <Ionicons name="open-outline" size={18} color={colors.inkSoft} />
+            <Ionicons name="open-outline" size={18} color={colors.ink} />
           </Pressable>
         </View>
       )}
@@ -206,6 +211,7 @@ export function SongMemoryCard({ song, postId, body, authorName, createdAt, them
           {body?.trim() ? <Text style={styles.body}>{body.trim()}</Text> : null}
         </>
       )}
+      {footerContent ? <View style={styles.footerContent}>{footerContent}</View> : null}
       {!song.previewUrl ? <Text style={styles.unavailable}>Preview unavailable</Text> : null}
       {preview ? <Text style={styles.previewLabel}>Preview</Text> : null}
       </BlurView>
@@ -242,30 +248,62 @@ function withAlpha(color: string, alpha: number) {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
-const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
+function getMusicPreferenceColor(preference: MusicOpenPreference) {
+  return preference === 'spotify' ? semanticColors.spotifyGreen : semanticColors.appleMusicOrange;
+}
+
+const makeStyles = (colors: ColorTokens, fonts: FontSet, providerColor: string, editBorderColor: string, readableTextColor: string) => StyleSheet.create({
   pressable: {
     width: '100%',
   },
   card: {
     width: '100%',
-    borderRadius: 8,
+    borderRadius: 26,
     borderWidth: 1,
-    borderColor: withAlpha(colors.line, 0.72),
-    backgroundColor: 'transparent',
+  borderColor: withAlpha(colors.white, 0.18),
+  backgroundColor: withAlpha(colors.paper, 0.56),
     overflow: 'hidden',
     shadowColor: colors.black,
-    shadowOpacity: 0.14,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
+    shadowOpacity: 0.18,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 9 },
+    elevation: 5,
+  },
+  cardCompact: {
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   cardBlur: {
     padding: spacing.md,
     gap: spacing.md,
     backgroundColor: 'transparent',
+    overflow: 'hidden',
+  },
+  cardBlurCompact: {
+    padding: spacing.md,
+    gap: spacing.sm,
   },
   editingCard: {
-    borderColor: colors.accent,
+    borderColor: editBorderColor,
+  },
+  memoryGlassTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: withAlpha(colors.paper, 0.12),
+  },
+  memoryGlassHighlight: {
+    position: 'absolute',
+    top: 1,
+    left: 18,
+    right: 18,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: withAlpha(colors.white, 0.72),
+  },
+  responseLabel: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: semanticColors.promptGold,
   },
   headerRow: {
     flexDirection: 'row',
@@ -307,7 +345,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
     paddingHorizontal: 2,
   },
   bigTitle: {
-    color: colors.ink,
+    color: readableTextColor,
     fontFamily: fonts.heading,
     fontSize: 22,
     lineHeight: 26,
@@ -315,14 +353,14 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
   },
   bigArtist: {
     marginTop: 4,
-    color: colors.inkSoft,
+    color: readableTextColor,
     fontFamily: fonts.body,
     fontSize: 15,
   },
   artworkWrap: {
-    width: 62,
-    height: 62,
-    borderRadius: 8,
+    width: 58,
+    height: 58,
+    borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: colors.paperMuted,
   },
@@ -340,7 +378,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
     minWidth: 0,
   },
   title: {
-    color: colors.ink,
+    color: readableTextColor,
     fontFamily: fonts.heading,
     fontSize: 18,
     lineHeight: 22,
@@ -348,13 +386,13 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
   },
   artist: {
     marginTop: 2,
-    color: colors.inkSoft,
+    color: readableTextColor,
     fontFamily: fonts.body,
     fontSize: 14,
   },
   meta: {
     marginTop: 5,
-    color: colors.inkMuted,
+    color: readableTextColor,
     fontFamily: fonts.body,
     fontSize: 12,
   },
@@ -374,13 +412,22 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
   },
+  playerRowCompact: {
+    minHeight: 42,
+    gap: spacing.sm,
+  },
   playButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.accent,
+    backgroundColor: providerColor,
+  },
+  playButtonCompact: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
   },
   disabledPlayButton: {
     backgroundColor: colors.inkMuted,
@@ -394,6 +441,10 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
     justifyContent: 'space-between',
     gap: 3,
   },
+  waveformCompact: {
+    height: 24,
+    gap: 2,
+  },
   waveBar: {
     flex: 1,
     minWidth: 2,
@@ -401,13 +452,18 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
     borderRadius: 3,
   },
   body: {
-    color: colors.ink,
+    color: readableTextColor,
     fontFamily: fonts.body,
     fontSize: 15,
     lineHeight: 21,
   },
   attachedContent: {
     alignItems: 'center',
+  },
+  footerContent: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.line + '66',
+    paddingTop: spacing.sm,
   },
   shareActions: {
     marginTop: spacing.sm,
@@ -430,11 +486,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
     gap: spacing.xs,
   },
   shareActionPrimary: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accent,
+    borderColor: providerColor,
+    backgroundColor: providerColor,
   },
   shareActionLabel: {
-    color: colors.inkSoft,
+    color: readableTextColor,
     fontFamily: fonts.bodyBold,
     fontSize: 12,
   },
@@ -442,7 +498,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
     color: colors.white,
   },
   unavailable: {
-    color: colors.inkMuted,
+    color: readableTextColor,
     fontFamily: fonts.body,
     fontSize: 12,
   },
@@ -452,7 +508,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) => StyleSheet.create({
     overflow: 'hidden',
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
-    color: colors.accent,
+    color: providerColor,
     backgroundColor: colors.paperMuted,
     fontFamily: fonts.bodyBold,
     fontSize: 11,

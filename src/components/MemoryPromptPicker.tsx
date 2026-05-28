@@ -17,8 +17,8 @@ export function MemoryPromptPicker({ prompts, onSelectPrompt }: MemoryPromptPick
       gap: spacing.sm,
       borderRadius: radius.lg,
       borderWidth: 1,
-      borderColor: colors.accent + '35',
-      backgroundColor: colors.accent + '0F',
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
       padding: spacing.md,
     },
     headerRow: {
@@ -35,7 +35,7 @@ export function MemoryPromptPicker({ prompts, onSelectPrompt }: MemoryPromptPick
       fontFamily: fonts.body,
       fontSize: 12,
       lineHeight: 17,
-      color: colors.inkSoft,
+      color: colors.ink,
     },
     scroll: {
       gap: spacing.xs,

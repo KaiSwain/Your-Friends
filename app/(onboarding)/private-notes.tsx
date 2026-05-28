@@ -19,12 +19,12 @@ export default function OnboardingPrivateNotesScreen() {
 
   return (
     <OnboardingFrame
-      step={6}
-      totalSteps={12}
+      step={7}
+      totalSteps={13}
       eyebrow="Private notes"
-      title="Keep the details only you need."
-      subtitle="Each profile can have private notes, links, gift ideas, and reminders that your friend never sees."
-      footer={<ActionButton label="Nice" onPress={() => pushOnce(router, '/(onboarding)/ai-captions')} />}
+      title="Write down what you want to remember."
+      subtitle="Private notes live on a friend’s profile, but only you can see them. Use them for gift ideas, links, photos, or little details you do not want to forget."
+      footer={<ActionButton label="Got it" onPress={() => pushOnce(router, '/(onboarding)/ai-captions')} />}
     >
       <View style={styles.profileCard}>
         <View style={styles.heroRow}>
@@ -43,20 +43,20 @@ export default function OnboardingPrivateNotesScreen() {
         <View style={styles.noteCard}>
           <View style={styles.noteHeader}>
             <Ionicons name="lock-closed" size={14} color={colors.accent} />
-            <Text style={styles.noteTitle}>Gift ideas</Text>
+            <Text style={styles.noteTitle}>Things to remember</Text>
           </View>
-          <Text style={styles.noteBody}>Handmade mug, film camera strap, cozy socks.</Text>
+          <Text style={styles.noteBody}>Loves ceramics. Usually gets oat milk. Ask about the studio class.</Text>
           <View style={styles.linkPill}>
             <Ionicons name="link-outline" size={14} color={colors.accent} />
-            <Text style={styles.linkText}>etsy.com/listing/ceramic-mug</Text>
+            <Text style={styles.linkText}>Gift idea link saved here</Text>
           </View>
         </View>
         <View style={styles.noteCardMuted}>
           <View style={styles.noteHeader}>
-            <Ionicons name="sparkles-outline" size={14} color={colors.inkSoft} />
-            <Text style={styles.noteMutedTitle}>Next time we talk</Text>
+            <Ionicons name="sparkles-outline" size={14} color={colors.ink} />
+            <Text style={styles.noteMutedTitle}>Why it helps</Text>
           </View>
-          <Text style={styles.noteMutedBody}>Ask how the new studio class is going.</Text>
+          <Text style={styles.noteMutedBody}>When you open their profile later, the context is right there for you.</Text>
         </View>
       </View>
     </OnboardingFrame>
@@ -111,8 +111,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       gap: spacing.sm,
       borderRadius: radius.md,
       borderWidth: 1,
-      borderColor: colors.accent + '66',
-      backgroundColor: colors.accent + '10',
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
       padding: spacing.md,
     },
     noteHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },

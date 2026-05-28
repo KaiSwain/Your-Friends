@@ -14,11 +14,12 @@ import { useAuth } from '../../src/features/auth/AuthContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import { getGoogleAuthMissingMessage, googleAuthRequestConfig, isGoogleAuthConfigured } from '../../src/lib/googleAuthConfig';
 import { backOnce, replaceOnce } from '../../src/lib/navigationGuard';
-import { peekIncomingReferralCode } from '../../src/lib/referrals';
 import type { ColorTokens } from '../../src/features/theme/themes';
 import { protectTextFromFontClipping } from '../../src/theme/fontProtection';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
+
+const MIN_PASSWORD_LENGTH = 6;
 
 export default function SignUpScreen() {
   const router = useRouter();
@@ -28,7 +29,6 @@ export default function SignUpScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [referralCode, setReferralCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -36,33 +36,32 @@ export default function SignUpScreen() {
   const [_googleRequest, googleResponse, googlePromptAsync] = Google.useIdTokenAuthRequest(googleAuthRequestConfig);
 
   useEffect(() => {
-    peekIncomingReferralCode().then((code) => {
-      if (code) setReferralCode((current) => current || code);
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
     if (googleResponse?.type === 'success') {
       const idToken = googleResponse.params.id_token;
       setBusy(true);
       setError('');
-      signInWithGoogle(idToken, referralCode).then((result) => {
+      signInWithGoogle(idToken).then((result) => {
         if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
         replaceOnce(router, '/');
       });
     }
-  }, [googleResponse]);
+  }, [googleResponse, router, signInWithGoogle]);
 
   async function handleSignUp() {
     setBusy(true);
     setError('');
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError('Use at least 6 characters for your password.');
+      setBusy(false);
+      return;
+    }
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
       setBusy(false);
       return;
     }
     // Display name is collected during onboarding; pass empty so signUp falls back to the email prefix.
-    const result = await signUp('', email, password, referralCode);
+    const result = await signUp('', email, password);
     if (!result.ok) { setError(result.error); setBusy(false); return; }
     replaceOnce(router, '/');
   }
@@ -70,7 +69,7 @@ export default function SignUpScreen() {
   async function handleApple() {
     setBusy(true);
     setError('');
-    const result = await signInWithApple(referralCode);
+    const result = await signInWithApple();
     if (!result.ok) { if (result.error) setError(result.error); setBusy(false); return; }
     replaceOnce(router, '/');
   }
@@ -123,7 +122,12 @@ export default function SignUpScreen() {
 
       <View style={styles.emailSection}>
         <FormField autoCapitalize="none" keyboardType="email-address" label="Email" onChangeText={setEmail} placeholder="you@example.com" value={email} />
-        <FormField autoCapitalize="none" label="Password" onChangeText={setPassword} placeholder="Choose a password" secureTextEntry value={password} />
+        <View style={styles.passwordField}>
+          <FormField autoCapitalize="none" label="Password" onChangeText={setPassword} placeholder="At least 6 characters" secureTextEntry value={password} />
+          <Text style={[styles.passwordHint, password.length >= MIN_PASSWORD_LENGTH && styles.passwordHintReady]}>
+            {password.length >= MIN_PASSWORD_LENGTH ? 'Password is long enough.' : 'Simple is okay. Use at least 6 characters.'}
+          </Text>
+        </View>
         <FormField autoCapitalize="none" label="Confirm password" onChangeText={setConfirmPassword} placeholder="Re-enter your password" secureTextEntry value={confirmPassword} />
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <ActionButton label={busy ? 'Creating…' : 'Create account'} onPress={handleSignUp} disabled={busy} />
@@ -171,6 +175,9 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     dividerLine: { flex: 1, height: 1, backgroundColor: colors.line },
     dividerText: { fontFamily: fonts.body, fontSize: 13, color: colors.inkMuted },
     emailSection: { gap: spacing.sm },
+    passwordField: { gap: 4 },
+    passwordHint: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted },
+    passwordHintReady: { color: colors.accent },
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
     footer: {
       flexDirection: 'row',

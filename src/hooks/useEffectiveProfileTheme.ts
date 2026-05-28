@@ -1,18 +1,44 @@
 import { useMemo } from 'react';
 
 import { useTheme } from '../features/theme/ThemeContext';
+import { createCustomThemePair, decodeProfileCustomTheme } from '../features/theme/customTheme';
 import { themes, themeNames, type ColorTokens, type ThemeName } from '../features/theme/themes';
 import { fontSets, type FontSet } from '../theme/typography';
 
 export function useEffectiveProfileTheme(profileBg?: string | null) {
   const { colors, fonts, resolvedMode } = useTheme();
+  const profileCustomTheme = useMemo(() => decodeProfileCustomTheme(profileBg), [profileBg]);
   const profileThemeName = useMemo(
-    () => profileBg && (themeNames as string[]).includes(profileBg) ? (profileBg as ThemeName) : null,
-    [profileBg],
+    () => !profileCustomTheme && profileBg && (themeNames as string[]).includes(profileBg) ? (profileBg as ThemeName) : null,
+    [profileBg, profileCustomTheme],
   );
-  const themedColors = profileThemeName ? themes[profileThemeName][resolvedMode] : null;
-  const effectiveColors = themedColors ?? colors;
-  const effectiveFonts = profileThemeName ? (fontSets[profileThemeName] ?? fonts) : fonts;
+  const profileCustomThemePair = useMemo(
+    () => profileCustomTheme ? createCustomThemePair(profileCustomTheme) : null,
+    [profileCustomTheme],
+  );
+  const themedColors = useMemo(
+    () => profileCustomThemePair ? profileCustomThemePair[resolvedMode] : profileThemeName ? themes[profileThemeName][resolvedMode] : null,
+    [profileCustomThemePair, profileThemeName, resolvedMode],
+  );
+  const effectiveColors = useMemo(
+    () => themedColors
+      ? {
+        ...colors,
+        ...themedColors,
+        ink: colors.ink,
+        inkSoft: colors.inkSoft,
+        inkMuted: colors.inkMuted,
+        line: colors.line,
+        success: colors.success,
+        error: colors.error,
+      }
+      : colors,
+    [colors, themedColors],
+  );
+  const effectiveFonts = useMemo(
+    () => profileCustomTheme ? (fontSets[fontThemeForCustom(profileCustomTheme.fontKey)] ?? fonts) : profileThemeName ? (fontSets[profileThemeName] ?? fonts) : fonts,
+    [fonts, profileCustomTheme, profileThemeName],
+  );
   const tint = themedColors?.accent ?? colors.accent;
 
   return {
@@ -25,6 +51,13 @@ export function useEffectiveProfileTheme(profileBg?: string | null) {
     themedColors,
     tint,
   };
+}
+
+function fontThemeForCustom(fontKey: NonNullable<ReturnType<typeof decodeProfileCustomTheme>>['fontKey']) {
+  if (fontKey === 'modern') return 'neon';
+  if (fontKey === 'playful') return 'bubblegum';
+  if (fontKey === 'editorial') return 'vintage';
+  return 'default';
 }
 
 export function getProfileScreenGradientColors(imageUri: string | null | undefined, themedColors: ColorTokens | null) {

@@ -69,7 +69,7 @@ export function SavedProfileLinkChooser({
             value={query}
             onChangeText={setQuery}
             placeholder="Search by name, nickname, tag, or fact"
-            placeholderTextColor={colors.inkMuted}
+            placeholderTextColor={colors.ink}
             autoCapitalize="none"
             autoCorrect={false}
           />
@@ -129,7 +129,7 @@ function SavedProfileCandidateRow({ busy, colors, contact, disabled, fonts, onPr
         {clue ? <Text style={styles.subtitle}>{clue}</Text> : null}
         <Text style={styles.caption}>Saved {formatRelativeDate(contact.createdAt)}</Text>
       </View>
-      <Ionicons name={busy ? 'hourglass-outline' : 'chevron-forward'} size={18} color={colors.inkSoft} />
+      <Ionicons name={busy ? 'hourglass-outline' : 'chevron-forward'} size={18} color={colors.ink} />
     </Pressable>
   );
 }
@@ -211,6 +211,6 @@ const makeRowStyles = (colors: ColorTokens, fonts: FontSet) =>
     avatarLabel: { fontFamily: fonts.bodyBold, fontSize: 16, color: colors.white },
     body: { flex: 1, gap: 2 },
     title: { fontFamily: fonts.bodyBold, fontSize: 16, color: colors.ink },
-    subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.inkSoft },
-    caption: { fontFamily: fonts.body, fontSize: 11, color: colors.inkSoft, opacity: 0.7 },
+    subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.ink },
+    caption: { fontFamily: fonts.body, fontSize: 11, color: colors.ink, opacity: 0.7 },
   });

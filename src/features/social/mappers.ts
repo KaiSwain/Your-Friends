@@ -14,6 +14,7 @@ import {
   NotificationMetadata,
   ProfileWallItem,
   SongAttachment,
+  VoiceAttachment,
   WallPost,
   WallPostLayout,
   WallPostLayoutContext,
@@ -21,6 +22,7 @@ import {
   WallPostType,
 } from '../../types/domain';
 import { splitWallPostPresentation } from '../../lib/wallPostTextStyle';
+import { rowToVoiceAttachment as rowToVoiceAttachmentFromDb } from '../../lib/voiceAttachmentDb';
 
 export function rowToUser(row: any): AppUser {
   return {
@@ -34,12 +36,15 @@ export function rowToUser(row: any): AppUser {
     profileBgImagePath: row.profile_bg_image_path ?? null,
     profileBgImagePublic: row.profile_bg_image_public ?? false,
     profileFacts: row.profile_facts ?? [],
+    profilePersonalityTraits: row.profile_personality_traits ?? [],
     createdAt: row.created_at,
     premiumUntil: row.premium_until ?? null,
     premiumPaidUntil: row.premium_paid_until ?? null,
     premiumFreeUntil: row.premium_free_until ?? null,
     premiumFreeGrantorUserId: row.premium_free_granted_by_user_id ?? null,
     premiumFreeGrantedAt: row.premium_free_granted_at ?? null,
+    isOfficial: row.is_official ?? false,
+    isTeamAdmin: row.is_team_admin ?? false,
   };
 }
 
@@ -51,6 +56,7 @@ export function rowToContact(row: any): Contact {
     displayName: row.display_name,
     nickname: row.nickname ?? null,
     facts: row.facts ?? [],
+    personalityTraits: row.personality_traits ?? [],
     avatarPath: row.avatar_path ?? null,
     avatarVideoPath: row.avatar_video_path ?? null,
     avatarVideoMuted: row.avatar_video_muted ?? false,
@@ -90,8 +96,9 @@ export function rowToFriendRequest(row: any): FriendRequest {
 export function rowToWallPost(row: any): WallPost {
   const presentation = splitWallPostPresentation(row.filter, row.text_font, row.text_size, row.text_effect, row.text_color);
   const song = rowToSongAttachment(row);
+  const voice = rowToVoiceAttachment(row);
   const movie = rowToMovieAttachment(row);
-  const postType = resolveWallPostType(row.post_type, row.image_path, song, movie);
+  const postType = resolveWallPostType(row.post_type, row.image_path, song, voice, movie);
   return {
     id: row.id,
     authorUserId: row.author_user_id,
@@ -101,6 +108,7 @@ export function rowToWallPost(row: any): WallPost {
     postType,
     body: row.body,
     imageUri: row.image_path ?? null,
+    imageThumbUri: row.image_thumb_path ?? row.image_path ?? null,
     videoUri: row.video_path ?? null,
     videoMuted: row.video_muted ?? false,
     cardColor: row.card_color ?? null,
@@ -112,11 +120,13 @@ export function rowToWallPost(row: any): WallPost {
     textColor: presentation.textColor,
     dateStamp: row.date_stamp ?? false,
     song,
+    voice,
     movie,
     memoryPromptRequestId: row.memory_prompt_request_id ?? null,
     referencedWallPostId: row.referenced_wall_post_id ?? null,
     promptText: row.prompt_text ?? null,
     promptType: normalizeMemoryPromptType(row.prompt_type),
+    promptVoice: rowToVoiceAttachmentFromDb(row, 'prompt'),
     memoryDate: row.memory_date ?? null,
     locationName: row.location_name ?? null,
     createdAt: row.created_at,
@@ -139,6 +149,7 @@ export function rowToMemoryReply(row: any): MemoryReply {
     wallPostId: row.wall_post_id,
     authorUserId: row.author_user_id,
     body: row.body ?? '',
+    voice: rowToVoiceAttachment(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? row.created_at,
   };
@@ -166,12 +177,14 @@ function normalizeWallPostLayoutContext(value: unknown): WallPostLayoutContext {
   return 'contact_profile';
 }
 
-function resolveWallPostType(rawType: unknown, imagePath: unknown, song: SongAttachment | null, movie: MovieAttachment | null): WallPostType {
+function resolveWallPostType(rawType: unknown, imagePath: unknown, song: SongAttachment | null, voice: VoiceAttachment | null, movie: MovieAttachment | null): WallPostType {
   if (rawType === 'movie') return movie ? 'movie' : 'note';
   if (rawType === 'song') return song ? 'song' : imagePath ? 'polaroid' : 'note';
-  if (rawType === 'note' || rawType === 'polaroid') return rawType;
+  if (rawType === 'voice') return voice ? 'voice' : imagePath ? 'polaroid' : 'note';
+  if (rawType === 'note' || rawType === 'polaroid' || rawType === 'media') return rawType;
   if (imagePath) return 'polaroid';
   if (song) return 'song';
+  if (voice) return 'voice';
   if (movie) return 'movie';
   return 'note';
 }
@@ -196,8 +209,12 @@ export function rowToSongAttachment(row: any): SongAttachment | null {
 }
 
 function normalizeMemoryPromptType(value: unknown): MemoryPromptType | null {
-  if (value === 'song' || value === 'text' || value === 'photo_reference') return value;
+  if (value === 'song' || value === 'text' || value === 'photo' || value === 'photo_reference' || value === 'voice') return value;
   return null;
+}
+
+export function rowToVoiceAttachment(row: any): VoiceAttachment | null {
+  return rowToVoiceAttachmentFromDb(row);
 }
 
 export function rowToMovieAttachment(row: any): MovieAttachment | null {

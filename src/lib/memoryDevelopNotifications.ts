@@ -8,6 +8,7 @@ type MemoryDevelopedListener = (event: { postId: string; message: string }) => v
 const scheduledNotificationKey = (postId: string) => `yourfriends:memoryDevelopedNotification:${postId}`;
 const deliveredNotificationKey = (postId: string) => `yourfriends:memoryDevelopedDelivered:${postId}`;
 const listeners = new Set<MemoryDevelopedListener>();
+const deliveredCache = new Map<string, boolean>();
 
 export function subscribeMemoryDevelopedNotifications(listener: MemoryDevelopedListener) {
   listeners.add(listener);
@@ -32,11 +33,11 @@ export async function scheduleMemoryDevelopedNotification(postId: string, create
 }
 
 export async function notifyMemoryDevelopedNow(postId: string) {
-  const alreadyDelivered = await AsyncStorage.getItem(deliveredNotificationKey(postId));
-  if (alreadyDelivered === 'true') return;
+  const alreadyDelivered = await loadMemoryDeveloped(postId);
+  if (alreadyDelivered) return;
 
   await cancelMemoryDevelopedNotification(postId);
-  await AsyncStorage.setItem(deliveredNotificationKey(postId), 'true');
+  await markMemoryDeveloped(postId);
 
   const message = 'Your memory card has developed!';
   for (const listener of listeners) listener({ postId, message });
@@ -50,6 +51,24 @@ export async function notifyMemoryDevelopedNow(postId: string) {
       seconds: 1,
     },
   }).catch(() => undefined);
+}
+
+export function getCachedMemoryDeveloped(postId: string) {
+  return deliveredCache.get(postId) ?? false;
+}
+
+export async function loadMemoryDeveloped(postId: string) {
+  const cached = deliveredCache.get(postId);
+  if (cached !== undefined) return cached;
+  const delivered = await AsyncStorage.getItem(deliveredNotificationKey(postId)).catch(() => null);
+  const value = delivered === 'true';
+  deliveredCache.set(postId, value);
+  return value;
+}
+
+export async function markMemoryDeveloped(postId: string) {
+  deliveredCache.set(postId, true);
+  await AsyncStorage.setItem(deliveredNotificationKey(postId), 'true').catch(() => undefined);
 }
 
 export async function cancelMemoryDevelopedNotification(postId: string) {

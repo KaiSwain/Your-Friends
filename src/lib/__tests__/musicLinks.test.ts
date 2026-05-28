@@ -4,7 +4,7 @@ jest.mock('react-native', () => ({
   Linking: { openURL: jest.fn() },
 }));
 
-import { getSongExternalUrl, resolveSongExternalUrl } from '../musicLinks';
+import { getSongExternalUrl, resolveSongExternalUrl, resolveSongForPreferredService } from '../musicLinks';
 import type { SongAttachment } from '../../types/domain';
 
 const supabaseEnvKeys = [
@@ -78,6 +78,29 @@ describe('getSongExternalUrl', () => {
       expect(fetchMock).toHaveBeenCalledWith('https://project.supabase.co/functions/v1/resolve-spotify-track', expect.objectContaining({
         method: 'POST',
       }));
+    } finally {
+      fetchMock.mockRestore();
+      restoreEnv();
+    }
+  });
+
+  it('converts an Apple search result to a Spotify attachment when Spotify is selected', async () => {
+    const restoreEnv = withSupabaseEnv({
+      EXPO_PUBLIC_SUPABASE_URL: 'https://project.supabase.co/',
+      EXPO_PUBLIC_SUPABASE_KEY: 'public-key',
+    });
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ spotifyUrl: 'https://open.spotify.com/track/spotify-selected-track?si=abc' }),
+    } as Response);
+
+    try {
+      await expect(resolveSongForPreferredService({ ...appleSong, providerTrackId: 'select-test' }, 'spotify'))
+        .resolves.toEqual(expect.objectContaining({
+          provider: 'spotify',
+          providerTrackId: 'spotify-selected-track',
+          externalUrl: 'https://open.spotify.com/track/spotify-selected-track?si=abc',
+        }));
     } finally {
       fetchMock.mockRestore();
       restoreEnv();

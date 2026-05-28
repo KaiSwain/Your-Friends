@@ -1,9 +1,8 @@
-import { ReactNode, useMemo } from 'react';
+import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
-import { contrastText } from '../lib/contrastText';
 import type { FontSet } from '../theme/typography';
 import { radius, spacing } from '../theme/tokens';
 import type { WallPost } from '../types/domain';
@@ -11,6 +10,8 @@ import { MonthMemoryWallContent, type DayGroup } from './MonthScrollableMemoryWa
 
 export type MemoryWallViewMode = 'timeline' | 'grid' | 'prompts';
 type RenderedMemoryWallViewMode = Exclude<MemoryWallViewMode, 'prompts'>;
+const INITIAL_WALL_RENDER_COUNT = 8;
+const WALL_RENDER_BATCH_SIZE = 8;
 
 export const memoryWallViewOptions: { key: MemoryWallViewMode; label: string }[] = [
   { key: 'timeline', label: 'Timeline' },
@@ -31,7 +32,7 @@ export function MemoryWallViewToggle({ colors: overrideColors, fonts: overrideFo
   const { colors: appColors, fonts: appFonts } = useTheme();
   const colors = overrideColors ?? appColors;
   const fonts = overrideFonts ?? appFonts;
-  const activeTint = tint ?? colors.accent;
+  const activeTint = tint ?? colors.ink;
   const styles = useMemo(() => makeStyles(colors, fonts, activeTint), [activeTint, colors, fonts]);
 
   return (
@@ -78,6 +79,22 @@ export function MemoryWallViews({ dayGroups, emptyAction, emptyHint, getGridExtr
   const colors = themeColors ?? appColors;
   const styles = useMemo(() => makeStyles(colors, fonts, colors.accent), [colors, fonts]);
   const posts = useMemo(() => dayGroups.flatMap((group) => group.posts), [dayGroups]);
+  const postSignature = useMemo(() => posts.map((post) => post.id).join('|'), [posts]);
+  const [visiblePostLimit, setVisiblePostLimit] = useState(INITIAL_WALL_RENDER_COUNT);
+
+  useEffect(() => {
+    setVisiblePostLimit(INITIAL_WALL_RENDER_COUNT);
+  }, [postSignature, viewMode]);
+
+  useEffect(() => {
+    if (viewMode === 'prompts' || visiblePostLimit >= posts.length) return undefined;
+    const id = setTimeout(() => {
+      setVisiblePostLimit((current) => Math.min(posts.length, current + WALL_RENDER_BATCH_SIZE));
+    }, 120);
+    return () => clearTimeout(id);
+  }, [posts.length, viewMode, visiblePostLimit]);
+  const visiblePosts = useMemo(() => posts.slice(0, visiblePostLimit), [posts, visiblePostLimit]);
+  const visibleDayGroups = useMemo(() => limitDayGroups(dayGroups, visiblePostLimit), [dayGroups, visiblePostLimit]);
 
   if (viewMode === 'prompts') {
     return (
@@ -102,10 +119,22 @@ export function MemoryWallViews({ dayGroups, emptyAction, emptyHint, getGridExtr
   }
 
   if (viewMode === 'grid') {
-    return <MemoryWallGrid getGridExtraHeight={getGridExtraHeight} posts={posts} renderPost={renderPost} themeColors={colors} />;
+    return <MemoryWallGrid getGridExtraHeight={getGridExtraHeight} posts={visiblePosts} renderPost={renderPost} themeColors={colors} />;
   }
 
-  return <MonthMemoryWallContent dayGroups={dayGroups} renderPost={(post) => renderPost(post, { viewMode: 'timeline' })} themeColors={colors} />;
+  return <MonthMemoryWallContent dayGroups={visibleDayGroups} renderPost={(post) => renderPost(post, { viewMode: 'timeline' })} themeColors={colors} />;
+}
+
+function limitDayGroups(dayGroups: DayGroup[], limit: number): DayGroup[] {
+  let remaining = limit;
+  const limited: DayGroup[] = [];
+  for (const group of dayGroups) {
+    if (remaining <= 0) break;
+    const posts = group.posts.slice(0, remaining);
+    if (posts.length > 0) limited.push({ ...group, posts });
+    remaining -= posts.length;
+  }
+  return limited;
 }
 
 interface MemoryWallModeContentProps {
@@ -207,6 +236,7 @@ function getMasonryItem(post: WallPost, baseScale: number, columnVisualWidth: nu
 function getMaxGridScale(post: WallPost, baseScale: number) {
   if (post.song && post.postType !== 'song') return Math.min(0.56, baseScale);
   if (post.postType === 'song') return Math.min(0.62, baseScale);
+  if (post.postType === 'voice') return Math.min(0.66, baseScale);
   return baseScale;
 }
 
@@ -217,20 +247,27 @@ function getGridOverflowAllowance(post: WallPost) {
 
 const POLAROID_REAL_WIDTH = 260;
 const ATTACHED_SONG_REAL_WIDTH = 360;
+const ATTACHED_VOICE_REAL_HEIGHT = 48;
+const PROMPT_TEXT_REAL_HEIGHT = 56;
+const PROMPT_VOICE_REAL_HEIGHT = 34;
 
 function getRealCardHeight(post: WallPost) {
-  const promptExtra = post.promptText && !post.imageUri ? 68 : 0;
+  const promptExtra = !post.imageUri
+    ? (post.promptText ? PROMPT_TEXT_REAL_HEIGHT : 0) + (post.promptVoice ? PROMPT_VOICE_REAL_HEIGHT : 0)
+    : 0;
   const referenceExtra = post.referencedWallPostId && post.promptType !== 'photo_reference' ? 315 : 0;
-  if (post.song && post.postType !== 'song') return 780 + promptExtra + referenceExtra;
-  if (post.postType === 'song') return 530 + promptExtra;
-  if (post.postType === 'movie') return 390 + promptExtra;
+  const voiceExtra = post.voice && post.postType !== 'voice' ? ATTACHED_VOICE_REAL_HEIGHT : 0;
+  if (post.song && post.postType !== 'song') return 780 + promptExtra + referenceExtra + voiceExtra;
+  if (post.postType === 'song') return (promptExtra > 0 ? 255 : 530) + promptExtra + voiceExtra;
+  if (post.postType === 'voice') return 360 + promptExtra;
+  if (post.postType === 'movie') return 390 + promptExtra + voiceExtra;
   if (post.postType === 'note') {
     if (post.promptType === 'photo_reference' && post.referencedWallPostId) {
-      return 440 + promptExtra;
+      return 440 + promptExtra + voiceExtra;
     }
-    return 320 + promptExtra + referenceExtra;
+    return 320 + promptExtra + referenceExtra + voiceExtra;
   }
-  return 440 + promptExtra;
+  return 440 + promptExtra + voiceExtra;
 }
 
 function getRealCardWidth(post: WallPost) {
@@ -241,17 +278,43 @@ function getRealCardWidth(post: WallPost) {
 
 const makeStyles = (colors: ColorTokens, fonts: FontSet, tint: string) =>
   StyleSheet.create({
-    emptyState: { gap: spacing.sm, alignItems: 'flex-start' },
-    promptState: { gap: spacing.sm },
-    emptyHint: { fontFamily: fonts.body, fontSize: 14, lineHeight: 20, color: colors.inkMuted },
+    emptyState: {
+      gap: spacing.md,
+      alignItems: 'center',
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: withAlpha(colors.line, 0.7),
+      backgroundColor: withAlpha(colors.paper, 0.72),
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.xl,
+      shadowColor: colors.black,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.12,
+      shadowRadius: 18,
+      elevation: 3,
+    },
+    promptState: {
+      gap: spacing.sm,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: withAlpha(colors.line, 0.62),
+      backgroundColor: withAlpha(colors.paper, 0.58),
+      padding: spacing.sm,
+    },
+    emptyHint: { fontFamily: fonts.bodyMedium, fontSize: 14, lineHeight: 21, color: colors.inkSoft, textAlign: 'center' },
     viewToggle: {
       flexDirection: 'row',
       gap: spacing.xs,
       borderRadius: radius.pill,
-      backgroundColor: colors.paper,
-      padding: 4,
+      backgroundColor: withAlpha(colors.paper, 0.68),
+      padding: 5,
       borderWidth: 1,
-      borderColor: colors.line,
+      borderColor: withAlpha(colors.line, 0.7),
+      shadowColor: colors.black,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.08,
+      shadowRadius: 14,
+      elevation: 2,
     },
     viewToggleChip: {
       flex: 1,
@@ -261,13 +324,17 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, tint: string) =>
       paddingHorizontal: spacing.xs,
       position: 'relative',
     },
-    viewToggleChipActive: { backgroundColor: tint },
+    viewToggleChipActive: {
+      backgroundColor: withAlpha(tint, 0.14),
+      borderWidth: 1,
+      borderColor: withAlpha(colors.line, 0.42),
+    },
     viewToggleLabel: {
       fontFamily: fonts.bodyMedium,
       fontSize: 12,
-      color: colors.inkSoft,
+      color: colors.ink,
     },
-    viewToggleLabelActive: { color: contrastText(tint) },
+    viewToggleLabelActive: { color: tint },
     viewToggleBadge: {
       position: 'absolute',
       top: -6,
@@ -313,3 +380,13 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, tint: string) =>
       transformOrigin: 'top left',
     },
   });
+
+function withAlpha(color: string, alpha: number) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = match[1];
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}

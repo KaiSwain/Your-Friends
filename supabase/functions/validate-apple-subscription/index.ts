@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
 
   const { error: profileError } = await admin
     .from('profiles')
-    .update({ premium_until: premiumUntil })
+    .update({ premium_until: premiumUntil, premium_paid_until: premiumUntil })
     .eq('id', userId);
   if (profileError) return jsonResponse({ error: profileError.message }, 500);
 

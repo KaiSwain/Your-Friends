@@ -472,7 +472,7 @@ export default function CalendarScreen() {
               accessibilityRole="button"
               accessibilityLabel="Previous month"
             >
-              <Ionicons name="chevron-back" size={19} color={colors.inkSoft} />
+              <Ionicons name="chevron-back" size={19} color={colors.ink} />
             </Pressable>
             <Text style={styles.monthTitle}>{monthTitle}</Text>
             <Pressable
@@ -481,7 +481,7 @@ export default function CalendarScreen() {
               accessibilityRole="button"
               accessibilityLabel="Next month"
             >
-              <Ionicons name="chevron-forward" size={19} color={colors.inkSoft} />
+              <Ionicons name="chevron-forward" size={19} color={colors.ink} />
             </Pressable>
           </View>
 
@@ -677,7 +677,7 @@ export default function CalendarScreen() {
                           <Ionicons
                             name="thumbs-up-outline"
                             size={13}
-                            color={reactionSummary.myReaction === 'up' ? colors.white : colors.inkSoft}
+                            color={reactionSummary.myReaction === 'up' ? colors.white : colors.ink}
                           />
                           <Text style={[styles.eventReactionText, reactionSummary.myReaction === 'up' && styles.eventReactionTextActive]}>
                             {reactionSummary.upCount}
@@ -693,7 +693,7 @@ export default function CalendarScreen() {
                           <Ionicons
                             name="thumbs-down-outline"
                             size={13}
-                            color={reactionSummary.myReaction === 'down' ? colors.white : colors.inkSoft}
+                            color={reactionSummary.myReaction === 'down' ? colors.white : colors.ink}
                           />
                           <Text style={[styles.eventReactionText, reactionSummary.myReaction === 'down' && styles.eventReactionTextActive]}>
                             {reactionSummary.downCount}
@@ -739,7 +739,7 @@ export default function CalendarScreen() {
                           <Ionicons
                             name={event.sharedRemindersEnabled ? 'notifications' : 'notifications-off-outline'}
                             size={18}
-                            color={event.sharedRemindersEnabled ? colors.success : colors.inkSoft}
+                            color={event.sharedRemindersEnabled ? colors.success : colors.ink}
                           />
                           <Text style={[styles.completeActionText, event.sharedRemindersEnabled && styles.completeActionTextDone]}>
                             {sharedReminderBusy ? '...' : event.sharedRemindersEnabled ? 'On' : 'Muted'}
@@ -758,7 +758,7 @@ export default function CalendarScreen() {
                           <Ionicons
                             name={completed ? 'checkmark-circle' : 'ellipse-outline'}
                             size={18}
-                            color={completed ? colors.success : colors.inkSoft}
+                            color={completed ? colors.success : colors.ink}
                           />
                           <Text style={[styles.completeActionText, completed && styles.completeActionTextDone]}>
                             {completing ? '...' : completed ? 'Undo' : 'Done'}
@@ -770,7 +770,7 @@ export default function CalendarScreen() {
                           accessibilityRole="button"
                           accessibilityLabel={`Edit ${event.title}`}
                         >
-                          <Ionicons name="create-outline" size={16} color={colors.inkSoft} />
+                          <Ionicons name="create-outline" size={16} color={colors.ink} />
                         </Pressable>
                         <Pressable
                           onPress={() => confirmDeleteEvent(event)}
@@ -912,7 +912,7 @@ function EventEditorModal({
                 <Text style={styles.modalDateLabel}>Date</Text>
                 <Text style={styles.modalDateReadable}>{formatReadableDate(draft.eventDate)}</Text>
               </View>
-              <Ionicons name="chevron-down" size={16} color={colors.inkMuted} />
+              <Ionicons name="chevron-down" size={16} color={colors.ink} />
             </Pressable>
             <Pressable
               onPress={onClose}
@@ -920,7 +920,7 @@ function EventEditorModal({
               accessibilityRole="button"
               accessibilityLabel="Close editor"
             >
-              <Ionicons name="close" size={20} color={colors.inkSoft} />
+              <Ionicons name="close" size={20} color={colors.ink} />
             </Pressable>
           </View>
 
@@ -1051,7 +1051,7 @@ function EventEditorModal({
                     accessibilityRole="button"
                     accessibilityLabel="Earlier by 30 minutes"
                   >
-                    <Ionicons name="remove" size={18} color={colors.inkSoft} />
+                    <Ionicons name="remove" size={18} color={colors.ink} />
                   </Pressable>
                   <View style={styles.timeDisplay}>
                     <Text style={styles.timeDisplayText}>
@@ -1064,7 +1064,7 @@ function EventEditorModal({
                     accessibilityRole="button"
                     accessibilityLabel="Later by 30 minutes"
                   >
-                    <Ionicons name="add" size={18} color={colors.inkSoft} />
+                    <Ionicons name="add" size={18} color={colors.ink} />
                   </Pressable>
                 </View>
                 <View style={styles.chipWrap}>
@@ -1142,7 +1142,7 @@ function EventEditorModal({
                 value={draft.note}
                 onChangeText={(note) => setDraft({ note })}
                 placeholder="Optional"
-                placeholderTextColor={colors.inkMuted}
+                placeholderTextColor={colors.ink}
                 multiline
                 style={[styles.input, styles.noteInput]}
               />
@@ -1198,7 +1198,7 @@ function DatePickerModal({ visible, initialDateKey, colors, fonts, onClose, onPi
               accessibilityRole="button"
               accessibilityLabel="Previous month"
             >
-              <Ionicons name="chevron-back" size={19} color={colors.inkSoft} />
+              <Ionicons name="chevron-back" size={19} color={colors.ink} />
             </Pressable>
             <Text style={styles.monthTitle}>
               {cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
@@ -1209,7 +1209,7 @@ function DatePickerModal({ visible, initialDateKey, colors, fonts, onClose, onPi
               accessibilityRole="button"
               accessibilityLabel="Next month"
             >
-              <Ionicons name="chevron-forward" size={19} color={colors.inkSoft} />
+              <Ionicons name="chevron-forward" size={19} color={colors.ink} />
             </Pressable>
           </View>
 
@@ -1278,7 +1278,7 @@ function LabeledInput({
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor={colors.inkMuted}
+        placeholderTextColor={colors.ink}
         style={styles.input}
       />
     </View>
@@ -1603,8 +1603,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
     screenContent: { paddingBottom: spacing.xxl * 2, gap: spacing.lg },
     topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    backButton: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { flexDirection: 'row', alignItems: 'center', gap: 2, minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: withAlpha(colors.line, 0.34), backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     todayChip: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1613,8 +1613,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingVertical: spacing.xs + 2,
       borderRadius: radius.pill,
       borderWidth: 1,
-      borderColor: colors.accent + '4D',
-      backgroundColor: colors.accent + '14',
+      borderColor: withAlpha(colors.accent, 0.42),
+      backgroundColor: colors.paper,
     },
     todayChipLabel: {
       fontFamily: fonts.bodyBold,
@@ -1630,7 +1630,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     calendarShell: {
       borderRadius: radius.lg,
       borderWidth: 1,
-      borderColor: colors.line,
+      borderColor: withAlpha(colors.line, 0.34),
       backgroundColor: colors.paper,
       padding: spacing.md,
       gap: spacing.sm,
@@ -1674,7 +1674,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderRadius: 16,
     },
     dayCellSelected: { backgroundColor: colors.accent },
-    dayCellToday: { borderWidth: 1, borderColor: colors.accent + '80' },
+    dayCellToday: { borderWidth: 1, borderColor: withAlpha(colors.accent, 0.36) },
     dayNumber: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.ink },
     dayNumberSelected: { color: colors.white },
     dotRow: { flexDirection: 'row', minHeight: 5, gap: 3, alignItems: 'center' },
@@ -1696,8 +1696,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       alignItems: 'center',
       gap: spacing.sm,
       borderWidth: 1,
-      borderColor: colors.accent + '4D',
-      backgroundColor: colors.accent + '14',
+      borderColor: withAlpha(colors.accent, 0.42),
+      backgroundColor: colors.paper,
       borderRadius: radius.md,
       padding: spacing.md,
     },
@@ -1708,7 +1708,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     dayPanel: {
       borderRadius: radius.lg,
       borderWidth: 1,
-      borderColor: colors.line,
+      borderColor: withAlpha(colors.line, 0.34),
       backgroundColor: colors.paper,
       padding: spacing.lg,
       gap: spacing.md,
@@ -1748,7 +1748,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       gap: spacing.md,
       paddingVertical: spacing.sm,
       borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.line,
+      borderTopColor: withAlpha(colors.line, 0.42),
     },
     detailRowCompleted: { backgroundColor: colors.paperMuted + '66' },
     detailIcon: {
@@ -1859,7 +1859,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingVertical: spacing.sm,
       paddingHorizontal: spacing.md,
       borderRadius: radius.md,
-      backgroundColor: colors.accent + '14',
+      backgroundColor: colors.paper,
       borderWidth: 1,
       borderColor: colors.accent + '33',
     },
@@ -1972,7 +1972,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     tagChipActive: {
       borderColor: colors.accent,
-      backgroundColor: colors.accent + '12',
+      backgroundColor: colors.paper,
     },
     tagAvatar: {
       width: 30,
@@ -2079,9 +2079,19 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: colors.paper,
       borderRadius: radius.lg,
       borderWidth: 1,
-      borderColor: colors.line,
+      borderColor: withAlpha(colors.line, 0.36),
       padding: spacing.md,
       gap: spacing.sm,
       ...shadow.card,
     },
   });
+
+function withAlpha(color: string, alpha: number) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = match[1];
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}

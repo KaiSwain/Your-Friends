@@ -33,6 +33,21 @@ export async function resolveSongExternalUrl(song: SongAttachment, preference: M
   return resolvedUrl;
 }
 
+export async function resolveSongForPreferredService(song: SongAttachment, preference: MusicOpenPreference): Promise<SongAttachment> {
+  if (preference !== 'spotify' || song.provider === 'spotify') return song;
+
+  const spotifyUrl = await resolveSongExternalUrl(song, preference);
+  const spotifyTrackId = getSpotifyTrackIdFromUrl(spotifyUrl);
+  if (!spotifyTrackId) return song;
+
+  return {
+    ...song,
+    provider: 'spotify',
+    providerTrackId: spotifyTrackId,
+    externalUrl: spotifyUrl,
+  };
+}
+
 async function resolveSpotifyUrlFromEdgeFunction(song: SongAttachment) {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
   const supabasePublicKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY
@@ -83,6 +98,11 @@ async function resolveSpotifyUrlFromSonglink(song: SongAttachment) {
 
 function isSpotifyTrackUrl(value: unknown): value is string {
   return typeof value === 'string' && value.includes('open.spotify.com/track/');
+}
+
+function getSpotifyTrackIdFromUrl(value: string) {
+  const match = /open\.spotify\.com\/track\/([^?/#]+)/i.exec(value);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
 export async function openSongInPreferredService(song: SongAttachment, preference: MusicOpenPreference) {

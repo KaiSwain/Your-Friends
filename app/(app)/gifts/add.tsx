@@ -7,9 +7,11 @@ import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
 import { DateDropdownPicker } from '../../../src/components/DateDropdownPicker';
 import { useAuth } from '../../../src/features/auth/AuthContext';
+import { usePremium } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
-import { backOnce, replaceOnce } from '../../../src/lib/navigationGuard';
+import { backOnce, pushOnce, replaceOnce } from '../../../src/lib/navigationGuard';
+import { showGiftNotePaywall } from '../../../src/lib/premiumGates';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import { radius, spacing } from '../../../src/theme/tokens';
 import type { PeopleListItem } from '../../../src/types/domain';
@@ -25,6 +27,7 @@ export default function AddGiftNoteScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ subjectId?: string | string[]; subjectType?: string | string[]; backTo?: string | string[] }>();
   const { currentUser } = useAuth();
+  const { isPremium } = usePremium();
   const { createGiftNote, getPeopleListForUser, getUserById } = useSocialGraph();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
@@ -59,6 +62,10 @@ export default function AddGiftNoteScreen() {
 
   async function handleSave() {
     if (!currentUser) return;
+    if (!isPremium) {
+      showGiftNotePaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
     if (!selectedTarget || !selectedRecipientId) {
       setError('Choose a friend with a real account.');
       return;
@@ -96,9 +103,15 @@ export default function AddGiftNoteScreen() {
   );
 
   return (
-    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={busy ? 'Locking…' : 'Lock gift note'} onPress={handleSave} disabled={busy || !selectedTarget} />}>
+    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={!isPremium ? 'Unlock Premium to lock gift notes' : busy ? 'Locking…' : 'Lock gift note'} onPress={handleSave} disabled={busy || !selectedTarget} />}>
       <Text style={styles.title}>Private Gift Note</Text>
       <Text style={styles.subtitle}>They’ll see a locked surprise now. Your note becomes a memory on unlock day.</Text>
+      {!isPremium ? (
+        <View style={styles.premiumNotice}>
+          <Ionicons name="lock-closed-outline" size={16} color={colors.accent} />
+          <Text style={styles.premiumNoticeText}>Gift notes are a Premium feature.</Text>
+        </View>
+      ) : null}
 
       {giftTargets.length > 0 ? (
         <View style={styles.section}>
@@ -176,13 +189,13 @@ export default function AddGiftNoteScreen() {
           </View>
           <View style={styles.timeStepperRow}>
             <Pressable onPress={() => setUnlockTime(stepTime(unlockTime, -30))} style={styles.timeStepButton} accessibilityRole="button" accessibilityLabel="Earlier by 30 minutes">
-              <Ionicons name="remove" size={18} color={colors.inkSoft} />
+              <Ionicons name="remove" size={18} color={colors.ink} />
             </Pressable>
             <View style={styles.timeDisplay}>
               <Text style={styles.timeDisplayText}>{formatTimeDisplay(unlockTime)}</Text>
             </View>
             <Pressable onPress={() => setUnlockTime(stepTime(unlockTime, 30))} style={styles.timeStepButton} accessibilityRole="button" accessibilityLabel="Later by 30 minutes">
-              <Ionicons name="add" size={18} color={colors.inkSoft} />
+              <Ionicons name="add" size={18} color={colors.ink} />
             </Pressable>
           </View>
         </View>
@@ -195,7 +208,7 @@ export default function AddGiftNoteScreen() {
           value={body}
           onChangeText={setBody}
           placeholder={`Write something ${selectedTarget?.title ?? 'your friend'} gets later...`}
-          placeholderTextColor={colors.inkMuted}
+          placeholderTextColor={colors.ink}
           style={styles.noteInput}
         />
       </View>
@@ -283,12 +296,14 @@ function formatDateKey(date: Date) {
 
 const makeStyles = (colors: any, fonts: any) =>
   StyleSheet.create({
-    backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 28) },
-    subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
+    subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.ink },
+    premiumNotice: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.accent, backgroundColor: colors.paper, padding: spacing.md },
+    premiumNoticeText: { flex: 1, fontFamily: fonts.bodyBold, fontSize: 13, color: colors.ink },
     section: { gap: spacing.sm },
-    sectionLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+    sectionLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase', letterSpacing: 0.5 },
     targetScroll: { gap: spacing.sm, paddingVertical: 2 },
     targetChip: {
       minWidth: 120,
@@ -305,24 +320,24 @@ const makeStyles = (colors: any, fonts: any) =>
       paddingLeft: 6,
       paddingRight: spacing.sm,
     },
-    targetChipActive: { borderColor: colors.accent, backgroundColor: colors.accent + '12' },
+    targetChipActive: { borderColor: colors.accent, backgroundColor: colors.paper },
     targetAvatar: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
     targetAvatarImage: { width: '100%', height: '100%' },
     targetInitials: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.white },
-    targetChipText: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    targetChipText: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.ink },
     targetChipTextActive: { fontFamily: fonts.bodyBold, color: colors.ink },
     presetRow: { flexDirection: 'row', gap: spacing.xs, flexWrap: 'wrap' },
-    presetChip: { borderRadius: radius.pill, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paperMuted, paddingHorizontal: spacing.md, paddingVertical: 7 },
-    presetChipActive: { borderColor: colors.accent, backgroundColor: colors.accent + '14' },
-    presetChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
+    presetChip: { borderRadius: radius.pill, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: 7 },
+    presetChipActive: { borderColor: colors.accent, backgroundColor: colors.paper },
+    presetChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.ink },
     presetChipTextActive: { fontFamily: fonts.bodyBold, color: colors.accent },
     timeSection: { gap: spacing.sm },
-    timeLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+    timeLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase', letterSpacing: 0.5 },
     timeStepperRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     timeStepButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line },
     timeDisplay: { flex: 1, minHeight: 42, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, alignItems: 'center', justifyContent: 'center' },
     timeDisplayText: { fontFamily: fonts.bodyBold, fontSize: 16, color: colors.ink },
     noteInput: { minHeight: 170, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: spacing.md, fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.ink, textAlignVertical: 'top' },
-    emptyText: { fontFamily: fonts.body, fontSize: 14, color: colors.inkSoft },
+    emptyText: { fontFamily: fonts.body, fontSize: 14, color: colors.ink },
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
   });

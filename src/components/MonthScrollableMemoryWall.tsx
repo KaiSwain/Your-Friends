@@ -213,8 +213,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       paddingBottom: spacing.xs,
       backgroundColor: 'transparent',
     },
-    activeMonthLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent, textTransform: 'uppercase', letterSpacing: 0.8 },
+    activeMonthLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase', letterSpacing: 0.8 },
     dateHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm },
-    dateLine: { flex: 1, height: 1, backgroundColor: colors.line },
-    dateLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+    dateLine: { flex: 1, height: 1, backgroundColor: colors.ink },
+    dateLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase', letterSpacing: 0.5 },
   });

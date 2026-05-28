@@ -1,5 +1,4 @@
 import { supabase } from '../../lib/supabase';
-import { compareWallPostsByMemoryDateDesc } from '../../lib/memoryDate';
 import {
   AppUser,
   CalendarEventReaction,
@@ -66,7 +65,7 @@ export async function fetchFriendRequests(): Promise<FriendRequest[]> {
 export async function fetchWallPosts(): Promise<WallPost[]> {
   const { data, error } = await supabase.from('wall_posts').select('*');
   if (error) throw error;
-  return (data ?? []).map(rowToWallPost).sort(compareWallPostsByMemoryDateDesc);
+  return (data ?? []).map(rowToWallPost);
 }
 
 export async function fetchMemoryReplies(): Promise<MemoryReply[]> {

@@ -5,14 +5,16 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
+import { TextOrVoiceComposer } from '../../../src/components/TextOrVoiceComposer';
 import { useAuth } from '../../../src/features/auth/AuthContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import { backOnce, replaceOnce } from '../../../src/lib/navigationGuard';
+import { uploadMemoryAudio } from '../../../src/lib/memoryMediaUpload';
 import { fetchPopularMovies, searchMovies } from '../../../src/lib/movieSearch';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import { radius, spacing } from '../../../src/theme/tokens';
-import type { MovieAttachment, PeopleListItem } from '../../../src/types/domain';
+import type { MovieAttachment, PeopleListItem, VoiceAttachment } from '../../../src/types/domain';
 
 export default function MovieRequestScreen() {
   const router = useRouter();
@@ -44,6 +46,7 @@ export default function MovieRequestScreen() {
   const [results, setResults] = useState<MovieAttachment[]>([]);
   const [selectedMovie, setSelectedMovie] = useState<MovieAttachment | null>(null);
   const [prompt, setPrompt] = useState('');
+  const [promptVoice, setPromptVoice] = useState<VoiceAttachment | null>(null);
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -157,11 +160,18 @@ export default function MovieRequestScreen() {
     setBusy(true);
     setError('');
     try {
+      const uploadedPromptVoice = promptVoice
+        ? {
+          ...promptVoice,
+          uri: await uploadMemoryAudio(promptVoice.uri, { prefix: `${currentUser.id}/voice-movies` }),
+        }
+        : null;
       await Promise.all(selectedRecipientIds.map((recipientUserId) =>
         createMovieReviewRequest(currentUser.id, {
           recipientUserId,
           movie: selectedMovie,
           prompt,
+          promptVoice: uploadedPromptVoice,
         }),
       ));
       replaceOnce(router, backTo ? (backTo as any) : '/friends');
@@ -214,7 +224,7 @@ export default function MovieRequestScreen() {
             onChangeText={handleQueryChange}
             onFocus={handleSearchFocus}
             placeholder="Search a movie..."
-            placeholderTextColor={colors.inkMuted}
+            placeholderTextColor={colors.ink}
             style={styles.searchInput}
             returnKeyType="search"
             onSubmitEditing={handleSearch}
@@ -243,7 +253,7 @@ export default function MovieRequestScreen() {
                     {movie.posterUrl ? (
                       <Image source={{ uri: movie.posterUrl }} style={styles.poster} />
                     ) : (
-                      <View style={styles.posterFallback}><Ionicons name="film-outline" size={22} color={colors.inkMuted} /></View>
+                      <View style={styles.posterFallback}><Ionicons name="film-outline" size={22} color={colors.ink} /></View>
                     )}
                     <View style={styles.movieInfo}>
                       <Text style={styles.movieTitle}>{movie.title}{movie.year ? ` (${movie.year})` : ''}</Text>
@@ -259,13 +269,19 @@ export default function MovieRequestScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Prompt</Text>
-        <TextInput
-          multiline
-          value={prompt}
-          onChangeText={setPrompt}
+        <TextOrVoiceComposer
+          text={prompt}
+          onTextChange={setPrompt}
+          voice={promptVoice}
+          onVoiceChange={(voice) => {
+            setPromptVoice(voice);
+            setError('');
+          }}
+          previewAuthorName={currentUser.displayName}
           placeholder="Optional: tell them why you want their take..."
-          placeholderTextColor={colors.inkMuted}
-          style={styles.promptInput}
+          voiceLabel="Record ask"
+          voiceHelperText="Say why you want their take on this movie."
+          textInputStyle={styles.promptInput}
         />
       </View>
 
@@ -287,36 +303,38 @@ function getInitials(name: string) {
 }
 
 const makeStyles = (colors: ReturnType<typeof useTheme>['colors'], fonts: ReturnType<typeof useTheme>['fonts']) => StyleSheet.create({
-  backButton: { paddingVertical: spacing.xs },
-  backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+  backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+  backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
   title: { fontFamily: fonts.heading, fontSize: 32, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 32) },
   subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
+  premiumNotice: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.accent, backgroundColor: colors.paper, padding: spacing.md },
+  premiumNoticeText: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 18, color: colors.ink },
   section: { gap: spacing.sm },
   sectionLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.inkSoft, textTransform: 'uppercase', letterSpacing: 0.8 },
   targetScroll: { gap: spacing.sm, paddingRight: spacing.md },
   targetChip: { width: 104, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: spacing.sm, alignItems: 'center', gap: spacing.xs },
-  targetChipActive: { borderColor: colors.accent, backgroundColor: colors.accent + '14' },
+  targetChipActive: { borderColor: colors.accent, backgroundColor: colors.paper },
   targetAvatar: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   targetAvatarImage: { width: '100%', height: '100%' },
   targetCheck: { position: 'absolute', right: 0, bottom: 0, width: 18, height: 18, borderRadius: 9, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.paper },
   targetInitials: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.white },
-  targetChipText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkSoft },
+  targetChipText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink },
   targetChipTextActive: { color: colors.accent },
   searchRow: { flexDirection: 'row', gap: spacing.sm },
   searchInput: { flex: 1, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, fontFamily: fonts.body, fontSize: 15, color: colors.ink },
   searchButton: { width: 44, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
-  selectedMovieCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, borderRadius: radius.md, borderWidth: 1, borderColor: colors.accent + '55', backgroundColor: colors.accent + '10', paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  selectedMovieCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, borderRadius: radius.md, borderWidth: 1, borderColor: colors.accent, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   selectedMovieText: { flex: 1, fontFamily: fonts.bodyBold, fontSize: 13, color: colors.accent },
   movieList: { gap: spacing.sm },
   movieListLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase', letterSpacing: 0.6 },
   searchingText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft },
   movieRow: { flexDirection: 'row', gap: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: spacing.sm },
-  movieRowActive: { borderColor: colors.accent, backgroundColor: colors.accent + '10' },
+  movieRowActive: { borderColor: colors.accent, backgroundColor: colors.paper },
   poster: { width: 54, height: 80, borderRadius: radius.sm, backgroundColor: colors.canvasAlt },
   posterFallback: { width: 54, height: 80, borderRadius: radius.sm, backgroundColor: colors.canvasAlt, alignItems: 'center', justifyContent: 'center' },
   movieInfo: { flex: 1, gap: 3 },
   movieTitle: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
-  movieOverview: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkSoft },
+  movieOverview: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.ink },
   promptInput: { minHeight: 96, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: spacing.md, textAlignVertical: 'top', fontFamily: fonts.body, fontSize: 15, color: colors.ink },
   error: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.error },
 });

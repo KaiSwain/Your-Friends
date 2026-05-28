@@ -19,7 +19,7 @@ import { LEGAL_LINKS, SUBSCRIPTION_LEGAL_COPY } from '../../src/lib/legalLinks';
 import { backOnce } from '../../src/lib/navigationGuard';
 import { themeCardUnlocks } from '../../src/features/theme/cardColorUnlocks';
 import type { ColorTokens, ThemeMode, ThemeName } from '../../src/features/theme/themes';
-import { themeNames, themes } from '../../src/features/theme/themes';
+import { featuredThemeNames, legacyThemeNames, themes } from '../../src/features/theme/themes';
 import { protectTextFromFontClipping } from '../../src/theme/fontProtection';
 import { fontSets } from '../../src/theme/typography';
 import type { FontSet } from '../../src/theme/typography';
@@ -38,9 +38,29 @@ const PREMIUM_FEATURES: { icon: keyof typeof Ionicons.glyphMap; title: string; b
     body: 'Turn camera-roll photos into memory cards instead of only taking fresh shots in the app.',
   },
   {
+    icon: 'camera-outline',
+    title: 'Media memories',
+    body: 'Add clean photo and short video memories that are separate from Memory Cards.',
+  },
+  {
+    icon: 'gift-outline',
+    title: 'Gift notes',
+    body: 'Lock surprise notes for friends that unlock later and become memories.',
+  },
+  {
     icon: 'sparkles-outline',
     title: 'Funny AI captions',
     body: 'Generate captions from the photo plus your relationship context, then pick the one that sounds most like you.',
+  },
+  {
+    icon: 'chatbubbles-outline',
+    title: 'Send memory prompts',
+    body: 'Ask friends for songs, photo memories, voice memories, or notes when you do not know what to post.',
+  },
+  {
+    icon: 'mic-outline',
+    title: 'Voice memories',
+    body: 'Record short audio memories and answer voice prompts with something more personal than text.',
   },
   {
     icon: 'phone-portrait-outline',
@@ -75,6 +95,8 @@ const PREMIUM_FEATURES: { icon: keyof typeof Ionicons.glyphMap; title: string; b
 ];
 
 const THEME_DESCRIPTIONS: Record<ThemeName, string> = {
+  yourFriends: 'The intentional house palette: purple actions, warm paper, and meaning-based accent colors across the app.',
+  custom: 'Build your own readable palette with custom fonts, accent color, background hue, and intensity.',
   default: 'Classic Your Friends purple: clean, familiar, and easy to read.',
   neon: 'Electric cyan for people who want the app to feel like a late-night arcade.',
   synthwave: 'Hot pink and violet with a retro, music-video glow.',
@@ -124,7 +146,7 @@ export default function StoreScreen() {
     const plan = premiumPlans.find((candidate) => candidate.id === planId);
     Alert.alert(
       'Subscribe to Premium',
-      `Premium unlocks the calendar, gallery photos, every theme, AI captions, shake-to-develop, premium borders, card colors, ad-free use, and future releases. ${plan?.displayPrice ?? PREMIUM_SUBSCRIPTION_PRICE}${plan ? ` / ${plan.period}` : ''}. Cancel anytime.`,
+      `Premium unlocks the calendar, prompts, gallery photos, every theme, AI captions, shake-to-develop, premium borders, card colors, ad-free use, and future releases. ${plan?.displayPrice ?? PREMIUM_SUBSCRIPTION_PRICE}${plan ? ` / ${plan.period}` : ''}. Cancel anytime.`,
       [
         { text: 'Not now', style: 'cancel' },
         { text: 'Subscribe', onPress: () => purchase(planId).catch((error) => Alert.alert('Purchase failed', error instanceof Error ? error.message : 'Try again in a moment.')) },
@@ -246,7 +268,7 @@ export default function StoreScreen() {
 
       <SectionCard eyebrow="Subscription" title="Premium">
         <Text style={styles.bodyText}>
-          Premium unlocks every theme, every card color, birthdays, events, reminders, gallery photos, AI captions, and shake-to-develop.
+          Premium unlocks every theme, every card color, prompts, gift notes, media memories, birthdays, events, reminders, gallery photos, AI captions, and shake-to-develop.
         </Text>
         <Text style={styles.priceLine}>{PREMIUM_SUBSCRIPTION_PRICE}</Text>
         {isPremium ? (
@@ -344,7 +366,7 @@ export default function StoreScreen() {
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                 >
-                  <Ionicons name={mode === 'light' ? 'sunny-outline' : 'moon-outline'} size={14} color={active ? previewColors.white : previewColors.inkSoft} />
+                  <Ionicons name={mode === 'light' ? 'sunny-outline' : 'moon-outline'} size={14} color={active ? previewColors.white : previewColors.ink} />
                   <Text style={[styles.modePillLabel, { color: active ? previewColors.white : previewColors.inkSoft, fontFamily: previewFonts.bodyBold }]}>
                     {mode === 'light' ? 'Light' : 'Dark'}
                   </Text>
@@ -359,40 +381,44 @@ export default function StoreScreen() {
           />
         </View>
         <View style={styles.themeList}>
-          {themeNames.map((name) => {
+          <Text style={styles.themeGroupLabel}>Featured themes</Text>
+          {[...featuredThemeNames, ...legacyThemeNames].map((name, index) => {
             const owned = hasTheme(name);
             const swatchColors = themeCardUnlocks[name] ?? [];
+            const legacyStarts = index === featuredThemeNames.length;
             return (
-              <Pressable
-                key={name}
-                onPress={() => setPreviewThemeName(name)}
-                style={[styles.themeRow, previewThemeName === name && styles.themeRowActive]}
-                accessibilityRole="button"
-                accessibilityState={{ selected: previewThemeName === name }}
-              >
-                <View style={[styles.themeSwatch, { backgroundColor: themes[name].swatch }]} />
-                <View style={styles.themeInfo}>
-                  <Text style={[styles.themeName, { fontFamily: (fontSets[name] ?? fontSets.default).heading }, protectTextFromFontClipping((fontSets[name] ?? fontSets.default).heading, 15)]}>
-                    {themes[name].label}
-                  </Text>
-                  <View style={styles.colorRow}>
-                    {swatchColors.map((c, i) => (
-                      <View key={`${name}-${i}`} style={[styles.colorDot, { backgroundColor: c }]} />
-                    ))}
+              <View key={name} style={legacyStarts && styles.legacyThemeGroup}>
+                {legacyStarts ? <Text style={styles.themeGroupLabel}>Advanced / legacy themes</Text> : null}
+                <Pressable
+                  onPress={() => setPreviewThemeName(name)}
+                  style={[styles.themeRow, legacyStarts || legacyThemeNames.includes(name) ? styles.themeRowLegacy : undefined, previewThemeName === name && styles.themeRowActive]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: previewThemeName === name }}
+                >
+                  <View style={[styles.themeSwatch, { backgroundColor: themes[name].swatch }]} />
+                  <View style={styles.themeInfo}>
+                    <Text style={[styles.themeName, { fontFamily: (fontSets[name] ?? fontSets.default).heading }, protectTextFromFontClipping((fontSets[name] ?? fontSets.default).heading, 15)]}>
+                      {themes[name].label}
+                    </Text>
+                    <View style={styles.colorRow}>
+                      {swatchColors.map((c, i) => (
+                        <View key={`${name}-${i}`} style={[styles.colorDot, { backgroundColor: c }]} />
+                      ))}
+                    </View>
                   </View>
-                </View>
-                {owned ? (
-                  <View style={styles.ownedBadge}>
-                    <Ionicons name="checkmark" size={14} color={colors.accent} />
-                    <Text style={styles.ownedLabel}>Included</Text>
-                  </View>
-                ) : (
-                  <View style={styles.lockedBadge}>
-                    <Ionicons name="lock-closed" size={12} color={colors.inkMuted} />
-                    <Text style={styles.lockedLabel}>Premium</Text>
-                  </View>
-                )}
-              </Pressable>
+                  {owned ? (
+                    <View style={styles.ownedBadge}>
+                      <Ionicons name="checkmark" size={14} color={colors.accent} />
+                      <Text style={styles.ownedLabel}>Included</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.lockedBadge}>
+                      <Ionicons name="lock-closed" size={12} color={colors.ink} />
+                      <Text style={styles.lockedLabel}>Premium</Text>
+                    </View>
+                  )}
+                </Pressable>
+              </View>
             );
           })}
         </View>
@@ -419,15 +445,15 @@ export default function StoreScreen() {
 
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
-    backButton: { alignSelf: 'flex-start', paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     title: { fontFamily: fonts.heading, fontSize: 32, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 32) },
     subtitle: { fontFamily: fonts.body, fontSize: 14, color: colors.inkSoft, marginBottom: spacing.sm },
     heroCard: {
       borderRadius: 32,
       borderWidth: 1,
-      borderColor: colors.accent + '55',
-      backgroundColor: colors.accent + '14',
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
       padding: spacing.lg,
       gap: spacing.sm,
     },
@@ -447,8 +473,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       textTransform: 'uppercase',
       color: colors.accent,
     },
-    heroBody: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
-    bodyText: { fontFamily: fonts.body, fontSize: 14, color: colors.inkSoft, marginBottom: spacing.sm },
+    heroBody: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.ink },
+    bodyText: { fontFamily: fonts.body, fontSize: 14, color: colors.ink, marginBottom: spacing.sm },
     priceLine: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.ink, marginBottom: spacing.sm },
     planGrid: { gap: spacing.sm, marginVertical: spacing.xs },
     planCard: {
@@ -461,7 +487,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     planCardBest: {
       borderColor: colors.accent,
-      backgroundColor: colors.accent + '18',
+      borderWidth: 2,
+      backgroundColor: colors.paperMuted,
     },
     bestBadge: {
       alignSelf: 'flex-start',
@@ -479,7 +506,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     planLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     planPrice: { fontFamily: fonts.heading, fontSize: 26, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 26) },
-    planPeriod: { fontFamily: fonts.body, fontSize: 12, color: colors.inkSoft },
+    planPeriod: { fontFamily: fonts.body, fontSize: 12, color: colors.ink },
     planSavings: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent, marginTop: spacing.xs },
     errorText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
     restoreRow: { alignSelf: 'center', paddingVertical: spacing.sm, marginTop: spacing.xs },
@@ -488,7 +515,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontFamily: fonts.body,
       fontSize: 12,
       lineHeight: 17,
-      color: colors.inkSoft,
+      color: colors.ink,
       textAlign: 'center',
     },
     legalLinks: {
@@ -507,7 +534,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     legalSeparator: {
       fontFamily: fonts.body,
       fontSize: 12,
-      color: colors.inkMuted,
+      color: colors.ink,
     },
     featureGrid: { gap: spacing.sm },
     featureRow: {
@@ -519,13 +546,13 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: 34,
       height: 34,
       borderRadius: 17,
-      backgroundColor: colors.accent + '18',
+      backgroundColor: colors.paper,
       alignItems: 'center',
       justifyContent: 'center',
     },
     featureCopy: { flex: 1, gap: 2 },
     featureTitle: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.ink },
-    featureBody: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.inkSoft },
+    featureBody: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.ink },
     themePreview: {
       borderRadius: 28,
       borderWidth: 1,
@@ -605,6 +632,14 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     modePillLabel: { fontSize: 12 },
     themeList: { gap: spacing.sm },
+    themeGroupLabel: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 11,
+      letterSpacing: 0.7,
+      textTransform: 'uppercase',
+      color: colors.inkMuted,
+    },
+    legacyThemeGroup: { marginTop: spacing.sm },
     themeRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -615,7 +650,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderRadius: 16,
       paddingHorizontal: spacing.sm,
     },
-    themeRowActive: { backgroundColor: colors.accent + '12' },
+    themeRowLegacy: { opacity: 0.84 },
+    themeRowActive: { backgroundColor: colors.paper },
     themeSwatch: {
       width: 28, height: 28, borderRadius: 14,
       borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.15)',

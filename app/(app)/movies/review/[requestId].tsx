@@ -1,16 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, TextInput, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 
 import { ActionButton } from '../../../../src/components/ActionButton';
 import { AppScreen } from '../../../../src/components/AppScreen';
+import { TextOrVoiceComposer } from '../../../../src/components/TextOrVoiceComposer';
+import { VoiceMemoryCard } from '../../../../src/components/VoiceMemoryCard';
 import { useAuth } from '../../../../src/features/auth/AuthContext';
 import { useSocialGraph } from '../../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../../src/features/theme/ThemeContext';
 import { backOnce, replaceOnce } from '../../../../src/lib/navigationGuard';
+import { uploadMemoryAudio } from '../../../../src/lib/memoryMediaUpload';
+import { getPromptExpirationLabel, isPromptExpired } from '../../../../src/lib/promptExpiration';
 import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
-import { radius, spacing } from '../../../../src/theme/tokens';
+import { radius, semanticColors, spacing } from '../../../../src/theme/tokens';
+import type { VoiceAttachment } from '../../../../src/types/domain';
 
 export default function MovieReviewResponseScreen() {
   const router = useRouter();
@@ -22,9 +27,12 @@ export default function MovieReviewResponseScreen() {
   const requestId = Array.isArray(params.requestId) ? params.requestId[0] : params.requestId;
   const request = requestId ? getMovieReviewRequestById(requestId) : undefined;
   const requester = request ? getUserById(request.requesterUserId) : undefined;
+  const expired = request ? isPromptExpired(request) : false;
   const [rating, setRating] = useState(0);
   const [ratingRowWidth, setRatingRowWidth] = useState(0);
+  const [scrollEnabled, setScrollEnabled] = useState(true);
   const [body, setBody] = useState('');
+  const [reviewVoice, setReviewVoice] = useState<VoiceAttachment | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -42,17 +50,20 @@ export default function MovieReviewResponseScreen() {
       setError('Choose a rating first.');
       return;
     }
-    if (!body.trim()) {
-      setError('Write a quick review before sending.');
-      return;
-    }
     setBusy(true);
     setError('');
     try {
+      const uploadedVoice = reviewVoice
+        ? {
+          ...reviewVoice,
+          uri: await uploadMemoryAudio(reviewVoice.uri, { prefix: `${currentUser.id}/voice-movies` }),
+        }
+        : null;
       await completeMovieReviewRequest(currentUser.id, {
         requestId: request.id,
         rating,
         body,
+        voice: uploadedVoice,
       });
       replaceOnce(router, `/(app)/wall/${request.requesterUserId}`);
     } catch (err) {
@@ -65,6 +76,7 @@ export default function MovieReviewResponseScreen() {
     if (ratingRowWidth <= 0) return;
     const x = Math.max(0, Math.min(ratingRowWidth, event.nativeEvent.locationX));
     const nextRating = Math.max(0.5, Math.min(5, Math.ceil((x / ratingRowWidth) * 10) / 2));
+    setError('');
     setRating(nextRating);
   }
 
@@ -99,8 +111,22 @@ export default function MovieReviewResponseScreen() {
     );
   }
 
+  if (expired) {
+    return (
+      <AppScreen header={header} floatingHeaderOnScroll>
+        <Text style={styles.title}>Movie request expired</Text>
+        <Text style={styles.subtitle}>This movie prompt was available for 7 days and can no longer be answered.</Text>
+      </AppScreen>
+    );
+  }
+
   return (
-    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={busy ? 'Sending...' : 'Send rating'} onPress={handleSubmit} disabled={busy} />}>
+    <AppScreen
+      header={header}
+      floatingHeaderOnScroll
+      scrollEnabled={scrollEnabled}
+      footer={<ActionButton label={busy ? 'Sending...' : 'Send rating'} onPress={handleSubmit} disabled={busy} />}
+    >
       <Text style={styles.title}>Rate This Movie</Text>
       <Text style={styles.subtitle}>{requester?.displayName ?? 'A friend'} wants your take.</Text>
 
@@ -108,11 +134,23 @@ export default function MovieReviewResponseScreen() {
         {request.movie.posterUrl ? (
           <Image source={{ uri: request.movie.posterUrl }} style={styles.poster} />
         ) : (
-          <View style={styles.posterFallback}><Ionicons name="film-outline" size={32} color={colors.inkMuted} /></View>
+          <View style={styles.posterFallback}><Ionicons name="film-outline" size={32} color={colors.ink} /></View>
         )}
         <View style={styles.movieInfo}>
           <Text style={styles.movieTitle}>{request.movie.title}{request.movie.year ? ` (${request.movie.year})` : ''}</Text>
+          <Text style={styles.expirationText}>{getPromptExpirationLabel(request.expiresAt)}</Text>
           {request.prompt ? <Text style={styles.promptText}>"{request.prompt}"</Text> : null}
+          {request.promptVoice ? (
+            <VoiceMemoryCard
+              voice={request.promptVoice}
+              postId={`movie-prompt:${request.id}`}
+              authorName={requester?.displayName ?? 'A friend'}
+              themeColors={colors}
+              variant="embedded"
+              label="Voice prompt"
+              preview
+            />
+          ) : null}
           <Text style={styles.movieOverview} numberOfLines={5}>{request.movie.overview ?? 'No overview available.'}</Text>
         </View>
       </View>
@@ -122,29 +160,51 @@ export default function MovieReviewResponseScreen() {
         <View
           style={styles.ratingRow}
           onLayout={handleRatingLayout}
-          onStartShouldSetResponder={() => true}
+          onStartShouldSetResponder={() => false}
           onMoveShouldSetResponder={() => true}
-          onResponderGrant={updateRatingFromTouch}
+          onResponderGrant={(event) => {
+            setScrollEnabled(false);
+            updateRatingFromTouch(event);
+          }}
           onResponderMove={updateRatingFromTouch}
+          onResponderRelease={() => setScrollEnabled(true)}
+          onResponderTerminate={() => setScrollEnabled(true)}
         >
           {[1, 2, 3, 4, 5].map((value) => (
-            <View key={value} style={styles.starSlot}>
-              <Ionicons name={getStarIcon(rating, value)} size={58} color={rating >= value - 0.5 ? colors.accent : colors.inkMuted} />
-            </View>
+            <Pressable
+              key={value}
+              onPress={() => {
+                setError('');
+                setRating(value);
+              }}
+              onPressIn={() => setScrollEnabled(false)}
+              onPressOut={() => setScrollEnabled(true)}
+              style={styles.starSlot}
+              accessibilityRole="button"
+              accessibilityLabel={`Rate ${value} out of 5 stars`}
+            >
+              <Ionicons name={getStarIcon(rating, value)} size={58} color={semanticColors.movieGold} />
+            </Pressable>
           ))}
         </View>
         <Text style={styles.ratingValue}>{rating > 0 ? `${rating}/5 stars` : 'Tap or drag across the stars'}</Text>
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Review</Text>
-        <TextInput
-          multiline
-          value={body}
-          onChangeText={setBody}
+        <TextOrVoiceComposer
+          label="Review"
+          text={body}
+          onTextChange={setBody}
+          voice={reviewVoice}
+          onVoiceChange={(voice) => {
+            setReviewVoice(voice);
+            setError('');
+          }}
+          previewAuthorName={currentUser.displayName}
           placeholder="What should your friend know before watching?"
-          placeholderTextColor={colors.inkMuted}
-          style={styles.reviewInput}
+          voiceLabel="Voice review"
+          voiceHelperText="Record your review instead of typing."
+          textInputStyle={styles.reviewInput}
         />
       </View>
 
@@ -154,8 +214,8 @@ export default function MovieReviewResponseScreen() {
 }
 
 const makeStyles = (colors: ReturnType<typeof useTheme>['colors'], fonts: ReturnType<typeof useTheme>['fonts']) => StyleSheet.create({
-  backButton: { paddingVertical: spacing.xs },
-  backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+  backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+  backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
   title: { fontFamily: fonts.heading, fontSize: 32, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 32) },
   subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
   movieCard: { flexDirection: 'row', gap: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: spacing.md },
@@ -163,6 +223,7 @@ const makeStyles = (colors: ReturnType<typeof useTheme>['colors'], fonts: Return
   posterFallback: { width: 100, height: 148, borderRadius: radius.md, backgroundColor: colors.canvasAlt, alignItems: 'center', justifyContent: 'center' },
   movieInfo: { flex: 1, gap: spacing.xs },
   movieTitle: { fontFamily: fonts.heading, fontSize: 22, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 22) },
+  expirationText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent, textTransform: 'uppercase', letterSpacing: 0.6 },
   promptText: { fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 19, color: colors.accent },
   movieOverview: { fontFamily: fonts.body, fontSize: 13, lineHeight: 19, color: colors.inkSoft },
   section: { gap: spacing.sm },

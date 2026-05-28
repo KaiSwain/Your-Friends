@@ -3,7 +3,7 @@ export type EntityType = 'user' | 'contact';
 // Define the allowed visibility modes for a wall post.
 export type WallPostVisibility = 'private' | 'visible_to_subject';
 // Define the supported top-level memory shapes shown on a wall.
-export type WallPostType = 'note' | 'polaroid' | 'song' | 'movie';
+export type WallPostType = 'note' | 'polaroid' | 'media' | 'song' | 'movie' | 'voice';
 // Define the supported music providers for song memories and attachments.
 export type SongProvider = 'apple' | 'spotify';
 // Define the supported font presets for text-only memories.
@@ -23,6 +23,11 @@ export interface SongAttachment {
   artworkUrl: string | null;
   previewUrl: string | null;
   externalUrl: string | null;
+}
+
+export interface VoiceAttachment {
+  uri: string;
+  durationMs: number | null;
 }
 
 export interface MovieAttachment {
@@ -59,6 +64,8 @@ export interface AppUser {
   profileBgImagePublic: boolean;
   // Store short profile facts displayed on the profile screen.
   profileFacts: string[];
+  // Store personality trait chips shown near facts.
+  profilePersonalityTraits: string[];
   // Store the ISO timestamp for when this profile was created.
   createdAt: string;
   // Optionally store when Premium access expires, including referral rewards.
@@ -71,6 +78,10 @@ export interface AppUser {
   premiumFreeGrantorUserId?: string | null;
   // Track when the free Premium window was granted.
   premiumFreeGrantedAt?: string | null;
+  // Whether this profile is the official Your Friends team account.
+  isOfficial?: boolean;
+  // Whether this profile can access team-only admin tools.
+  isTeamAdmin?: boolean;
 } // End the AppUser interface.
 
 // Describe the shape of a private contact saved by a signed-in user.
@@ -87,6 +98,8 @@ export interface Contact {
   nickname: string | null;
   // Store facts the owner wants to remember about this contact.
   facts: string[];
+  // Store personality trait chips the owner wants to remember about this contact.
+  personalityTraits: string[];
   // Optionally store a path or URL for the contact's avatar image.
   avatarPath?: string | null;
   // Optionally store a path or URL for the contact hero card video.
@@ -176,7 +189,7 @@ export interface PeopleListItem {
   // Store when this item was pinned so pinned items sort oldest pin first.
   pinnedAt?: string | null;
   // Whether the underlying user has an active Premium subscription. Used to
-  // paint the golden glow + PREMIUM badge on the polaroid card. Always
+  // paint the golden glow + PREMIUM badge on the memory card. Always
   // undefined for private contacts.
   isPremium?: boolean;
 } // End the PeopleListItem interface.
@@ -207,13 +220,15 @@ export interface WallPost {
   body: string;
   // Optionally store the image URL or path attached to the memory.
   imageUri: string | null;
-  // Optionally store the video URL or path for a Live Polaroid.
+  // Optionally store a lightweight thumbnail URL for fast wall rendering.
+  imageThumbUri?: string | null;
+  // Optionally store the video URL or path for video media or a Live Memory Card.
   videoUri?: string | null;
-  // Store whether this Live Polaroid should always play without audio.
+  // Store whether this video memory should always play without audio.
   videoMuted?: boolean;
-  // Optionally store a custom card color for the polaroid frame.
+  // Optionally store a custom card color for the memory card frame.
   cardColor: string | null;
-  // Optionally store text written on the back of the polaroid.
+  // Optionally store text written on the back of the memory card.
   backText: string | null;
   // Optionally store a photo filter key.
   filter: string | null;
@@ -229,16 +244,20 @@ export interface WallPost {
   dateStamp: boolean;
   // Optionally store a song used by standalone song memories or attachments.
   song: SongAttachment | null;
+  // Optionally store a recorded voice memory.
+  voice?: VoiceAttachment | null;
   // Optionally store a movie reviewed for a friend request.
   movie?: MovieAttachment | null;
   // Optionally link this memory back to the prompt that produced it.
   memoryPromptRequestId?: string | null;
-  // Optionally reference an existing polaroid chosen while answering a prompt.
+  // Optionally reference an existing Memory Card chosen while answering a prompt.
   referencedWallPostId?: string | null;
   // Optionally store the original prompt text for completed prompt responses.
   promptText?: string | null;
   // Optionally store the original prompt type for completed prompt responses.
   promptType?: MemoryPromptType | null;
+  // Optionally store the original recorded prompt question for completed prompt responses.
+  promptVoice?: VoiceAttachment | null;
   // Optionally store when the memory happened, separate from when it was posted.
   memoryDate?: string | null;
   // Optionally store a user-entered place name for this memory.
@@ -267,6 +286,7 @@ export interface MemoryReply {
   wallPostId: string;
   authorUserId: string;
   body: string;
+  voice?: VoiceAttachment | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -314,13 +334,15 @@ export interface CreateWallPostInput {
   body: string;
   // Optionally store the uploaded image URL or path for the new post.
   imageUri: string | null;
-  // Optionally store the uploaded video URL or path for Live Polaroids.
+  // Optionally store a lightweight thumbnail URL for the uploaded image.
+  imageThumbUri?: string | null;
+  // Optionally store the uploaded video URL or path for video media or Live Memory Cards.
   videoUri?: string | null;
-  // Optionally store whether the Live Polaroid should always play without audio.
+  // Optionally store whether the video memory should always play without audio.
   videoMuted?: boolean;
   // Optionally store a card color for the new post.
   cardColor?: string | null;
-  // Optionally store text written on the back of the polaroid.
+  // Optionally store text written on the back of the memory card.
   backText?: string | null;
   // Optionally store a photo filter key for the new post.
   filter?: string | null;
@@ -336,24 +358,45 @@ export interface CreateWallPostInput {
   dateStamp?: boolean;
   // Optionally store a song used by standalone song memories or attachments.
   song?: SongAttachment | null;
+  // Optionally store a recorded voice memory.
+  voice?: VoiceAttachment | null;
   // Optionally store movie review metadata for movie memories.
   movie?: MovieAttachment | null;
   // Optionally link this memory back to the prompt that produced it.
   memoryPromptRequestId?: string | null;
-  // Optionally reference an existing polaroid chosen while answering a prompt.
+  // Optionally reference an existing Memory Card chosen while answering a prompt.
   referencedWallPostId?: string | null;
   // Optionally store the original prompt text for completed prompt responses.
   promptText?: string | null;
   // Optionally store the original prompt type for completed prompt responses.
   promptType?: MemoryPromptType | null;
+  // Optionally store the original recorded prompt question for completed prompt responses.
+  promptVoice?: VoiceAttachment | null;
   // Optionally store when the memory happened, separate from when it was posted.
   memoryDate?: string | null;
   // Optionally store a user-entered place name for this memory.
   locationName?: string | null;
 } // End the CreateWallPostInput interface.
 
+export interface CreateOfficialBroadcastInput {
+  body: string;
+  imageUri?: string | null;
+  cardColor?: string | null;
+  backText?: string | null;
+  filter?: string | null;
+  dateStamp?: boolean;
+  memoryDate?: string | null;
+}
+
+export interface OfficialBroadcastResult {
+  broadcastId: string;
+  recipientCount: number;
+  postCount: number;
+  notificationCount: number;
+}
+
 export type MovieReviewRequestStatus = 'pending' | 'completed' | 'cancelled';
-export type MemoryPromptType = 'song' | 'text' | 'photo_reference';
+export type MemoryPromptType = 'song' | 'text' | 'photo' | 'photo_reference' | 'voice';
 export type MemoryPromptRequestStatus = 'pending' | 'completed' | 'cancelled';
 
 export interface MovieReviewRequest {
@@ -362,11 +405,14 @@ export interface MovieReviewRequest {
   recipientUserId: string;
   movie: MovieAttachment;
   prompt: string | null;
+  promptVoice?: VoiceAttachment | null;
   status: MovieReviewRequestStatus;
   reviewRating: number | null;
   reviewBody: string | null;
+  reviewVoice?: VoiceAttachment | null;
   completedWallPostId: string | null;
   createdAt: string;
+  expiresAt: string;
   updatedAt: string;
   completedAt: string | null;
 }
@@ -375,12 +421,14 @@ export interface CreateMovieReviewRequestInput {
   recipientUserId: string;
   movie: MovieAttachment;
   prompt?: string | null;
+  promptVoice?: VoiceAttachment | null;
 }
 
 export interface CompleteMovieReviewRequestInput {
   requestId: string;
   rating: number;
-  body: string;
+  body?: string | null;
+  voice?: VoiceAttachment | null;
 }
 
 export interface MemoryPromptRequest {
@@ -389,12 +437,15 @@ export interface MemoryPromptRequest {
   recipientUserId: string;
   promptType: MemoryPromptType;
   promptText: string;
+  promptVoice?: VoiceAttachment | null;
   status: MemoryPromptRequestStatus;
   responseBody: string | null;
   responseSong: SongAttachment | null;
+  responseVoice: VoiceAttachment | null;
   referencedWallPostId: string | null;
   completedWallPostId: string | null;
   createdAt: string;
+  expiresAt: string;
   updatedAt: string;
   completedAt: string | null;
 }
@@ -403,12 +454,18 @@ export interface CreateMemoryPromptRequestInput {
   recipientUserId: string;
   promptType: MemoryPromptType;
   promptText: string;
+  promptVoice?: VoiceAttachment | null;
 }
 
 export interface CompleteMemoryPromptRequestInput {
   requestId: string;
   body?: string | null;
   song?: SongAttachment | null;
+  voice?: VoiceAttachment | null;
+  responsePostType?: 'polaroid' | 'media' | null;
+  imageUri?: string | null;
+  videoUri?: string | null;
+  videoMuted?: boolean;
   referencedWallPostId?: string | null;
 }
 
@@ -610,6 +667,7 @@ export type NotificationMetadata = Record<string, unknown> & {
   source?: string;
   throwbackBucket?: 'month' | 'year';
   wallPostId?: string;
+  broadcastId?: string;
 };
 
 export interface Notification {

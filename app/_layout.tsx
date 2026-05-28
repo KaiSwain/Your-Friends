@@ -26,7 +26,6 @@ import { initializeMobileAds } from '../src/lib/initializeMobileAds';
 import { asyncStoragePersister, queryClient } from '../src/lib/queryClient';
 import { parseAppDeepLink } from '../src/lib/appDeepLinks';
 import { replaceOnce } from '../src/lib/navigationGuard';
-import { storeIncomingReferralCode } from '../src/lib/referrals';
 import { colors as fallbackColors } from '../src/theme/tokens';
 
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
@@ -140,7 +139,7 @@ function ReferralLinkCapture() {
         return;
       }
       if (link.type === 'friend-invite') {
-        storeIncomingReferralCode(link.code).catch(() => {});
+        return;
       }
     }
 

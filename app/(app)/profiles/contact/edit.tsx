@@ -1,10 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
+import Slider from '@react-native-community/slider';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useMemo, useCallback, useState } from 'react';
 import { Alert, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { AppScreen } from '../../../../src/components/AppScreen';
+import { CustomThemeVisualizer } from '../../../../src/components/CustomThemeVisualizer';
 import { useAuth } from '../../../../src/features/auth/AuthContext';
 import { usePremium } from '../../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../../src/features/social/SocialGraphContext';
@@ -12,8 +14,10 @@ import type { ColorTokens } from '../../../../src/features/theme/themes';
 import { polaroidFilters } from '../../../../src/lib/polaroidFilters';
 import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
 import type { FontSet } from '../../../../src/theme/typography';
+import { fontSets } from '../../../../src/theme/typography';
 import { accentPalette, radius, spacing } from '../../../../src/theme/tokens';
-import { themes, themeNames } from '../../../../src/features/theme/themes';
+import { featuredThemeNames, legacyThemeNames, themes } from '../../../../src/features/theme/themes';
+import { createCustomThemePair, decodeProfileCustomTheme, encodeProfileCustomTheme, isProfileCustomTheme, DEFAULT_CUSTOM_THEME_SETTINGS, type CustomThemeFontKey, type CustomThemeSettings } from '../../../../src/features/theme/customTheme';
 import { onCapturedUri } from '../../../../src/lib/cameraHandoff';
 import { backOnce, pushOnce } from '../../../../src/lib/navigationGuard';
 import { showGalleryPaywall, showProfileBackgroundPaywall } from '../../../../src/lib/premiumGates';
@@ -72,13 +76,28 @@ const RELATIONSHIP_TAG_PRESETS = [
   'Support Person',
 ];
 
+const customFontOptions: { label: string; value: CustomThemeFontKey; sampleTheme: string }[] = [
+  { label: 'Classic', value: 'classic', sampleTheme: 'default' },
+  { label: 'Modern', value: 'modern', sampleTheme: 'neon' },
+  { label: 'Playful', value: 'playful', sampleTheme: 'bubblegum' },
+  { label: 'Editorial', value: 'editorial', sampleTheme: 'vintage' },
+];
+
 export default function EditContactProfileScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ contactId: string | string[]; capturedUri: string | string[]; capturedVideoUri: string | string[] }>();
   const { currentUser } = useAuth();
   const { getContactById, getPeopleListForUser, updateContact } = useSocialGraph();
   const { purchasedThemes, isPremium } = usePremium();
-  const unlockedThemeSet = useMemo(() => new Set<string>(['default', ...purchasedThemes]), [purchasedThemes]);
+  const unlockedThemeSet = useMemo(() => new Set<string>(['default', 'yourFriends', ...purchasedThemes]), [purchasedThemes]);
+  const unlockedFeaturedThemeNames = useMemo(
+    () => featuredThemeNames.filter((name) => name !== 'default' && unlockedThemeSet.has(name)),
+    [unlockedThemeSet],
+  );
+  const unlockedLegacyThemeNames = useMemo(
+    () => legacyThemeNames.filter((name) => unlockedThemeSet.has(name)),
+    [unlockedThemeSet],
+  );
 
   const contactId = Array.isArray(params.contactId) ? params.contactId[0] : params.contactId;
   const contact = contactId ? getContactById(contactId) : undefined;
@@ -94,6 +113,10 @@ export default function EditContactProfileScreen() {
   const [cardColor, setCardColor] = useState<string | null>(contact?.cardColor ?? null);
   const [backText, setBackText] = useState(contact?.backText ?? '');
   const [profileBg, setProfileBg] = useState<string | null>(contact?.profileBg ?? null);
+  const [profileCustomTheme, setProfileCustomTheme] = useState<CustomThemeSettings>(
+    decodeProfileCustomTheme(contact?.profileBg) ?? DEFAULT_CUSTOM_THEME_SETTINGS,
+  );
+  const [showCustomThemeFineTune, setShowCustomThemeFineTune] = useState(false);
   const [profileBgImageUri, setProfileBgImageUri] = useState<string | null>(null);
   const [removeProfileBgImage, setRemoveProfileBgImage] = useState(false);
   const {
@@ -104,6 +127,9 @@ export default function EditContactProfileScreen() {
   } = useEffectiveProfileTheme(profileBg);
 
   const styles = useMemo(() => makeStyles(effectiveColors, effectiveFonts), [effectiveColors, effectiveFonts]);
+  const profileCustomThemePair = useMemo(() => createCustomThemePair(profileCustomTheme), [profileCustomTheme]);
+  const profileCustomThemeColors = profileCustomThemePair.light;
+  const customProfileThemeSelected = isProfileCustomTheme(profileBg) || profileBg === 'custom';
 
   // Pick up media from Polaroid camera screen.
   const capturedUri = Array.isArray(params.capturedUri) ? params.capturedUri[0] : params.capturedUri;
@@ -204,6 +230,20 @@ export default function EditContactProfileScreen() {
     setRemoveProfileBgImage(Boolean(contact?.profileBgImagePath));
   }
 
+  function selectCustomProfileTheme() {
+    setProfileBg(encodeProfileCustomTheme(profileCustomTheme));
+  }
+
+  function previewProfileCustomTheme(updates: Partial<CustomThemeSettings>) {
+    setProfileCustomTheme((current) => ({ ...current, ...updates }));
+  }
+
+  function commitProfileCustomTheme(updates: Partial<CustomThemeSettings> = {}) {
+    const next = { ...profileCustomTheme, ...updates };
+    setProfileCustomTheme(next);
+    setProfileBg(encodeProfileCustomTheme(next));
+  }
+
   function addTag(rawTag: string) {
     const tag = rawTag.trim();
     if (!tag) return;
@@ -223,6 +263,7 @@ export default function EditContactProfileScreen() {
   const availablePresetTags = RELATIONSHIP_TAG_PRESETS.filter(
     (tag) => !selectedTags.some((selectedTag) => selectedTag.toLowerCase() === tag.toLowerCase()),
   );
+  const currentProfileBg = customProfileThemeSelected ? encodeProfileCustomTheme(profileCustomTheme) : profileBg;
 
   const hasChanges =
     name.trim() !== contact.displayName ||
@@ -234,7 +275,7 @@ export default function EditContactProfileScreen() {
     tagsChanged ||
     cardColor !== (contact.cardColor ?? null) ||
     backText.trim() !== (contact.backText ?? '') ||
-    profileBg !== (contact.profileBg ?? null) ||
+    currentProfileBg !== (contact.profileBg ?? null) ||
     profileBgImageUri !== null ||
     removeProfileBgImage;
 
@@ -257,7 +298,7 @@ export default function EditContactProfileScreen() {
       if (tagsChanged) updates.tags = selectedTags;
       if (cardColor !== (contact!.cardColor ?? null)) updates.cardColor = cardColor;
       if (backText.trim() !== (contact!.backText ?? '')) updates.backText = backText.trim() || null;
-      if (profileBg !== (contact!.profileBg ?? null)) updates.profileBg = profileBg;
+      if (currentProfileBg !== (contact!.profileBg ?? null)) updates.profileBg = currentProfileBg;
       if (profileBgImageUri) updates.profileBgImageLocalUri = profileBgImageUri;
       else if (removeProfileBgImage) updates.profileBgImageLocalUri = null;
       if (Object.keys(updates).length > 0) await updateContact(contact!.id, updates);
@@ -340,7 +381,7 @@ export default function EditContactProfileScreen() {
           value={name}
           onChangeText={setName}
           placeholder="Enter a name"
-          placeholderTextColor={colors.inkMuted}
+          placeholderTextColor={colors.ink}
           returnKeyType="done"
         />
       </View>
@@ -353,7 +394,7 @@ export default function EditContactProfileScreen() {
           value={showBack ? backText : note}
           onChangeText={showBack ? setBackText : setNote}
           placeholder={showBack ? 'Write something on the back…' : 'A short note about this person…'}
-          placeholderTextColor={colors.inkMuted}
+          placeholderTextColor={colors.ink}
           multiline
           maxLength={showBack ? 200 : 120}
         />
@@ -398,12 +439,13 @@ export default function EditContactProfileScreen() {
             </View>
             <Text style={styles.bgSwatchLabel}>Default</Text>
           </Pressable>
-          {themeNames.filter((name) => name !== 'default' && unlockedThemeSet.has(name)).map((name) => {
-            const t = themes[name].dark;
-            const selected = profileBg === name;
+          {unlockedFeaturedThemeNames.map((name) => {
+            const isCustom = name === 'custom';
+            const t = isCustom ? profileCustomThemeColors : themes[name].light;
+            const selected = isCustom ? customProfileThemeSelected : profileBg === name;
             return (
-              <Pressable key={name} onPress={() => setProfileBg(name)} style={[styles.themeSwatch, selected && styles.themeSwatchSelected]}>
-                <View style={[styles.themeSwatchInner, { backgroundColor: t.canvas, borderColor: selected ? t.accent : colors.line }]}>
+              <Pressable key={name} onPress={() => isCustom ? selectCustomProfileTheme() : setProfileBg(name)} style={[styles.themeSwatch, selected && styles.themeSwatchSelected]}>
+                <View style={[styles.themeSwatchInner, { backgroundColor: t.canvas, borderColor: selected ? colors.ink : colors.line }]}>
                   <View style={[styles.themeSwatchDot, { backgroundColor: t.accent }]} />
                   {selected && <Ionicons name="checkmark" size={14} color={t.ink} style={styles.themeSwatchCheck} />}
                 </View>
@@ -412,6 +454,98 @@ export default function EditContactProfileScreen() {
             );
           })}
         </View>
+        {unlockedLegacyThemeNames.length > 0 ? (
+          <>
+            <Text style={styles.themeGroupLabel}>Advanced / legacy themes</Text>
+            <View style={styles.bgRow}>
+              {unlockedLegacyThemeNames.map((name) => {
+                const t = themes[name].light;
+                const selected = profileBg === name;
+                return (
+                  <Pressable key={name} onPress={() => setProfileBg(name)} style={[styles.themeSwatch, styles.themeSwatchLegacy, selected && styles.themeSwatchSelected]}>
+                    <View style={[styles.themeSwatchInner, { backgroundColor: t.canvas, borderColor: selected ? colors.ink : colors.line }]}>
+                      <View style={[styles.themeSwatchDot, { backgroundColor: t.accent }]} />
+                      {selected && <Ionicons name="checkmark" size={14} color={t.ink} style={styles.themeSwatchCheck} />}
+                    </View>
+                    <Text style={styles.bgSwatchLabel}>{themes[name].label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        ) : null}
+        {customProfileThemeSelected ? (
+          <View style={styles.customThemeEditor}>
+            <Text style={styles.fieldHint}>Custom profile themes stay attached to this person only.</Text>
+            <View style={[styles.customThemePreview, { backgroundColor: profileCustomThemeColors.canvas, borderColor: profileCustomThemeColors.accent }]}>
+              <View style={styles.customThemePreviewCopy}>
+                <Text style={[styles.customThemePreviewTitle, { color: profileCustomThemeColors.ink }]}>Custom profile look</Text>
+                <Text style={[styles.customThemePreviewSubtitle, { color: profileCustomThemeColors.inkSoft }]}>Readable text is generated from your colors.</Text>
+              </View>
+              <View style={[styles.customThemeAccentOrb, { backgroundColor: profileCustomThemeColors.accent }]} />
+            </View>
+            <CustomThemeVisualizer
+              colors={colors}
+              fonts={effectiveFonts}
+              onSelectAccentHue={(accentHue) => commitProfileCustomTheme({ accentHue })}
+              onSelectBackgroundHue={(backgroundHue) => commitProfileCustomTheme({ backgroundHue })}
+              previewColors={profileCustomThemeColors}
+              settings={profileCustomTheme}
+            />
+            <View style={styles.customThemeFontGrid}>
+              {customFontOptions.map((option) => {
+                const active = profileCustomTheme.fontKey === option.value;
+                const optionFonts = fontSets[option.sampleTheme] ?? fontSets.default;
+                return (
+                  <Pressable
+                    key={option.value}
+                    onPress={() => commitProfileCustomTheme({ fontKey: option.value })}
+                    style={[styles.customThemeFontPill, active && styles.customThemeFontPillActive]}
+                  >
+                    <Text style={[styles.customThemeFontLabel, active && styles.customThemeFontLabelActive, { fontFamily: optionFonts.heading }, protectTextFromFontClipping(optionFonts.heading, 13)]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Pressable onPress={() => setShowCustomThemeFineTune((open) => !open)} style={styles.fineTuneToggle} accessibilityRole="button">
+              <Text style={styles.fineTuneToggleLabel}>Fine tune</Text>
+              <Ionicons name={showCustomThemeFineTune ? 'chevron-up' : 'chevron-down'} size={16} color={colors.inkSoft} />
+            </Pressable>
+            {showCustomThemeFineTune ? (
+              <>
+                <CustomThemeSlider
+                  colors={colors}
+                  fonts={effectiveFonts}
+                  label="Accent color"
+                  maximumValue={359}
+                  value={profileCustomTheme.accentHue}
+                  onSlidingComplete={(accentHue) => commitProfileCustomTheme({ accentHue })}
+                  onValueChange={(accentHue) => previewProfileCustomTheme({ accentHue })}
+                />
+                <CustomThemeSlider
+                  colors={colors}
+                  fonts={effectiveFonts}
+                  label="Background hue"
+                  maximumValue={359}
+                  value={profileCustomTheme.backgroundHue}
+                  onSlidingComplete={(backgroundHue) => commitProfileCustomTheme({ backgroundHue })}
+                  onValueChange={(backgroundHue) => previewProfileCustomTheme({ backgroundHue })}
+                />
+                <CustomThemeSlider
+                  colors={colors}
+                  fonts={effectiveFonts}
+                  label="Background intensity"
+                  maximumValue={100}
+                  value={profileCustomTheme.backgroundIntensity}
+                  onSlidingComplete={(backgroundIntensity) => commitProfileCustomTheme({ backgroundIntensity })}
+                  onValueChange={(backgroundIntensity) => previewProfileCustomTheme({ backgroundIntensity })}
+                />
+              </>
+            ) : null}
+          </View>
+        ) : null}
       </View>
 
       {/* Profile background photo */}
@@ -423,7 +557,7 @@ export default function EditContactProfileScreen() {
             <Image source={{ uri: profileBgImageUri ?? contact.profileBgImagePath! }} style={styles.backgroundPhotoPreview} resizeMode="cover" />
           ) : (
             <View style={styles.backgroundPhotoEmpty}>
-              <Ionicons name="image-outline" size={28} color={colors.inkMuted} />
+              <Ionicons name="image-outline" size={28} color={colors.ink} />
               <Text style={styles.backgroundPhotoEmptyText}>No background photo</Text>
             </View>
           )}
@@ -467,7 +601,7 @@ export default function EditContactProfileScreen() {
             value={customTag}
             onChangeText={setCustomTag}
             placeholder="Custom tag"
-            placeholderTextColor={colors.inkMuted}
+            placeholderTextColor={colors.ink}
             style={styles.customTagInput}
             returnKeyType="done"
             maxLength={24}
@@ -495,11 +629,51 @@ const POLAROID_FRAME = '#F5F2EA';
 const FRAME_INK = '#2A2218';
 const FRAME_INK_SOFT = '#6B6052';
 
+function CustomThemeSlider({
+  colors,
+  fonts,
+  label,
+  maximumValue,
+  onSlidingComplete,
+  onValueChange,
+  value,
+}: {
+  colors: ColorTokens;
+  fonts: FontSet;
+  label: string;
+  maximumValue: number;
+  onSlidingComplete: (value: number) => void;
+  onValueChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <View style={{ gap: spacing.xs }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text style={{ fontFamily: fonts.bodyBold, fontSize: 13, color: colors.ink }}>{label}</Text>
+        <Text style={{ fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent }}>{Math.round(value)}</Text>
+      </View>
+      <Slider
+        value={value}
+        minimumValue={0}
+        maximumValue={maximumValue}
+        step={1}
+        onSlidingComplete={onSlidingComplete}
+        onValueChange={onValueChange}
+        minimumTrackTintColor={colors.accent}
+        maximumTrackTintColor={colors.line}
+        thumbTintColor={colors.accent}
+        accessibilityLabel={label}
+        accessibilityValue={{ min: 0, max: maximumValue, now: Math.round(value) }}
+      />
+    </View>
+  );
+}
+
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
     topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    backButton: { paddingVertical: spacing.xs },
-    backLabel: { fontFamily: fonts.bodyMedium, fontSize: 15, color: colors.inkSoft },
+    backButton: { minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
+    backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     saveButton: {
       paddingVertical: spacing.xs,
       paddingHorizontal: spacing.lg,
@@ -849,6 +1023,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       gap: 4,
       opacity: 0.7,
     },
+    themeSwatchLegacy: { opacity: 0.58 },
     themeSwatchSelected: { opacity: 1 },
     themeSwatchInner: {
       width: 52,
@@ -869,5 +1044,66 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderRadius: 7,
     },
     themeSwatchCheck: { position: 'absolute' },
+    customThemeEditor: {
+      gap: spacing.md,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paperMuted,
+      padding: spacing.md,
+    },
+    customThemePreview: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      padding: spacing.md,
+    },
+    customThemePreviewCopy: { flex: 1, gap: 3 },
+    customThemePreviewTitle: {
+      fontFamily: fonts.heading,
+      fontSize: 18,
+      ...protectTextFromFontClipping(fonts.heading, 18),
+    },
+    customThemePreviewSubtitle: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17 },
+    customThemeAccentOrb: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      borderWidth: 3,
+      borderColor: colors.white,
+    },
+    customThemeFontGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    customThemeFontPill: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+    },
+    customThemeFontPillActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    customThemeFontLabel: { fontSize: 13, color: colors.ink },
+    customThemeFontLabelActive: { color: colors.white },
+    fineTuneToggle: {
+      minHeight: 40,
+      borderRadius: radius.pill,
+      backgroundColor: colors.paper,
+      paddingHorizontal: spacing.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    fineTuneToggleLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.inkSoft },
+    themeGroupLabel: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 11,
+      letterSpacing: 0.7,
+      textTransform: 'uppercase',
+      color: colors.inkMuted,
+      marginTop: spacing.xs,
+    },
     bgSwatchLabel: { fontFamily: fonts.bodyMedium, fontSize: 10, color: colors.inkSoft },
   });

@@ -122,6 +122,7 @@ export function buildViewedWallProfileViewModel({
     cardColor: theirContact?.cardColor ?? null,
     displayName: theirContact?.displayName ?? currentUser.displayName,
     facts: theirContact?.facts ?? [],
+    personalityTraits: theirContact?.personalityTraits ?? [],
     friendHasPremium,
     glow,
     note: theirContact?.note ?? null,

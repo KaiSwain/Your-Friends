@@ -36,7 +36,7 @@ export default function OnboardingCalendarIntroScreen() {
   return (
     <OnboardingFrame
       step={3}
-      totalSteps={12}
+      totalSteps={13}
       eyebrow="Remember"
       title="Your calendar is for friendship moments."
       subtitle="Use it for birthdays, plans, anniversaries, and reminders tied to specific people, not just random dates."
@@ -46,11 +46,11 @@ export default function OnboardingCalendarIntroScreen() {
         <View style={styles.calendarShell}>
           <View style={styles.monthHeader}>
             <View style={styles.monthButton}>
-              <Ionicons name="chevron-back" size={16} color={colors.inkSoft} />
+              <Ionicons name="chevron-back" size={16} color={colors.ink} />
             </View>
             <Text style={styles.monthTitle}>May 2026</Text>
             <View style={styles.monthButton}>
-              <Ionicons name="chevron-forward" size={16} color={colors.inkSoft} />
+              <Ionicons name="chevron-forward" size={16} color={colors.ink} />
             </View>
           </View>
 
@@ -192,11 +192,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       width: 36,
       height: 36,
       borderRadius: 18,
-      backgroundColor: colors.accent + '18',
+      backgroundColor: colors.paper,
       alignItems: 'center',
       justifyContent: 'center',
     },
     rowBody: { flex: 1, gap: 3 },
     rowTitle: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
-    rowText: { fontFamily: fonts.body, fontSize: 13, lineHeight: 19, color: colors.inkSoft },
+    rowText: { fontFamily: fonts.body, fontSize: 13, lineHeight: 19, color: colors.ink },
   });

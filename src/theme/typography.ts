@@ -62,6 +62,8 @@ const editorialFonts: FontSet = {
 // Map theme names to their font set. Keep in sync with `ThemeName` in themes.ts.
 export const fontSets: Record<string, FontSet> = {
   default: defaultFonts,
+  custom: defaultFonts,
+  yourFriends: defaultFonts,
   neon: sansFonts,
   synthwave: sansFonts,
   matcha: defaultFonts,

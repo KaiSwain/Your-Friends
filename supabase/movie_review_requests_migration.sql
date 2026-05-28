@@ -11,7 +11,7 @@ alter table public.wall_posts
 
 alter table public.wall_posts drop constraint if exists wall_posts_post_type_check;
 alter table public.wall_posts
-  add constraint wall_posts_post_type_check check (post_type in ('note', 'polaroid', 'song', 'movie'));
+  add constraint wall_posts_post_type_check check (post_type in ('note', 'polaroid', 'media', 'song', 'movie', 'voice'));
 
 alter table public.wall_posts drop constraint if exists wall_posts_movie_review_rating_check;
 alter table public.wall_posts
