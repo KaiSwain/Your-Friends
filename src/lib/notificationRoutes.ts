@@ -26,6 +26,12 @@ export function getNotificationRoute(data: NotificationData): Href | null {
     return requestId ? `/(app)/movies/review/${requestId}` : '/(app)/notifications';
   }
   if (type === 'wall_post') {
+    const actorUserId = typeof data.actorUserId === 'string'
+      ? data.actorUserId
+      : typeof data.authorUserId === 'string'
+        ? data.authorUserId
+        : null;
+    if (actorUserId) return `/(app)/wall/${actorUserId}`;
     const wallPostId = typeof data.wallPostId === 'string'
       ? data.wallPostId
       : typeof data.referenceId === 'string'

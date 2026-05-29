@@ -10,7 +10,7 @@ import { VoiceMemoryCard } from '../../../../src/components/VoiceMemoryCard';
 import { useAuth } from '../../../../src/features/auth/AuthContext';
 import { useSocialGraph } from '../../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../../src/features/theme/ThemeContext';
-import { backOnce, replaceOnce } from '../../../../src/lib/navigationGuard';
+import { backOnce, backOrReplaceOnce } from '../../../../src/lib/navigationGuard';
 import { uploadMemoryAudio } from '../../../../src/lib/memoryMediaUpload';
 import { getPromptExpirationLabel, isPromptExpired } from '../../../../src/lib/promptExpiration';
 import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
@@ -65,7 +65,7 @@ export default function MovieReviewResponseScreen() {
         body,
         voice: uploadedVoice,
       });
-      replaceOnce(router, `/(app)/wall/${request.requesterUserId}`);
+      backOrReplaceOnce(router, `/(app)/wall/${request.requesterUserId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not send your rating.');
       setBusy(false);

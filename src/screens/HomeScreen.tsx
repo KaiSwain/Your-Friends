@@ -35,7 +35,7 @@ import {
   loadPolaroidShakeBoost,
   subscribePolaroidShakeBoost,
 } from '../../src/lib/polaroidShakeBoost';
-import { pushOnce } from '../../src/lib/navigationGuard';
+import { navigateOnce, pushOnce } from '../../src/lib/navigationGuard';
 import { createNotifications } from '../../src/lib/notifications';
 import { stopAllSongPreviews } from '../../src/lib/songPreviewPlayback';
 import { getWallPostMemoryDate } from '../../src/lib/memoryDate';
@@ -1032,7 +1032,7 @@ export default function FriendsListScreen() {
             <Ionicons name="person-add-outline" size={20} color={colors.ink} />
           </Pressable>
 
-          <Pressable onPress={() => pushOnce(router, '/(app)/notifications')} style={[styles.floatingIconButton, styles.bellWrapper]} accessibilityRole="button" accessibilityLabel={notificationBadgeCount > 0 ? `Notifications, ${notificationBadgeCount} unread` : 'Notifications'}>
+          <Pressable onPress={() => navigateOnce(router, '/(app)/notifications')} style={[styles.floatingIconButton, styles.bellWrapper]} accessibilityRole="button" accessibilityLabel={notificationBadgeCount > 0 ? `Notifications, ${notificationBadgeCount} unread` : 'Notifications'}>
             <ThemedIcon name="bell" size={20} color={colors.ink} />
             {notificationBadgeCount > 0 && (
               <View style={styles.badge}>

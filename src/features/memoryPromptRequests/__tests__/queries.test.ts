@@ -1,6 +1,6 @@
 const mockCreateNotification = jest.fn();
 const mockFrom = jest.fn();
-const mockUploadMemoryImage = jest.fn();
+const mockUploadMemoryImageVariants = jest.fn();
 const mockUploadMemoryVideo = jest.fn();
 
 jest.mock('../../../lib/notifications', () => ({
@@ -14,12 +14,12 @@ jest.mock('../../../lib/supabase', () => ({
 }));
 
 jest.mock('../../../lib/memoryMediaUpload', () => ({
-  uploadMemoryImage: mockUploadMemoryImage,
+  uploadMemoryImageVariants: mockUploadMemoryImageVariants,
   uploadMemoryVideo: mockUploadMemoryVideo,
 }));
 
 import type { CompleteMemoryPromptRequestInput, MemoryPromptType, SongAttachment, VoiceAttachment } from '../../../types/domain';
-import { completeMemoryPromptRequest, createMemoryPromptRequest } from '../queries';
+import { completeMemoryPromptRequest, createMemoryPromptRequest, createSavedMemoryPrompt, deleteSavedMemoryPrompt, fetchSavedMemoryPrompts } from '../queries';
 
 type BuilderCapture = {
   eq?: Array<[string, unknown]>;
@@ -44,7 +44,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest.spyOn(Date.prototype, 'toISOString').mockReturnValue('2026-05-24T12:00:00.000Z');
   mockCreateNotification.mockResolvedValue(undefined);
-  mockUploadMemoryImage.mockResolvedValue('https://cdn.test/photo.jpg');
+  mockUploadMemoryImageVariants.mockResolvedValue({ imageUri: 'https://cdn.test/photo.jpg', imageThumbUri: 'https://cdn.test/photo-thumb.jpg' });
   mockUploadMemoryVideo.mockResolvedValue('https://cdn.test/video.mp4');
 });
 
@@ -239,7 +239,51 @@ describe('completeMemoryPromptRequest', () => {
       ...input,
     } as CompleteMemoryPromptRequestInput)).rejects.toThrow(message);
 
-    expect(mockUploadMemoryImage).not.toHaveBeenCalled();
+    expect(mockUploadMemoryImageVariants).not.toHaveBeenCalled();
+  });
+});
+
+describe('saved memory prompts', () => {
+  it('fetches saved prompts ordered by update time', async () => {
+    queueFromCalls(['saved_memory_prompts', makeListBuilder([savedPromptRow()])]);
+
+    const prompts = await fetchSavedMemoryPrompts('user-1');
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatchObject({ id: 'saved-1', ownerUserId: 'user-1', promptText: 'A saved prompt.' });
+  });
+
+  it('creates saved prompts with trimmed text', async () => {
+    const insertCapture: BuilderCapture = {};
+    queueFromCalls(['saved_memory_prompts', makeSingleBuilder(savedPromptRow({ prompt_text: 'A saved prompt.' }), insertCapture)]);
+
+    const prompt = await createSavedMemoryPrompt('user-1', {
+      promptType: 'text',
+      promptText: '  A saved prompt.  ',
+      category: 'Deep',
+      source: 'user',
+    });
+
+    expect(prompt.promptText).toBe('A saved prompt.');
+    expect(insertCapture.insert).toMatchObject({
+      owner_user_id: 'user-1',
+      prompt_type: 'text',
+      prompt_text: 'A saved prompt.',
+      category: 'Deep',
+      source: 'user',
+    });
+  });
+
+  it('deletes saved prompts by id and owner', async () => {
+    const deleteCapture: BuilderCapture = {};
+    queueFromCalls(['saved_memory_prompts', makeDeleteBuilder(deleteCapture)]);
+
+    await deleteSavedMemoryPrompt('saved-1', 'user-1');
+
+    expect(deleteCapture.eq).toEqual([
+      ['id', 'saved-1'],
+      ['owner_user_id', 'user-1'],
+    ]);
   });
 });
 
@@ -260,7 +304,7 @@ function queueCompletePrompt({
   );
 }
 
-function queueFromCalls(...calls: Array<[string, ReturnType<typeof makeSingleBuilder>]>) {
+function queueFromCalls(...calls: Array<[string, any]>) {
   mockFrom.mockImplementation((table: string) => {
     const next = calls.shift();
     if (!next) throw new Error(`Unexpected Supabase table: ${table}`);
@@ -292,6 +336,36 @@ function makeSingleBuilder(data: unknown, capture: BuilderCapture = {}) {
   return builder;
 }
 
+function makeListBuilder(data: unknown[], capture: BuilderCapture = {}) {
+  const builder = {
+    select() {
+      return builder;
+    },
+    eq(column: string, value: unknown) {
+      capture.eq = [...(capture.eq ?? []), [column, value]];
+      return builder;
+    },
+    order: jest.fn(async () => ({ data, error: null })),
+  };
+  return builder;
+}
+
+function makeDeleteBuilder(capture: BuilderCapture = {}) {
+  const builder = {
+    delete() {
+      return builder;
+    },
+    eq(column: string, value: unknown) {
+      capture.eq = [...(capture.eq ?? []), [column, value]];
+      return builder;
+    },
+    then(resolve: (value: { error: null }) => unknown, reject?: (reason: unknown) => unknown) {
+      return Promise.resolve({ error: null }).then(resolve, reject);
+    },
+  };
+  return builder;
+}
+
 function promptRequestRow(overrides: Record<string, unknown> = {}) {
   const promptType = String(overrides.prompt_type ?? 'text');
   return {
@@ -306,7 +380,22 @@ function promptRequestRow(overrides: Record<string, unknown> = {}) {
     response_body: null,
     completed_wall_post_id: null,
     created_at: '2026-05-24T10:00:00.000Z',
+    expires_at: '2026-06-01T10:00:00.000Z',
     updated_at: '2026-05-24T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function savedPromptRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'saved-1',
+    owner_user_id: 'user-1',
+    prompt_type: 'text',
+    prompt_text: 'A saved prompt.',
+    category: 'Deep',
+    source: 'user',
+    created_at: '2026-05-24T10:00:00.000Z',
+    updated_at: '2026-05-24T12:00:00.000Z',
     ...overrides,
   };
 }

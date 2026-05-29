@@ -270,6 +270,8 @@ export interface WallPost {
   syncError?: string | null;
   // Pending-memory queue ID used to retry or replace local optimistic posts.
   pendingMemoryId?: string | null;
+  // Pending edit queue ID used to retry background edits.
+  pendingEditId?: string | null;
 } // End the WallPost interface.
 
 // Describe an existing memory that a user chose to feature on their own profile wall.
@@ -455,6 +457,26 @@ export interface CreateMemoryPromptRequestInput {
   promptType: MemoryPromptType;
   promptText: string;
   promptVoice?: VoiceAttachment | null;
+}
+
+export type SavedMemoryPromptSource = 'user' | 'curated' | 'ai';
+
+export interface SavedMemoryPrompt {
+  id: string;
+  ownerUserId: string;
+  promptType: MemoryPromptType;
+  promptText: string;
+  category: string | null;
+  source: SavedMemoryPromptSource;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSavedMemoryPromptInput {
+  promptType: MemoryPromptType;
+  promptText: string;
+  category?: string | null;
+  source?: SavedMemoryPromptSource;
 }
 
 export interface CompleteMemoryPromptRequestInput {

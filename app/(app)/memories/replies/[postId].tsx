@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useQuery } from '@tanstack/react-query';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../../../src/components/ActionButton';
@@ -10,9 +11,12 @@ import { VoiceMemoryCard } from '../../../../src/components/VoiceMemoryCard';
 import { WallPostCard } from '../../../../src/components/WallPostCard';
 import { useAuth } from '../../../../src/features/auth/AuthContext';
 import { useSocialGraph } from '../../../../src/features/social/SocialGraphContext';
+import { fetchWallPostById } from '../../../../src/features/social/queries';
 import { useTheme } from '../../../../src/features/theme/ThemeContext';
 import { backOnce } from '../../../../src/lib/navigationGuard';
 import { uploadMemoryAudio } from '../../../../src/lib/memoryMediaUpload';
+import { getNotificationIdsForWallPost, markProfileNotificationIdsRead } from '../../../../src/lib/profileNotificationIndicators';
+import { useSyntheticNotificationReads } from '../../../../src/hooks/useSyntheticNotificationReads';
 import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
 import { radius, semanticColors, spacing } from '../../../../src/theme/tokens';
 import type { VoiceAttachment } from '../../../../src/types/domain';
@@ -21,16 +25,32 @@ export default function MemoryRepliesScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ postId?: string | string[] }>();
   const { currentUser } = useAuth();
-  const { addMemoryReply, deleteMemoryReply, getRepliesForWallPost, getUserById, getWallPostById } = useSocialGraph();
+  const { addMemoryReply, deleteMemoryReply, getRepliesForWallPost, getUserById, getWallPostById, markNotificationRead, notifications } = useSocialGraph();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
   const postId = Array.isArray(params.postId) ? params.postId[0] : params.postId;
-  const post = postId ? getWallPostById(postId) : undefined;
+  const cachedPost = postId ? getWallPostById(postId) : undefined;
+  const fallbackPostQuery = useQuery({
+    queryKey: ['social', 'wallPost', postId],
+    queryFn: () => fetchWallPostById(postId!),
+    enabled: Boolean(currentUser?.id && postId && !cachedPost),
+  });
+  const post = cachedPost ?? fallbackPostQuery.data ?? undefined;
   const replies = postId ? getRepliesForWallPost(postId) : [];
   const [replyDraft, setReplyDraft] = useState('');
   const [replyVoice, setReplyVoice] = useState<VoiceAttachment | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const { markSyntheticRead } = useSyntheticNotificationReads(currentUser?.id ?? null);
+
+  useEffect(() => {
+    if (!postId) return;
+    markProfileNotificationIdsRead(
+      getNotificationIdsForWallPost(notifications, postId),
+      markNotificationRead,
+      markSyntheticRead,
+    );
+  }, [markNotificationRead, markSyntheticRead, notifications, postId]);
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
 
@@ -72,6 +92,15 @@ export default function MemoryRepliesScreen() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => deleteMemoryReply(replyId, authorUserId).catch((err) => setError(err instanceof Error ? err.message : 'Could not delete reply.')) },
     ]);
+  }
+
+  if (!post && fallbackPostQuery.isFetching) {
+    return (
+      <AppScreen header={header} floatingHeaderOnScroll>
+        <Text style={styles.title}>Opening memory...</Text>
+        <Text style={styles.subtitle}>Loading the memory from your shared wall.</Text>
+      </AppScreen>
+    );
   }
 
   if (!post) {

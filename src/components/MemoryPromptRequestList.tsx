@@ -6,7 +6,7 @@ import { useTheme } from '../features/theme/ThemeContext';
 import type { ColorTokens } from '../features/theme/themes';
 import { protectTextFromFontClipping } from '../theme/fontProtection';
 import type { FontSet } from '../theme/typography';
-import { radius, semanticColors, spacing } from '../theme/tokens';
+import { colors as baseColors, radius, semanticColors, spacing } from '../theme/tokens';
 import type { MemoryPromptRequest, MovieReviewRequest } from '../types/domain';
 import { getPromptExpirationLabel, isPromptExpired } from '../lib/promptExpiration';
 import { VoiceMemoryCard } from './VoiceMemoryCard';
@@ -44,12 +44,12 @@ export function MemoryPromptRequestList({
   themeColors,
   tint,
 }: MemoryPromptRequestListProps) {
-  const { colors: appColors, fonts } = useTheme();
+  const { colors: appColors, fonts, resolvedMode } = useTheme();
   const colors = themeColors ?? appColors;
   const activeTint = tint ?? colors.accent;
   const altTint = activeTint;
   const tertiaryTint = tint ? colors.inkSoft : colors.accentTertiary ?? colors.accentSoft ?? activeTint;
-  const styles = useMemo(() => makeStyles(colors, fonts, altTint, tertiaryTint), [altTint, colors, fonts, tertiaryTint]);
+  const styles = useMemo(() => makeStyles(colors, fonts, altTint, tertiaryTint, resolvedMode), [altTint, colors, fonts, resolvedMode, tertiaryTint]);
   const newMemoryPromptIdSet = useMemo(() => new Set(newMemoryPromptIds), [newMemoryPromptIds]);
   const newMoviePromptIdSet = useMemo(() => new Set(newMoviePromptIds), [newMoviePromptIds]);
   const hasPrompts = memoryPrompts.length > 0 || moviePrompts.length > 0;
@@ -253,7 +253,9 @@ function labelForPromptType(promptType: MemoryPromptRequest['promptType']) {
   return 'Song prompt';
 }
 
-const makeStyles = (colors: ColorTokens, fonts: FontSet, altTint: string, tertiaryTint: string) => StyleSheet.create({
+const makeStyles = (colors: ColorTokens, fonts: FontSet, altTint: string, tertiaryTint: string, mode: 'light' | 'dark') => {
+  const yellowTextShadow = mode === 'light' ? readableYellowTextShadow : {};
+  return StyleSheet.create({
   list: { gap: spacing.sm },
   empty: { gap: spacing.sm, alignItems: 'flex-start' },
   emptyHint: { fontFamily: fonts.body, fontSize: 14, lineHeight: 20, color: colors.ink },
@@ -281,7 +283,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, altTint: string, tertia
   },
   guideHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   guideIcon: { color: tertiaryTint },
-  guideTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: tertiaryTint },
+  guideTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: tertiaryTint, ...yellowTextShadow },
   guideCopy: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.ink },
   primaryCtaStack: { alignSelf: 'stretch', gap: spacing.sm },
   movieHeroButton: {
@@ -329,7 +331,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, altTint: string, tertia
   movieIcon: { backgroundColor: semanticColors.promptGold + '22' },
   body: { flex: 1, gap: 3 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' },
-  title: { fontFamily: fonts.bodyBold, fontSize: 12, color: semanticColors.promptGold },
+  title: { fontFamily: fonts.bodyBold, fontSize: 12, color: semanticColors.promptGold, ...yellowTextShadow },
   newPill: {
     borderRadius: radius.pill,
     overflow: 'hidden',
@@ -338,7 +340,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, altTint: string, tertia
     paddingVertical: 2,
     fontFamily: fonts.bodyBold,
     fontSize: 10,
-    color: altTint,
+    color: baseColors.success,
     textTransform: 'uppercase',
   },
   movieTitle: { fontFamily: fonts.heading, fontSize: 18, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 18) },
@@ -359,7 +361,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, altTint: string, tertia
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
   },
-  primaryText: { fontFamily: fonts.bodyBold, fontSize: 12, color: altTint },
+  primaryText: { fontFamily: fonts.bodyBold, fontSize: 12, color: altTint, ...yellowTextShadow },
   disabledButton: { opacity: 0.7 },
   disabledText: { color: colors.inkMuted },
   sendPromptButton: {
@@ -391,8 +393,15 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, altTint: string, tertia
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
   },
-  secondaryText: { fontFamily: fonts.bodyBold, fontSize: 12, color: altTint },
-});
+  secondaryText: { fontFamily: fonts.bodyBold, fontSize: 12, color: altTint, ...yellowTextShadow },
+  });
+};
+
+const readableYellowTextShadow = {
+  textShadowColor: 'rgba(74, 52, 12, 0.34)',
+  textShadowOffset: { width: 0, height: 1 },
+  textShadowRadius: 1.5,
+};
 
 function withAlpha(color: string, alpha: number) {
   const match = /^#([0-9a-f]{6})$/i.exec(color);

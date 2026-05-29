@@ -68,7 +68,7 @@ export function MemoryReplyThreadPreview({ allowReply = true, replies, onOpenThr
 
       {allowReply && onOpenThread ? (
         <Pressable onPress={onOpenThread} style={styles.replyAction} accessibilityRole="button" accessibilityLabel="Reply to memory">
-          <Ionicons name="chatbubble-ellipses-outline" size={13} color={colors.white} />
+          <Ionicons name="chatbubble-ellipses-outline" size={13} color={colors.inkSoft} />
           <Text style={styles.replyActionText}>{replies.length > 0 ? 'Reply' : 'Add a reply'}</Text>
         </Pressable>
       ) : null}

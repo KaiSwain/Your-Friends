@@ -4,17 +4,20 @@ import { uploadMemoryImageVariants, uploadMemoryVideo } from '../../lib/memoryMe
 import type {
   CompleteMemoryPromptRequestInput,
   CreateMemoryPromptRequestInput,
+  CreateSavedMemoryPromptInput,
   MemoryPromptRequest,
   MemoryPromptType,
+  SavedMemoryPrompt,
   WallPost,
 } from '../../types/domain';
 import { rowToWallPost } from '../social/mappers';
 import { hasTextOrVoice } from '../../lib/voiceAttachmentDb';
 import { getPromptExpiresAt, isPromptExpired } from '../../lib/promptExpiration';
-import { rowToMemoryPromptRequest, songToPromptResponseDbColumns, songToWallPostDbColumns, voiceToPromptQuestionDbColumns, voiceToPromptResponseDbColumns, voiceToWallPostDbColumns } from './mappers';
+import { rowToMemoryPromptRequest, rowToSavedMemoryPrompt, songToPromptResponseDbColumns, songToWallPostDbColumns, voiceToPromptQuestionDbColumns, voiceToPromptResponseDbColumns, voiceToWallPostDbColumns } from './mappers';
 
 export const memoryPromptQueryKeys = {
   requests: ['memoryPrompts', 'requests'] as const,
+  savedPrompts: (ownerUserId: string) => ['memoryPrompts', 'savedPrompts', ownerUserId] as const,
 };
 
 export async function fetchMemoryPromptRequests(): Promise<MemoryPromptRequest[]> {
@@ -61,6 +64,46 @@ export async function createMemoryPromptRequest(requesterUserId: string, input: 
   }).catch((notificationError) => console.warn('[notification] memory prompt insert failed:', notificationError));
 
   return request;
+}
+
+export async function fetchSavedMemoryPrompts(ownerUserId: string): Promise<SavedMemoryPrompt[]> {
+  const { data, error } = await supabase
+    .from('saved_memory_prompts')
+    .select('*')
+    .eq('owner_user_id', ownerUserId)
+    .order('updated_at', { ascending: false });
+  if (error) {
+    if (isMissingTable(error.message, 'saved_memory_prompts')) return [];
+    throw error;
+  }
+  return (data ?? []).map(rowToSavedMemoryPrompt);
+}
+
+export async function createSavedMemoryPrompt(ownerUserId: string, input: CreateSavedMemoryPromptInput): Promise<SavedMemoryPrompt> {
+  const promptText = cleanRequiredText(input.promptText, 'Write a prompt before saving.', 240);
+  const { data, error } = await supabase
+    .from('saved_memory_prompts')
+    .insert({
+      owner_user_id: ownerUserId,
+      prompt_type: input.promptType,
+      prompt_text: promptText,
+      category: cleanOptionalText(input.category, 80),
+      source: input.source ?? 'user',
+    })
+    .select()
+    .single();
+
+  if (error || !data) throw new Error(error?.message ?? 'Could not save prompt.');
+  return rowToSavedMemoryPrompt(data);
+}
+
+export async function deleteSavedMemoryPrompt(promptId: string, ownerUserId: string): Promise<void> {
+  const { error } = await supabase
+    .from('saved_memory_prompts')
+    .delete()
+    .eq('id', promptId)
+    .eq('owner_user_id', ownerUserId);
+  if (error) throw new Error(error.message);
 }
 
 export async function cancelMemoryPromptRequest(requestId: string, requesterUserId: string): Promise<MemoryPromptRequest> {

@@ -38,7 +38,10 @@ async function saveReadIds(userId: string, readIds: Set<string>) {
 
 export function isSyntheticNotificationId(notificationId: string) {
   return notificationId.startsWith('friend-request-fallback:')
-    || notificationId.startsWith('calendar-share-fallback:');
+    || notificationId.startsWith('calendar-share-fallback:')
+    || notificationId.startsWith('wall-post-fallback:')
+    || notificationId.startsWith('memory-prompt-request-fallback:')
+    || notificationId.startsWith('movie-review-request-fallback:');
 }
 
 export function useSyntheticNotificationReads(userId: string | null) {

@@ -9,7 +9,7 @@ import { TextOrVoiceComposer } from '../../../src/components/TextOrVoiceComposer
 import { useAuth } from '../../../src/features/auth/AuthContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
-import { backOnce, replaceOnce } from '../../../src/lib/navigationGuard';
+import { backOnce, replaceOnce, shouldPopForBackTarget } from '../../../src/lib/navigationGuard';
 import { uploadMemoryAudio } from '../../../src/lib/memoryMediaUpload';
 import { fetchPopularMovies, searchMovies } from '../../../src/lib/movieSearch';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
@@ -56,6 +56,10 @@ export default function MovieRequestScreen() {
 
   function handleBack() {
     if (backTo) {
+      if (shouldPopForBackTarget(backTo)) {
+        backOnce(router);
+        return;
+      }
       replaceOnce(router, backTo as any);
       return;
     }
@@ -174,6 +178,10 @@ export default function MovieRequestScreen() {
           promptVoice: uploadedPromptVoice,
         }),
       ));
+      if (shouldPopForBackTarget(backTo)) {
+        backOnce(router);
+        return;
+      }
       replaceOnce(router, backTo ? (backTo as any) : '/friends');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not send movie request.');

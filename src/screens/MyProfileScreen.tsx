@@ -30,7 +30,7 @@ import type { WallPost } from '../../src/types/domain';
 export default function MyProfileScreen() {
   const router = useRouter();
   const { currentUser, updateProfile } = useAuth();
-  const { getProfileWallItemsForUser, getRepliesForWallPost, getUserById, getWallPostById, removePostFromProfileWall } = useSocialGraph();
+  const { getProfileWallItemsForUser, getRepliesForWallPost, getUserById, getWallPostById, removePostFromProfileWall, setProfileWallRepliesHidden } = useSocialGraph();
   const { colors, fonts } = useTheme();
   const readableSurfaces = useMemo(() => ({
     page: getReadableSurfaceColors(colors.canvas, colors),
@@ -47,7 +47,7 @@ export default function MyProfileScreen() {
   const [newFact, setNewFact] = useState('');
   const [profileChipSaving, setProfileChipSaving] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [removingProfilePostId, setRemovingProfilePostId] = useState<string | null>(null);
+  const [profileActionPostId, setProfileActionPostId] = useState<string | null>(null);
   const [memoryWallViewMode, setMemoryWallViewMode] = useState<MemoryWallViewMode>('timeline');
 
   const profileWallItems = useMemo(() => {
@@ -186,23 +186,35 @@ export default function MyProfileScreen() {
     setSaving(false);
   }
 
-  function handleRemoveProfileMemory(postId: string) {
+  async function removeProfileMemory(postId: string) {
     if (!currentUser) return;
+    setProfileActionPostId(postId);
+    const result = await removePostFromProfileWall(currentUser.id, postId);
+    setProfileActionPostId(null);
+    if (!result.ok) Alert.alert('Could not remove memory', result.error);
+  }
+
+  async function setProfileMemoryRepliesVisibility(postId: string, repliesHidden: boolean) {
+    if (!currentUser) return;
+    setProfileActionPostId(postId);
+    const result = await setProfileWallRepliesHidden(currentUser.id, postId, repliesHidden);
+    setProfileActionPostId(null);
+    if (!result.ok) Alert.alert('Could not update memory', result.error);
+  }
+
+  function handleProfileMemoryLongPress(postId: string, repliesHidden: boolean) {
+    if (!currentUser || profileActionPostId) return;
     Alert.alert(
-      'Remove from your profile?',
-      'This only removes the memory from your profile wall. It will not delete the original memory.',
+      'Profile memory options',
+      'Choose what to do with this memory on your profile.',
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: repliesHidden ? 'Unhide replies' : 'Hide replies', onPress: () => void setProfileMemoryRepliesVisibility(postId, !repliesHidden) },
         {
-          text: 'Remove',
+          text: 'Remove from profile',
           style: 'destructive',
-          onPress: async () => {
-            setRemovingProfilePostId(postId);
-            const result = await removePostFromProfileWall(currentUser.id, postId);
-            setRemovingProfilePostId(null);
-            if (!result.ok) Alert.alert('Could not remove memory', result.error);
-          },
+          onPress: () => void removeProfileMemory(postId),
         },
+        { text: 'Cancel', style: 'cancel' },
       ],
     );
   }
@@ -372,6 +384,7 @@ export default function MyProfileScreen() {
                   referencedPostAuthorName={referencedPost ? getUserById(referencedPost.authorUserId)?.displayName ?? 'Someone' : undefined}
                   promptAuthorName={promptAuthorName}
                   shareable
+                  onLongPress={() => handleProfileMemoryLongPress(post.id, repliesHidden)}
                 />
                 {!repliesHidden ? (
                   <MemoryReplyThreadPreview
@@ -380,18 +393,6 @@ export default function MyProfileScreen() {
                     themeColors={colors}
                   />
                 ) : null}
-                <Pressable
-                  onPress={() => handleRemoveProfileMemory(post.id)}
-                  disabled={removingProfilePostId === post.id}
-                  style={styles.removeProfileMemoryButton}
-                  accessibilityRole="button"
-                  accessibilityLabel="Remove memory from profile"
-                >
-                  <Ionicons name="remove-circle-outline" size={15} color={colors.error} />
-                  <Text style={styles.removeProfileMemoryLabel}>
-                    {removingProfilePostId === post.id ? 'Removing...' : 'Remove from my profile'}
-                  </Text>
-                </Pressable>
               </View>
             );
           }}
@@ -512,17 +513,4 @@ const makeStyles = (
     },
     emptyHint: { fontFamily: fonts.body, fontSize: 14, color: colors.inkMuted },
     profileMemoryItem: { alignItems: 'center', gap: spacing.xs },
-    removeProfileMemoryButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.xs,
-      alignSelf: 'center',
-      borderRadius: radius.pill,
-      borderWidth: 1,
-      borderColor: colors.error + '35',
-      backgroundColor: colors.error + '10',
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.xs,
-    },
-    removeProfileMemoryLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.error },
   });

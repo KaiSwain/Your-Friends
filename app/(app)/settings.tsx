@@ -441,6 +441,13 @@ export default function SettingsScreen() {
         <LegalRow
           colors={colors}
           fonts={fonts}
+          icon="sparkles-outline"
+          label="Replay onboarding tour"
+          onPress={() => pushOnce(router, '/(onboarding)/referral')}
+        />
+        <LegalRow
+          colors={colors}
+          fonts={fonts}
           icon="mail-outline"
           label="Support"
           onPress={() => void openExternalLink(LEGAL_LINKS.supportEmail)}

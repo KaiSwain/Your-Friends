@@ -68,6 +68,12 @@ export async function fetchWallPosts(): Promise<WallPost[]> {
   return (data ?? []).map(rowToWallPost);
 }
 
+export async function fetchWallPostById(postId: string): Promise<WallPost | null> {
+  const { data, error } = await supabase.from('wall_posts').select('*').eq('id', postId).maybeSingle();
+  if (error) throw error;
+  return data ? rowToWallPost(data) : null;
+}
+
 export async function fetchMemoryReplies(): Promise<MemoryReply[]> {
   const { data, error } = await supabase.from('memory_replies').select('*').order('created_at', { ascending: true });
   if (error) {

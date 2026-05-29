@@ -19,7 +19,7 @@ export function SectionCard({ children, eyebrow, title }: SectionCardProps) {
   const styles = useMemo(() => makeStyles(colors, fonts, resolvedMode), [colors, fonts, resolvedMode]);
 
   return (
-    <LiquidGlassView style={styles.card} contentStyle={styles.cardContent} borderRadius={radius.lg} intensity={resolvedMode === 'light' ? 30 : 42}>
+    <LiquidGlassView style={styles.card} contentStyle={styles.cardContent} borderRadius={radius.lg} intensity={resolvedMode === 'light' ? 20 : 28}>
       <View pointerEvents="none" style={styles.paperGrain} />
       {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
       {title ? <Text style={styles.title}>{title}</Text> : null}
@@ -35,11 +35,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, mode: 'light' | 'dark')
       borderRadius: radius.lg,
       backgroundColor: withAlpha(colors.paper, light ? 0.58 : 0.48),
       borderWidth: 1,
-      borderColor: withAlpha(colors.white, light ? 0.48 : 0.14),
+      borderColor: withAlpha(colors.white, light ? 0.38 : 0.12),
       ...shadow.card,
-      shadowOpacity: light ? 0.1 : 0.18,
-      shadowRadius: light ? 24 : 32,
-      elevation: light ? 4 : 7,
+      shadowOpacity: light ? 0.08 : 0.14,
+      shadowRadius: light ? 18 : 24,
+      elevation: light ? 3 : 5,
     },
     cardContent: {
       padding: spacing.lg,
@@ -49,8 +49,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, mode: 'light' | 'dark')
       ...StyleSheet.absoluteFillObject,
       borderRadius: radius.lg,
       borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: withAlpha(colors.white, light ? 0.34 : 0.12),
-      backgroundColor: withAlpha(colors.white, light ? 0.018 : 0.008),
+      borderTopColor: withAlpha(colors.white, light ? 0.28 : 0.1),
+      backgroundColor: withAlpha(colors.white, light ? 0.01 : 0.005),
     },
     eyebrow: {
       fontFamily: fonts.bodyBold,

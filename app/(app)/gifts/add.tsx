@@ -10,7 +10,7 @@ import { useAuth } from '../../../src/features/auth/AuthContext';
 import { usePremium } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
-import { backOnce, pushOnce, replaceOnce } from '../../../src/lib/navigationGuard';
+import { backOnce, pushOnce, replaceOnce, shouldPopForBackTarget } from '../../../src/lib/navigationGuard';
 import { showGiftNotePaywall } from '../../../src/lib/premiumGates';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import { radius, spacing } from '../../../src/theme/tokens';
@@ -25,7 +25,14 @@ const TIME_PRESETS = [
 
 export default function AddGiftNoteScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ subjectId?: string | string[]; subjectType?: string | string[]; backTo?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    backTo?: string | string[];
+    recipientUserId?: string | string[];
+    subjectId?: string | string[];
+    subjectType?: string | string[];
+    unlockDate?: string | string[];
+    unlockTime?: string | string[];
+  }>();
   const { currentUser } = useAuth();
   const { isPremium } = usePremium();
   const { createGiftNote, getPeopleListForUser, getUserById } = useSocialGraph();
@@ -33,20 +40,26 @@ export default function AddGiftNoteScreen() {
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
   const subjectId = Array.isArray(params.subjectId) ? params.subjectId[0] : params.subjectId;
   const subjectType = Array.isArray(params.subjectType) ? params.subjectType[0] : params.subjectType;
+  const recipientUserId = Array.isArray(params.recipientUserId) ? params.recipientUserId[0] : params.recipientUserId;
   const backTo = Array.isArray(params.backTo) ? params.backTo[0] : params.backTo;
+  const requestedUnlockDate = normalizeUnlockDateParam(Array.isArray(params.unlockDate) ? params.unlockDate[0] : params.unlockDate);
+  const requestedUnlockTime = normalizeUnlockTimeParam(Array.isArray(params.unlockTime) ? params.unlockTime[0] : params.unlockTime);
 
   const giftTargets = useMemo(() => {
     if (!currentUser) return [];
     return getPeopleListForUser(currentUser.id).filter((person) => getRecipientUserId(person));
   }, [currentUser, getPeopleListForUser]);
-  const initialTarget = giftTargets.find((target) => target.id === subjectId && target.entityType === subjectType) ?? giftTargets[0] ?? null;
+  const initialTarget = giftTargets.find((target) => target.id === subjectId && target.entityType === subjectType)
+    ?? giftTargets.find((target) => recipientUserId && getRecipientUserId(target) === recipientUserId)
+    ?? giftTargets[0]
+    ?? null;
   const [selectedTargetKey, setSelectedTargetKey] = useState(() => initialTarget ? targetKey(initialTarget) : '');
   const selectedTarget = giftTargets.find((target) => targetKey(target) === selectedTargetKey) ?? initialTarget;
   const selectedRecipientId = selectedTarget ? getRecipientUserId(selectedTarget) : null;
   const selectedRecipient = selectedRecipientId ? getUserById(selectedRecipientId) : null;
   const [body, setBody] = useState('');
-  const [unlockDate, setUnlockDate] = useState(getTomorrowDateKey());
-  const [unlockTime, setUnlockTime] = useState('09:00');
+  const [unlockDate, setUnlockDate] = useState(requestedUnlockDate ?? getTomorrowDateKey());
+  const [unlockTime, setUnlockTime] = useState(() => getInitialUnlockTime(requestedUnlockDate ?? getTomorrowDateKey(), requestedUnlockTime));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -54,6 +67,10 @@ export default function AddGiftNoteScreen() {
 
   function handleBack() {
     if (backTo) {
+      if (shouldPopForBackTarget(backTo)) {
+        backOnce(router);
+        return;
+      }
       replaceOnce(router, backTo as any);
       return;
     }
@@ -89,6 +106,10 @@ export default function AddGiftNoteScreen() {
         title: `A gift note for ${selectedTarget.title}`,
         body,
       });
+      if (shouldPopForBackTarget(backTo)) {
+        backOnce(router);
+        return;
+      }
       replaceOnce(router, backTo ? (backTo as any) : '/friends');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not lock this gift note.');
@@ -244,6 +265,42 @@ function getDaysFromNowDateKey(days: number) {
   return formatDateKey(date);
 }
 
+function normalizeUnlockDateParam(dateValue?: string) {
+  if (!dateValue || !isValidDateKey(dateValue)) return null;
+  const todayKey = getTodayDateKey();
+  if (dateValue >= todayKey) return dateValue;
+  const [, month, day] = dateValue.split('-').map(Number);
+  if (!month || !day) return null;
+  const today = new Date();
+  const next = new Date(today.getFullYear(), month - 1, day, 12);
+  if (formatDateKey(next) < todayKey) next.setFullYear(today.getFullYear() + 1);
+  return formatDateKey(next);
+}
+
+function normalizeUnlockTimeParam(timeValue?: string) {
+  if (!timeValue) return null;
+  const match = /^(\d{2}):(\d{2})$/.exec(timeValue);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return timeValue;
+}
+
+function getInitialUnlockTime(dateValue: string, requestedTime: string | null) {
+  const time = requestedTime ?? '09:00';
+  if (isValidFutureUnlock(dateValue, time)) return time;
+  if (dateValue !== getTodayDateKey()) return time;
+
+  const now = new Date();
+  const nextSlot = new Date(now.getTime() + 30 * 60 * 1000);
+  nextSlot.setMinutes(Math.ceil(nextSlot.getMinutes() / 30) * 30, 0, 0);
+  if (formatDateKey(nextSlot) === dateValue) {
+    return `${String(nextSlot.getHours()).padStart(2, '0')}:${String(nextSlot.getMinutes()).padStart(2, '0')}`;
+  }
+  return '23:59';
+}
+
 function getNextBirthdayDateKey(birthday: string) {
   const [, month, day] = birthday.split('-').map(Number);
   if (!month || !day) return getTomorrowDateKey();
@@ -251,6 +308,13 @@ function getNextBirthdayDateKey(birthday: string) {
   const next = new Date(today.getFullYear(), month - 1, day, 12);
   if (next < startOfToday()) next.setFullYear(today.getFullYear() + 1);
   return formatDateKey(next);
+}
+
+function isValidDateKey(dateKey: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+  if (!match) return false;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return formatDateKey(date) === dateKey;
 }
 
 function isValidFutureUnlock(dateValue: string, timeValue: string) {

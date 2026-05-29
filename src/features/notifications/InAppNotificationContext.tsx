@@ -13,8 +13,9 @@ import type { FontSet } from '../../theme/typography';
 import { radius, spacing } from '../../theme/tokens';
 import { ThemedIcon } from '../../components/ThemedIcon';
 import type { Notification } from '../../types/domain';
-import { pushOnce } from '../../lib/navigationGuard';
+import { navigateOnce, pushOnce } from '../../lib/navigationGuard';
 import { subscribeMemoryDevelopedNotifications } from '../../lib/memoryDevelopNotifications';
+import { useSyntheticNotificationReads } from '../../hooks/useSyntheticNotificationReads';
 
 interface InAppNotificationContextValue {
   show: (notification: Notification) => void;
@@ -32,6 +33,7 @@ const NOTIFICATION_SUMMARY_SOURCE = 'notification_summary';
 export function InAppNotificationProvider({ children }: { children: ReactNode }) {
   const { currentUser } = useAuth();
   const { notifications, friendRequests, contacts, getUserById, markNotificationRead } = useSocialGraph();
+  const { markSyntheticRead } = useSyntheticNotificationReads(currentUser?.id ?? null);
   const { events } = useCalendar();
   const { colors, fonts } = useTheme();
   const router = useRouter();
@@ -294,13 +296,24 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
     const n = active;
     hideActive(() => {
       if (isNotificationSummary(n)) {
-        pushOnce(router, '/(app)/notifications');
+        navigateOnce(router, '/(app)/notifications');
         return;
       }
-      if (!n.read) {
+      const shouldDeferReadUntilViewed = n.type === 'wall_post';
+      if (!n.read && !shouldDeferReadUntilViewed) {
         void markNotificationRead(n.id);
+        void markSyntheticRead(n.id);
       }
-      if (n.type === 'wall_post' && n.actorUserId) {
+      if (n.type === 'movie_review_request') {
+        const requestId = typeof n.metadata.movieReviewRequestId === 'string' ? n.metadata.movieReviewRequestId : n.referenceId;
+        if (requestId) pushOnce(router, `/(app)/movies/review/${requestId}`);
+      } else if (n.type === 'memory_prompt_request') {
+        const requestId = typeof n.metadata.memoryPromptRequestId === 'string' ? n.metadata.memoryPromptRequestId : n.referenceId;
+        if (requestId) pushOnce(router, `/(app)/prompts/respond/${requestId}`);
+      } else if (n.type === 'memory_reply') {
+        const postId = typeof n.metadata.wallPostId === 'string' ? n.metadata.wallPostId : n.referenceId;
+        if (postId) pushOnce(router, `/(app)/memories/replies/${postId}`);
+      } else if (n.type === 'wall_post' && n.actorUserId) {
         pushOnce(router, `/(app)/wall/${n.actorUserId}`);
       } else if ((n.type === 'friend_request' || n.type === 'contact_update') && n.actorUserId) {
         if (n.type === 'friend_request' && n.metadata.action === 'requested') {
@@ -315,7 +328,7 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
         pushOnce(router, date ? { pathname: '/calendar', params: { date, eventId } } : '/calendar');
       }
     });
-  }, [active, contacts, hideActive, markNotificationRead, router]);
+  }, [active, contacts, hideActive, markNotificationRead, markSyntheticRead, router]);
 
   const panResponder = useMemo(
     () =>

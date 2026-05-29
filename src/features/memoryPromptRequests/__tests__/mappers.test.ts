@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { rowToMemoryPromptRequest, songToPromptResponseDbColumns, songToWallPostDbColumns, voiceToPromptQuestionDbColumns, voiceToPromptResponseDbColumns } from '../mappers';
+import { rowToMemoryPromptRequest, rowToSavedMemoryPrompt, songToPromptResponseDbColumns, songToWallPostDbColumns, voiceToPromptQuestionDbColumns, voiceToPromptResponseDbColumns } from '../mappers';
 
 describe('rowToMemoryPromptRequest', () => {
   it.each(['song', 'text', 'photo', 'photo_reference', 'voice'] as const)('maps %s prompt requests', (promptType) => {
@@ -41,6 +41,7 @@ describe('rowToMemoryPromptRequest', () => {
       referenced_wall_post_id: 'post-ref',
       completed_wall_post_id: 'post-1',
       created_at: '2026-05-01T00:00:00Z',
+      expires_at: '2026-05-08T00:00:00Z',
       updated_at: '2026-05-02T00:00:00Z',
       completed_at: '2026-05-02T00:00:00Z',
     })).toEqual({
@@ -71,6 +72,7 @@ describe('rowToMemoryPromptRequest', () => {
       referencedWallPostId: 'post-ref',
       completedWallPostId: 'post-1',
       createdAt: '2026-05-01T00:00:00Z',
+      expiresAt: '2026-05-08T00:00:00Z',
       updatedAt: '2026-05-02T00:00:00Z',
       completedAt: '2026-05-02T00:00:00Z',
     });
@@ -88,6 +90,43 @@ describe('rowToMemoryPromptRequest', () => {
     });
     expect(request.promptType).toBe('song');
     expect(request.status).toBe('pending');
+  });
+});
+
+describe('rowToSavedMemoryPrompt', () => {
+  it('maps saved prompt rows', () => {
+    expect(rowToSavedMemoryPrompt({
+      id: 'saved-1',
+      owner_user_id: 'user-1',
+      prompt_type: 'photo',
+      prompt_text: 'Send a photo that feels like us.',
+      category: 'Photo',
+      source: 'ai',
+      created_at: '2026-05-24T10:00:00.000Z',
+      updated_at: '2026-05-24T12:00:00.000Z',
+    })).toEqual({
+      id: 'saved-1',
+      ownerUserId: 'user-1',
+      promptType: 'photo',
+      promptText: 'Send a photo that feels like us.',
+      category: 'Photo',
+      source: 'ai',
+      createdAt: '2026-05-24T10:00:00.000Z',
+      updatedAt: '2026-05-24T12:00:00.000Z',
+    });
+  });
+
+  it('defaults unknown prompt type and source safely', () => {
+    const prompt = rowToSavedMemoryPrompt({
+      id: 'saved-1',
+      owner_user_id: 'user-1',
+      prompt_type: 'unknown',
+      prompt_text: 'Prompt',
+      source: 'robot',
+      created_at: '2026-05-24T10:00:00.000Z',
+    });
+    expect(prompt.promptType).toBe('song');
+    expect(prompt.source).toBe('user');
   });
 });
 

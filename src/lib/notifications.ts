@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { Notification, NotificationMetadata, NotificationType } from '../types/domain';
+import * as Crypto from 'expo-crypto';
 
 /**
  * Standard shape for inserting rows into `notifications`:
@@ -38,26 +39,32 @@ export async function createNotification(input: CreateNotificationInput): Promis
 
 export async function createNotifications(inputs: CreateNotificationInput[]): Promise<Notification[]> {
   if (inputs.length === 0) return [];
-  const { data, error } = await supabase
-    .from('notifications')
-    .insert(
-      inputs.map((input) => ({
-        recipient_user_id: input.recipientUserId,
-        actor_user_id: input.actorUserId,
-        type: input.type,
-        reference_id: input.referenceId ?? null,
-        message: input.message,
-        metadata: input.metadata ?? {},
-      })),
-    )
-    .select();
+  const rows = inputs.map((input) => ({
+    id: Crypto.randomUUID(),
+    recipient_user_id: input.recipientUserId,
+    actor_user_id: input.actorUserId,
+    type: input.type,
+    reference_id: input.referenceId ?? null,
+    message: input.message,
+    metadata: input.metadata ?? {},
+    read: false,
+    created_at: new Date().toISOString(),
+  }));
+  const { error } = await safeInsertNotificationRows(rows);
 
-  if (error || !data) {
-    console.warn('[notification] insert skipped:', error?.message ?? 'Failed to create notification.');
+  if (error) {
+    console.warn('[notification] insert skipped:', error?.message ?? 'Failed to create notification.', {
+      notifications: inputs.map((input) => ({
+        type: input.type,
+        actorUserId: input.actorUserId,
+        recipientUserId: input.recipientUserId,
+        selfNotification: input.actorUserId === input.recipientUserId,
+      })),
+    });
     return [];
   }
 
-  const notifications = data.map(rowToNotification);
+  const notifications = rows.map(rowToNotification);
   for (const listener of notificationInsertListeners) {
     listener(notifications);
   }
@@ -82,11 +89,31 @@ export async function createNotifications(inputs: CreateNotificationInput[]): Pr
   return notifications;
 }
 
+async function safeInsertNotificationRows(rows: Array<Record<string, unknown>>) {
+  try {
+    return await supabase
+      .from('notifications')
+      .insert(rows);
+  } catch (error) {
+    return {
+      data: null,
+      error: {
+        message: error instanceof Error ? error.message : 'Network request failed.',
+      },
+    };
+  }
+}
+
 export async function sendNotificationPush(notificationId: string, override?: { title?: string; body?: string }) {
-  const { error } = await supabase.functions.invoke('send-notification-push', {
-    body: { notificationId, ...override },
-  });
-  if (error) console.warn('[notification] push send failed:', error.message);
+  try {
+    const { data, error } = await supabase.functions.invoke('send-notification-push', {
+      body: { notificationId, ...override },
+    });
+    if (error) console.warn('[notification] push send failed:', error.message);
+    if (isSkippedPushResponse(data)) console.warn('[notification] push skipped:', data.skipped);
+  } catch (error) {
+    console.warn('[notification] push send failed:', error instanceof Error ? error.message : 'Network request failed.');
+  }
 }
 
 function findSourceInput(inputs: CreateNotificationInput[], notification: Notification) {
@@ -97,6 +124,12 @@ function findSourceInput(inputs: CreateNotificationInput[], notification: Notifi
       && input.type === notification.type
       && input.message === notification.message,
   );
+}
+
+function isSkippedPushResponse(value: unknown): value is { skipped: string } {
+  if (!value || typeof value !== 'object') return false;
+  return 'skipped' in value
+    && typeof (value as { skipped?: unknown }).skipped === 'string';
 }
 
 function rowToNotification(row: any): Notification {

@@ -31,21 +31,21 @@ export function LiquidGlassView({
   return (
     <View style={[styles.shell, style]}>
       {blurred ? <BlurView intensity={intensity} tint={glassTint} style={StyleSheet.absoluteFill} pointerEvents="none" /> : null}
-      <View pointerEvents="none" style={[styles.materialTint, { backgroundColor: withAlpha(colors.paper, light ? 0.28 : 0.18) }]} />
+      <View pointerEvents="none" style={[styles.materialTint, { backgroundColor: withAlpha(colors.paper, light ? 0.22 : 0.14) }]} />
       <LinearGradient
         pointerEvents="none"
         colors={[
-          withAlpha(colors.white, light ? 0.44 : 0.14),
-          withAlpha(colors.white, light ? 0.1 : 0.05),
-          withAlpha(colors.paper, light ? 0.04 : 0.08),
+          withAlpha(colors.white, light ? 0.3 : 0.1),
+          withAlpha(colors.white, light ? 0.07 : 0.035),
+          withAlpha(colors.paper, light ? 0.025 : 0.05),
         ]}
         locations={[0, 0.42, 1]}
         start={{ x: 0.05, y: 0 }}
         end={{ x: 0.92, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
-      <View pointerEvents="none" style={[styles.topRim, { borderTopColor: withAlpha(colors.white, light ? 0.82 : 0.24) }]} />
-      <View pointerEvents="none" style={[styles.bottomRim, { borderBottomColor: withAlpha(colors.black, light ? 0.08 : 0.24) }]} />
+      <View pointerEvents="none" style={[styles.topRim, { borderTopColor: withAlpha(colors.white, light ? 0.58 : 0.18) }]} />
+      <View pointerEvents="none" style={[styles.bottomRim, { borderBottomColor: withAlpha(colors.black, light ? 0.05 : 0.16) }]} />
       <View style={contentStyle}>{children}</View>
     </View>
   );

@@ -15,7 +15,7 @@ import { useAuth } from '../../../../src/features/auth/AuthContext';
 import { usePremium } from '../../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../../src/features/theme/ThemeContext';
-import { backOnce, pushOnce, replaceOnce } from '../../../../src/lib/navigationGuard';
+import { backOnce, backOrReplaceOnce, pushOnce } from '../../../../src/lib/navigationGuard';
 import { compareWallPostsByMemoryDateDesc } from '../../../../src/lib/memoryDate';
 import { memoryImagePickerOptions, memoryMediaPickerOptions } from '../../../../src/lib/imagePickerPresets';
 import { showGalleryPaywall, showMediaMemoryPaywall, showVoiceMemoryPaywall } from '../../../../src/lib/premiumGates';
@@ -114,7 +114,7 @@ export default function MemoryPromptResponseScreen() {
         videoUri: photoResponseVideoUri,
         referencedWallPostId: selectedPostId,
       });
-      replaceOnce(router, `/(app)/wall/${request.requesterUserId}`);
+      backOrReplaceOnce(router, `/(app)/wall/${request.requesterUserId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not answer prompt.');
       setBusy(false);

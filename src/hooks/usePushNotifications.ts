@@ -20,7 +20,10 @@ Notifications.setNotificationHandler({
 });
 
 async function registerForPushNotificationsAsync(): Promise<string | null> {
-  if (!Device.isDevice) return null;
+  if (!Device.isDevice) {
+    console.warn('usePushNotifications: Push notifications require a physical device; skipping token registration.');
+    return null;
+  }
 
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   let finalStatus = existingStatus;
@@ -30,7 +33,10 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
     finalStatus = status;
   }
 
-  if (finalStatus !== 'granted') return null;
+  if (finalStatus !== 'granted') {
+    console.warn('usePushNotifications: Notification permission was not granted; skipping token registration.');
+    return null;
+  }
 
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
@@ -77,11 +83,15 @@ export function usePushNotifications(userId: string | undefined) {
         // Persist once per signed-in user so startup doesn't repeat the write.
         if (savedUserIdRef.current === userId) return;
 
-        savedUserIdRef.current = userId;
-        await supabase
+        const { error } = await supabase
           .from('profiles')
           .update({ push_token: token })
           .eq('id', userId);
+        if (error) {
+          console.warn('usePushNotifications: Failed to save push token', error.message);
+          return;
+        }
+        savedUserIdRef.current = userId;
       });
     });
 

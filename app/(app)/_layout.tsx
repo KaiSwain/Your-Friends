@@ -6,6 +6,7 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { CalendarProvider } from '../../src/features/calendar/CalendarContext';
 import { InAppNotificationProvider } from '../../src/features/notifications/InAppNotificationContext';
+import { useOnboarding } from '../../src/features/onboarding/OnboardingContext';
 import { usePremium } from '../../src/features/premium/PremiumContext';
 import { SocialGraphProvider, useSocialGraph } from '../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
@@ -16,6 +17,7 @@ import { pushOnce } from '../../src/lib/navigationGuard';
 
 export default function AppLayout() {
   const { currentUser, loading } = useAuth();
+  const { loaded: onboardingLoaded, hasCompletedOnboarding } = useOnboarding();
   const router = useRouter();
   const { colors } = useTheme();
   usePushNotifications(currentUser?.id);
@@ -42,7 +44,7 @@ export default function AppLayout() {
     return () => sub.remove();
   }, [router]);
 
-  if (loading) {
+  if (loading || !onboardingLoaded) {
     return (
       <View style={[styles.loadingScreen, { backgroundColor: colors.canvas }]}>
         <ActivityIndicator color={colors.accent} size="large" />
@@ -51,6 +53,7 @@ export default function AppLayout() {
   }
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
+  if (!hasCompletedOnboarding) return <Redirect href="/(onboarding)/welcome" />;
 
   return (
     <SocialGraphProvider>

@@ -1,4 +1,3 @@
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Keyboard, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent, Platform, RefreshControl, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
@@ -40,7 +39,6 @@ export function AppScreen({ children, contentContainerStyle, footer, footerAvoid
   const { setScrollChromeHidden } = useScrollChrome();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors, resolvedMode), [colors, resolvedMode]);
-  const blurTint = resolvedMode === 'dark' ? 'dark' : 'light';
   const appBackgroundUri = gradientColors ? null : currentUser?.profileBgImagePath ?? null;
   const resolvedGradientColors = (gradientColors ?? (appBackgroundUri ? ['transparent', 'transparent'] : [colors.canvas, colors.canvasAlt, colors.canvas])) as readonly [string, string, ...string[]];
   const transparentGradient = Boolean(gradientColors?.every(isTransparentColor));
@@ -216,23 +214,17 @@ export function AppScreen({ children, contentContainerStyle, footer, footerAvoid
         {header ? (
           floatingHeaderOnScroll ? (
             <Animated.View
-              pointerEvents={headerInteractive ? 'auto' : 'none'}
+              pointerEvents={headerInteractive ? 'box-none' : 'none'}
               onLayout={(event) => {
                 const nextHeight = event.nativeEvent.layout.height;
                 if (nextHeight > 0 && nextHeight !== headerHeight) setHeaderHeight(nextHeight);
               }}
               style={[styles.floatingHeader, { top: topInset }, floatingHeaderStyle]}
             >
-              <BlurView intensity={34} tint={blurTint} style={StyleSheet.absoluteFill} pointerEvents="none" />
-              <View pointerEvents="none" style={styles.headerGlassTint} />
-              <View pointerEvents="none" style={styles.headerGlassHighlight} />
               {header}
             </Animated.View>
           ) : (
             <View style={[styles.header, { paddingTop: topInset + spacing.md }]}>
-              <BlurView intensity={34} tint={blurTint} style={StyleSheet.absoluteFill} pointerEvents="none" />
-              <View pointerEvents="none" style={styles.headerGlassTint} />
-              <View pointerEvents="none" style={styles.headerGlassHighlight} />
               {header}
             </View>
           )
@@ -341,15 +333,7 @@ const makeStyles = (colors: ColorTokens, mode: 'light' | 'dark') => {
       paddingHorizontal: spacing.lg,
       paddingTop: spacing.md,
       paddingBottom: spacing.sm,
-      overflow: 'hidden',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: light ? colors.white + '66' : colors.white + '24',
-      backgroundColor: colors.paper + (light ? '44' : '2E'),
-      shadowColor: colors.black,
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: light ? 0.05 : 0.14,
-      shadowRadius: 24,
-      elevation: 6,
+      alignItems: 'flex-start',
     },
     floatingHeader: {
       position: 'absolute',
@@ -360,27 +344,7 @@ const makeStyles = (colors: ColorTokens, mode: 'light' | 'dark') => {
       paddingHorizontal: spacing.lg,
       paddingTop: spacing.md,
       paddingBottom: spacing.sm,
-      overflow: 'hidden',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: light ? colors.white + '66' : colors.white + '24',
-      backgroundColor: colors.paper + (light ? '44' : '2E'),
-      shadowColor: colors.black,
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: light ? 0.05 : 0.14,
-      shadowRadius: 24,
-      elevation: 6,
-    },
-    headerGlassTint: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: colors.paper + (light ? '24' : '18'),
-    },
-    headerGlassHighlight: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      top: 0,
-      height: StyleSheet.hairlineWidth,
-      backgroundColor: colors.white + (light ? 'D9' : '3D'),
+      alignItems: 'flex-start',
     },
   });
 };

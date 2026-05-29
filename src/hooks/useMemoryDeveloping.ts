@@ -25,6 +25,7 @@ type ShakeFeedbackState = 'idle' | 'boosted' | 'maxed';
 interface UseMemoryDevelopingOptions {
   createdAt: string;
   disabled?: boolean;
+  holdUndeveloped?: boolean;
   imageLoadEnabled?: boolean;
   imageUri?: string | null;
   isPremium: boolean;
@@ -36,6 +37,7 @@ interface UseMemoryDevelopingOptions {
 export function useMemoryDeveloping({
   createdAt,
   disabled = false,
+  holdUndeveloped = false,
   imageLoadEnabled = true,
   imageUri,
   isPremium,
@@ -52,24 +54,24 @@ export function useMemoryDeveloping({
   const shakeFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shakeAnim = useRef(new Animated.Value(0)).current;
 
-  const cureProgress = preview || forceDeveloped ? 1 : getCureProgress(createdAt, now + shakeBoostMs);
+  const cureProgress = holdUndeveloped ? 0 : preview || forceDeveloped ? 1 : getCureProgress(createdAt, now + shakeBoostMs);
   const cure = getCureStyles(cureProgress);
 
   useEffect(() => {
-    if (!cure.developing || preview) return;
+    if (!cure.developing || preview || holdUndeveloped) return;
     const id = setInterval(() => setNow(Date.now()), CURE_REFRESH_MS);
     return () => clearInterval(id);
-  }, [cure.developing, preview]);
+  }, [cure.developing, holdUndeveloped, preview]);
 
   useEffect(() => {
-    if (preview) return;
+    if (preview || holdUndeveloped) return;
     if (wasDevelopingRef.current && !cure.developing) {
       setForceDeveloped(true);
       markMemoryDeveloped(postId).catch(() => undefined);
       onDeveloped?.();
     }
     wasDevelopingRef.current = cure.developing;
-  }, [cure.developing, onDeveloped, postId, preview]);
+  }, [cure.developing, holdUndeveloped, onDeveloped, postId, preview]);
 
   useEffect(() => {
     let active = true;
@@ -121,7 +123,7 @@ export function useMemoryDeveloping({
   }, [shakeAnim]);
 
   useEffect(() => {
-    if (disabled || preview || !isPremium || !imageLoadEnabled || !imageUri || !cure.developing) return;
+    if (disabled || preview || holdUndeveloped || !isPremium || !imageLoadEnabled || !imageUri || !cure.developing) return;
     let active = true;
     let subscription: { remove: () => void } | null = null;
 
@@ -158,7 +160,7 @@ export function useMemoryDeveloping({
       active = false;
       subscription?.remove();
     };
-  }, [createdAt, cure.developing, disabled, imageLoadEnabled, imageUri, isPremium, postId, preview, showShakeFeedback]);
+  }, [createdAt, cure.developing, disabled, holdUndeveloped, imageLoadEnabled, imageUri, isPremium, postId, preview, showShakeFeedback]);
 
   const developingLabel = shakeFeedback === 'boosted'
     ? 'Shake worked — developing faster'

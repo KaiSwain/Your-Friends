@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from 'expo-audio';
 import { useCallback, useEffect, useMemo, type ReactNode, type RefObject } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -47,7 +46,7 @@ export function SongMemoryCard({ song, postId, body, themeColors, preview, editi
   const providerColor = getMusicPreferenceColor(musicOpenPreference);
   const editBorderColor = editingAccentColor ?? providerColor;
   const surfaceText = useMemo(() => getReadableSurfaceColors(colors.canvas, colors), [colors]);
-  const styles = useMemo(() => makeStyles(colors, fonts, providerColor, editBorderColor, surfaceText.text), [colors, editBorderColor, fonts, providerColor, surfaceText.text]);
+  const styles = useMemo(() => makeStyles(colors, fonts, providerColor, editBorderColor, surfaceText.text, resolvedMode), [colors, editBorderColor, fonts, providerColor, resolvedMode, surfaceText.text]);
   const source = song.previewUrl ?? null;
   const player = useAudioPlayer(source, { updateInterval: 250 });
   const status = useAudioPlayerStatus(player);
@@ -149,72 +148,70 @@ export function SongMemoryCard({ song, postId, body, themeColors, preview, editi
 
   const card = (
     <View style={[styles.card, isCompact && styles.cardCompact, editing && styles.editingCard]}>
-      <BlurView intensity={isCompact ? 28 : 42} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={[styles.cardBlur, isCompact && styles.cardBlurCompact]}>
-      <View pointerEvents="none" style={styles.memoryGlassTint} />
-      <View pointerEvents="none" style={styles.memoryGlassHighlight} />
-      {promptContent}
-      {responseLabel ? <Text style={styles.responseLabel}>{responseLabel}</Text> : null}
+      <View style={[styles.cardBlur, isCompact && styles.cardBlurCompact]}>
+        {promptContent}
+        {responseLabel ? <Text style={styles.responseLabel}>{responseLabel}</Text> : null}
 
-      {standaloneSong && !isCompact ? (
-        <View style={styles.standaloneHeader}>
-          <View style={styles.bigArtworkWrap}>
-            {song.artworkUrl ? (
-              <CachedRemoteImage uri={song.artworkUrl} style={styles.bigArtwork} />
-            ) : (
-              <View style={styles.bigArtworkFallback}>
-                <Ionicons name="musical-notes" size={72} color={providerColor} />
-              </View>
-            )}
-            <Pressable
-              onPress={openExternal}
-              style={styles.bigArtworkAction}
-              accessibilityRole="button"
-              accessibilityLabel={`Open song in ${serviceLabel}`}
-            >
-              <Ionicons name="open-outline" size={18} color={colors.white} />
+        {standaloneSong && !isCompact ? (
+          <View style={styles.standaloneHeader}>
+            <View style={styles.bigArtworkWrap}>
+              {song.artworkUrl ? (
+                <CachedRemoteImage uri={song.artworkUrl} style={styles.bigArtwork} />
+              ) : (
+                <View style={styles.bigArtworkFallback}>
+                  <Ionicons name="musical-notes" size={72} color={providerColor} />
+                </View>
+              )}
+              <Pressable
+                onPress={openExternal}
+                style={styles.bigArtworkAction}
+                accessibilityRole="button"
+                accessibilityLabel={`Open song in ${serviceLabel}`}
+              >
+                <Ionicons name="open-outline" size={18} color={colors.white} />
+              </Pressable>
+            </View>
+            <View style={styles.standaloneTitleBlock}>
+              <Text style={styles.bigTitle} numberOfLines={2}>{song.title}</Text>
+              <Text style={styles.bigArtist} numberOfLines={1}>{song.artist}</Text>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.headerRow}>
+            <View style={styles.artworkWrap}>
+              {song.artworkUrl ? (
+                <CachedRemoteImage uri={song.artworkUrl} style={styles.artwork} />
+              ) : (
+                <View style={styles.artworkFallback}>
+                  <Ionicons name="musical-notes" size={28} color={providerColor} />
+                </View>
+              )}
+            </View>
+            <View style={styles.titleBlock}>
+              <Text style={styles.title} numberOfLines={2}>{song.title}</Text>
+              <Text style={styles.artist} numberOfLines={1}>{song.artist}</Text>
+            </View>
+            <Pressable onPress={openExternal} style={styles.iconButton} accessibilityRole="button" accessibilityLabel={`Open song in ${serviceLabel}`}>
+              <Ionicons name="open-outline" size={18} color={colors.ink} />
             </Pressable>
           </View>
-          <View style={styles.standaloneTitleBlock}>
-            <Text style={styles.bigTitle} numberOfLines={2}>{song.title}</Text>
-            <Text style={styles.bigArtist} numberOfLines={1}>{song.artist}</Text>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.headerRow}>
-          <View style={styles.artworkWrap}>
-            {song.artworkUrl ? (
-              <CachedRemoteImage uri={song.artworkUrl} style={styles.artwork} />
-            ) : (
-              <View style={styles.artworkFallback}>
-                <Ionicons name="musical-notes" size={28} color={providerColor} />
-              </View>
-            )}
-          </View>
-          <View style={styles.titleBlock}>
-            <Text style={styles.title} numberOfLines={2}>{song.title}</Text>
-            <Text style={styles.artist} numberOfLines={1}>{song.artist}</Text>
-          </View>
-          <Pressable onPress={openExternal} style={styles.iconButton} accessibilityRole="button" accessibilityLabel={`Open song in ${serviceLabel}`}>
-            <Ionicons name="open-outline" size={18} color={colors.ink} />
-          </Pressable>
-        </View>
-      )}
+        )}
 
-      {children ? (
-        <>
-          <View style={styles.attachedContent}>{children}</View>
-          {playerControls}
-        </>
-      ) : (
-        <>
-          {playerControls}
-          {body?.trim() ? <Text style={styles.body}>{body.trim()}</Text> : null}
-        </>
-      )}
-      {footerContent ? <View style={styles.footerContent}>{footerContent}</View> : null}
-      {!song.previewUrl ? <Text style={styles.unavailable}>Preview unavailable</Text> : null}
-      {preview ? <Text style={styles.previewLabel}>Preview</Text> : null}
-      </BlurView>
+        {children ? (
+          <>
+            <View style={styles.attachedContent}>{children}</View>
+            {playerControls}
+          </>
+        ) : (
+          <>
+            {playerControls}
+            {body?.trim() ? <Text style={styles.body}>{body.trim()}</Text> : null}
+          </>
+        )}
+        {footerContent ? <View style={styles.footerContent}>{footerContent}</View> : null}
+        {!song.previewUrl ? <Text style={styles.unavailable}>Preview unavailable</Text> : null}
+        {preview ? <Text style={styles.previewLabel}>Preview</Text> : null}
+      </View>
     </View>
   );
 
@@ -252,7 +249,13 @@ function getMusicPreferenceColor(preference: MusicOpenPreference) {
   return preference === 'spotify' ? semanticColors.spotifyGreen : semanticColors.appleMusicOrange;
 }
 
-const makeStyles = (colors: ColorTokens, fonts: FontSet, providerColor: string, editBorderColor: string, readableTextColor: string) => StyleSheet.create({
+const makeStyles = (colors: ColorTokens, fonts: FontSet, providerColor: string, editBorderColor: string, readableTextColor: string, mode: 'light' | 'dark') => {
+  const scrapbookSurface = mode === 'light' ? withAlpha(colors.paperMuted, 0.84) : withAlpha(colors.paper, 0.72);
+  const scrapbookBorder = withAlpha(colors.line, 0.42);
+  const scrapbookInsetBorder = withAlpha(colors.line, 0.32);
+  const yellowTextShadow = mode === 'light' ? readableYellowTextShadow : {};
+
+  return StyleSheet.create({
   pressable: {
     width: '100%',
   },
@@ -260,14 +263,14 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, providerColor: string, 
     width: '100%',
     borderRadius: 26,
     borderWidth: 1,
-  borderColor: withAlpha(colors.white, 0.18),
-  backgroundColor: withAlpha(colors.paper, 0.56),
+    borderColor: scrapbookBorder,
+    backgroundColor: scrapbookSurface,
     overflow: 'hidden',
     shadowColor: colors.black,
-    shadowOpacity: 0.18,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 9 },
-    elevation: 5,
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
   },
   cardCompact: {
     shadowOpacity: 0.08,
@@ -288,22 +291,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, providerColor: string, 
   editingCard: {
     borderColor: editBorderColor,
   },
-  memoryGlassTint: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: withAlpha(colors.paper, 0.12),
-  },
-  memoryGlassHighlight: {
-    position: 'absolute',
-    top: 1,
-    left: 18,
-    right: 18,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: withAlpha(colors.white, 0.72),
-  },
   responseLabel: {
     fontFamily: fonts.bodyBold,
     fontSize: 13,
     color: semanticColors.promptGold,
+    ...yellowTextShadow,
   },
   headerRow: {
     flexDirection: 'row',
@@ -462,7 +454,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, providerColor: string, 
   },
   footerContent: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.line + '66',
+    borderTopColor: scrapbookInsetBorder,
     paddingTop: spacing.sm,
   },
   shareActions: {
@@ -514,4 +506,11 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, providerColor: string, 
     fontSize: 11,
     textTransform: 'uppercase',
   },
-});
+  });
+};
+
+const readableYellowTextShadow = {
+  textShadowColor: 'rgba(74, 52, 12, 0.34)',
+  textShadowOffset: { width: 0, height: 1 },
+  textShadowRadius: 1.5,
+};

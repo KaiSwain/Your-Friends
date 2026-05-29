@@ -17,8 +17,8 @@ export function ProfileBackgroundBackdrop({ blurRadius, colors, imageUri, style,
 
   if (!imageUri) return null;
 
-  const imageOpacity = resolvedMode === 'light' ? 0.48 : 0.72;
-  const scrimColor = resolvedMode === 'light' ? colors.canvas + 'F2' : colors.canvas + '99';
+  const imageOpacity = resolvedMode === 'light' ? 0.68 : 0.58;
+  const scrimColor = resolvedMode === 'light' ? colors.canvas + 'B8' : colors.canvas + 'C4';
   const tint = tintColors ? tintColors.accentSoft ?? tintColors.accent : null;
   const tintOpacity = tintColors ? (resolvedMode === 'light' ? 0.035 : 0.14) : 0;
 

@@ -5,8 +5,9 @@ import { createCustomThemePair, decodeProfileCustomTheme } from '../features/the
 import { themes, themeNames, type ColorTokens, type ThemeName } from '../features/theme/themes';
 import { fontSets, type FontSet } from '../theme/typography';
 
-export function useEffectiveProfileTheme(profileBg?: string | null) {
+export function useEffectiveProfileTheme(profileBg?: string | null, options?: { profileMode?: 'current' | 'light' }) {
   const { colors, fonts, resolvedMode } = useTheme();
+  const profileResolvedMode = options?.profileMode === 'light' ? 'light' : resolvedMode;
   const profileCustomTheme = useMemo(() => decodeProfileCustomTheme(profileBg), [profileBg]);
   const profileThemeName = useMemo(
     () => !profileCustomTheme && profileBg && (themeNames as string[]).includes(profileBg) ? (profileBg as ThemeName) : null,
@@ -17,8 +18,8 @@ export function useEffectiveProfileTheme(profileBg?: string | null) {
     [profileCustomTheme],
   );
   const themedColors = useMemo(
-    () => profileCustomThemePair ? profileCustomThemePair[resolvedMode] : profileThemeName ? themes[profileThemeName][resolvedMode] : null,
-    [profileCustomThemePair, profileThemeName, resolvedMode],
+    () => profileCustomThemePair ? profileCustomThemePair[profileResolvedMode] : profileThemeName ? themes[profileThemeName][profileResolvedMode] : null,
+    [profileCustomThemePair, profileResolvedMode, profileThemeName],
   );
   const effectiveColors = useMemo(
     () => themedColors
@@ -47,7 +48,7 @@ export function useEffectiveProfileTheme(profileBg?: string | null) {
     effectiveColors,
     effectiveFonts,
     profileThemeName,
-    resolvedMode,
+    resolvedMode: profileResolvedMode,
     themedColors,
     tint,
   };

@@ -69,6 +69,26 @@ export function backOnce(router: Pick<Router, 'back'>): boolean {
   return true;
 }
 
+export function shouldPopForBackTarget(href: string | null | undefined): boolean {
+  if (!href) return false;
+  const path = href.split('?')[0] ?? href;
+  return path.startsWith('/(app)/profiles/')
+    || path.startsWith('/profiles/')
+    || path.startsWith('/(app)/wall/')
+    || path.startsWith('/wall/');
+}
+
+export function backOrReplaceOnce(
+  router: Pick<Router, 'back' | 'replace'> & { canGoBack?: () => boolean },
+  href: Href,
+  options?: ReplaceOptions,
+): boolean {
+  if (router.canGoBack?.()) {
+    return backOnce(router);
+  }
+  return replaceOnce(router, href, options);
+}
+
 function claimNavigation(key: string): boolean {
   const now = Date.now();
 

@@ -25,7 +25,7 @@ import { useAddMemory } from '../../../src/hooks/useAddMemory';
 import { AI_CAPTION_TONES, AiCaptionContext, AiCaptionTone, generateAiCaptions } from '../../../src/lib/aiCaptions';
 import { normalizeLocationName } from '../../../src/lib/memoryLocation';
 import { memoryImagePickerOptions, memoryMediaPickerOptions } from '../../../src/lib/imagePickerPresets';
-import { backOnce, dismissToOnce, pushOnce, replaceOnce } from '../../../src/lib/navigationGuard';
+import { backOnce, dismissToOnce, pushOnce, replaceOnce, shouldPopForBackTarget } from '../../../src/lib/navigationGuard';
 import { showAiCaptionPaywall, showGalleryPaywall, showMediaMemoryPaywall } from '../../../src/lib/premiumGates';
 import { showPhotoSourceSheet } from '../../../src/lib/photoSourceSheet';
 import {
@@ -119,6 +119,10 @@ export default function AddMemoryScreen() {
     if (mediaUri) {
       if (!isPremium) {
         showMediaMemoryPaywall(() => pushOnce(router, '/(app)/store'));
+        if (shouldPopForBackTarget(backTo)) {
+          backOnce(router);
+          return;
+        }
         replaceOnce(router, backTo ? (backTo as any) : '/friends');
         return;
       }
@@ -185,6 +189,10 @@ export default function AddMemoryScreen() {
 
   function handleBack() {
     if (backTo) {
+      if (shouldPopForBackTarget(backTo)) {
+        backOnce(router);
+        return;
+      }
       dismissToOnce(router, backTo as any);
       return;
     }
@@ -486,12 +494,17 @@ export default function AddMemoryScreen() {
       });
 
       if (selectedTargets.length > 1) {
-        if (backTo) dismissToOnce(router, backTo as any);
+        if (shouldPopForBackTarget(backTo)) backOnce(router);
+        else if (backTo) dismissToOnce(router, backTo as any);
         else replaceOnce(router, '/friends');
         return;
       }
 
       const target = selectedTargets[0];
+      if (shouldPopForBackTarget(backTo)) {
+        backOnce(router);
+        return;
+      }
       replaceOnce(router, getPostSaveProfileDestination(target, contacts, authenticatedUser.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
@@ -1025,7 +1038,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     previewHint: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted, textAlign: 'center' as const },
     inputSection: { gap: spacing.xs },
     inputHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
-    inputLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+    inputLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkSoft, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
     aiButton: {
       flexDirection: 'row' as const,
       alignItems: 'center' as const,

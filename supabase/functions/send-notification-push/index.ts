@@ -67,6 +67,8 @@ Deno.serve(async (req) => {
         notificationId: notification.id,
         type: notification.type,
         referenceId: notification.reference_id,
+        actorUserId: notification.actor_user_id,
+        recipientUserId: notification.recipient_user_id,
       },
     }),
   });

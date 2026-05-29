@@ -1,9 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { AppState } from 'react-native';
-
-import { CURE_DURATION_MS } from '../lib/polaroidCure';
 import { socialQueryKeys } from '../features/social/SocialGraphContext';
-import { useInAppNotification } from '../features/notifications/InAppNotificationContext';
 import { CreateWallPostInput, WallPost } from '../types/domain';
 import { compareWallPostsByMemoryDateDesc } from '../lib/memoryDate';
 import { buildOptimisticWallPosts, createPendingMemory, type PendingMemoryRecord } from '../features/memories/pendingMemoryQueue';
@@ -30,23 +26,12 @@ async function createLocalMemory(input: AddMemoryInput): Promise<{ record: Pendi
 /** Mutation hook for creating a memory (optional image upload + wall post). */
 export function useAddMemory() {
   const queryClient = useQueryClient();
-  const { showLocal } = useInAppNotification();
 
   return useMutation({
     mutationFn: createLocalMemory,
     onSuccess: ({ record, posts }) => {
       queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) => [...posts, ...(old ?? [])].sort(compareWallPostsByMemoryDateDesc));
       syncPendingMemoryToCache(queryClient, record).catch((error) => console.warn('[pending memories] immediate sync failed:', error));
-      const polaroidPosts = posts.filter((newPost) => newPost.postType === 'polaroid' && newPost.imageUri);
-      if (polaroidPosts.length > 0) {
-        setTimeout(() => {
-          if (AppState.currentState !== 'active') return;
-          showLocal(
-            polaroidPosts.length > 1 ? 'Your shared memory cards have developed!' : 'Your memory card has developed!',
-            { referenceId: polaroidPosts[0]?.id },
-          );
-        }, CURE_DURATION_MS);
-      }
     },
   });
 }

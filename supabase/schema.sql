@@ -1178,6 +1178,37 @@ create policy "Recipients can complete pending memory prompt requests"
   using (auth.uid() = recipient_user_id and status = 'pending')
   with check (auth.uid() = recipient_user_id and status in ('pending', 'completed'));
 
+-- Saved prompt ideas users can reuse when sending memory prompts.
+create table public.saved_memory_prompts (
+  id uuid primary key default uuid_generate_v4(),
+  owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  prompt_type text not null check (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice')),
+  prompt_text text not null,
+  category text,
+  source text not null default 'user' check (source in ('user', 'curated', 'ai')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.saved_memory_prompts enable row level security;
+
+create policy "Users can read own saved prompts"
+  on public.saved_memory_prompts for select
+  using (auth.uid() = owner_user_id);
+
+create policy "Users can insert own saved prompts"
+  on public.saved_memory_prompts for insert
+  with check (auth.uid() = owner_user_id);
+
+create policy "Users can update own saved prompts"
+  on public.saved_memory_prompts for update
+  using (auth.uid() = owner_user_id)
+  with check (auth.uid() = owner_user_id);
+
+create policy "Users can delete own saved prompts"
+  on public.saved_memory_prompts for delete
+  using (auth.uid() = owner_user_id);
+
 alter table public.wall_posts
   add constraint wall_posts_memory_prompt_request_fk
   foreign key (memory_prompt_request_id) references public.memory_prompt_requests(id) on delete set null;
@@ -1339,6 +1370,7 @@ create index idx_wall_posts_memory_prompt_request on public.wall_posts(memory_pr
 create index idx_wall_posts_referenced_wall_post on public.wall_posts(referenced_wall_post_id);
 create index idx_memory_replies_wall_post on public.memory_replies(wall_post_id, created_at);
 create index idx_memory_replies_author on public.memory_replies(author_user_id, created_at desc);
+create index idx_saved_memory_prompts_owner_updated on public.saved_memory_prompts(owner_user_id, updated_at desc);
 create index idx_profiles_friend_code on public.profiles(friend_code); -- Speed up friend-code lookup queries.
 create index idx_calendar_events_owner_date on public.calendar_events(owner_user_id, event_date);
 create index idx_calendar_events_subject_user on public.calendar_events(subject_user_id);
@@ -1391,7 +1423,12 @@ create policy "Users can update own notifications"
   on public.notifications for update using (auth.uid() = recipient_user_id);
 
 create policy "Authenticated users can insert notifications"
-  on public.notifications for insert with check (true);
+  on public.notifications for insert
+  to authenticated
+  with check (
+    actor_user_id = auth.uid()
+    and recipient_user_id <> auth.uid()
+  );
 
 create index idx_notifications_recipient on public.notifications(recipient_user_id);
 
@@ -1489,6 +1526,7 @@ create index if not exists idx_premium_purchase_events_user on public.premium_pu
 
 -- Migrations: add columns that were added after initial table creation.
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS premium_until timestamptz;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS push_token text;
 ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS metadata jsonb not null default '{}'::jsonb;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS post_type text not null default 'note';
 ALTER TABLE public.wall_posts DROP CONSTRAINT IF EXISTS wall_posts_post_type_check;
@@ -1561,6 +1599,7 @@ alter publication supabase_realtime add table public.wall_post_layouts;
 alter publication supabase_realtime add table public.gift_notes;
 alter publication supabase_realtime add table public.movie_review_requests;
 alter publication supabase_realtime add table public.memory_prompt_requests;
+alter publication supabase_realtime add table public.saved_memory_prompts;
 alter publication supabase_realtime add table public.contacts;
 alter publication supabase_realtime add table public.friend_requests;
 alter publication supabase_realtime add table public.contact_private_notes;

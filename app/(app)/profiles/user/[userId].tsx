@@ -418,7 +418,7 @@ const makeStyles = (
 ) =>
   StyleSheet.create({
     screenShell: { flex: 1 },
-    topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    topBar: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     backButton: { minHeight: 38, borderRadius: 999, borderWidth: 0, backgroundColor: withAlpha(colors.paper, 0.18), paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
     backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     hero: { gap: spacing.sm, alignItems: 'center' },

@@ -598,5 +598,6 @@ export const themes: Record<ThemeName, ThemePair> = {
 export const themeNames = Object.keys(themes) as ThemeName[];
 
 export const featuredThemeNames = ['yourFriends', 'custom', 'default', 'vintage', 'bubblegum', 'noir'] as const satisfies readonly ThemeName[];
-const featuredThemeNameSet = new Set<ThemeName>(featuredThemeNames);
+const featuredThemeNameList: readonly ThemeName[] = featuredThemeNames;
+const featuredThemeNameSet: ReadonlySet<ThemeName> = new Set(featuredThemeNameList);
 export const legacyThemeNames = themeNames.filter((name) => !featuredThemeNameSet.has(name));

@@ -75,8 +75,9 @@ export default function NotificationsScreen() {
   );
 
   function handlePress(n: Notification) {
-    if (!n.read) markNotificationRead(n.id);
-    if (!n.read) markSyntheticRead(n.id);
+    const shouldDeferReadUntilViewed = n.type === 'wall_post';
+    if (!n.read && !shouldDeferReadUntilViewed) markNotificationRead(n.id);
+    if (!n.read && !shouldDeferReadUntilViewed) markSyntheticRead(n.id);
     const wallPostId = typeof n.metadata.wallPostId === 'string'
       ? n.metadata.wallPostId
       : n.type === 'wall_post'
@@ -92,11 +93,8 @@ export default function NotificationsScreen() {
       const postId = wallPostId ?? n.referenceId;
       if (postId) pushOnce(router, `/(app)/memories/replies/${postId}`);
     } else if (n.type === 'wall_post') {
-      if (wallPostId) {
-        pushOnce(router, `/(app)/memories/replies/${wallPostId}`);
-      } else if (n.actorUserId) {
-        pushOnce(router, `/(app)/wall/${n.actorUserId}`);
-      }
+      if (n.actorUserId) pushOnce(router, `/(app)/wall/${n.actorUserId}`);
+      else if (wallPostId) pushOnce(router, `/(app)/memories/replies/${wallPostId}`);
     } else if ((n.type === 'friend_request' || n.type === 'contact_update') && n.actorUserId) {
       if (n.type === 'friend_request' && n.metadata.action === 'requested') {
         pushOnce(router, '/(app)/friends/add');

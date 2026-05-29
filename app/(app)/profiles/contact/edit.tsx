@@ -119,17 +119,19 @@ export default function EditContactProfileScreen() {
   const [showCustomThemeFineTune, setShowCustomThemeFineTune] = useState(false);
   const [profileBgImageUri, setProfileBgImageUri] = useState<string | null>(null);
   const [removeProfileBgImage, setRemoveProfileBgImage] = useState(false);
+  const customProfileThemeSelected = isProfileCustomTheme(profileBg) || profileBg === 'custom';
+  const resolvedProfileBg = customProfileThemeSelected ? encodeProfileCustomTheme(profileCustomTheme) : profileBg;
   const {
     baseColors: colors,
     effectiveColors,
     effectiveFonts,
+    resolvedMode,
     themedColors,
-  } = useEffectiveProfileTheme(profileBg);
+  } = useEffectiveProfileTheme(resolvedProfileBg);
 
   const styles = useMemo(() => makeStyles(effectiveColors, effectiveFonts), [effectiveColors, effectiveFonts]);
   const profileCustomThemePair = useMemo(() => createCustomThemePair(profileCustomTheme), [profileCustomTheme]);
-  const profileCustomThemeColors = profileCustomThemePair.light;
-  const customProfileThemeSelected = isProfileCustomTheme(profileBg) || profileBg === 'custom';
+  const profileCustomThemeColors = profileCustomThemePair[resolvedMode];
 
   // Pick up media from Polaroid camera screen.
   const capturedUri = Array.isArray(params.capturedUri) ? params.capturedUri[0] : params.capturedUri;
@@ -263,7 +265,7 @@ export default function EditContactProfileScreen() {
   const availablePresetTags = RELATIONSHIP_TAG_PRESETS.filter(
     (tag) => !selectedTags.some((selectedTag) => selectedTag.toLowerCase() === tag.toLowerCase()),
   );
-  const currentProfileBg = customProfileThemeSelected ? encodeProfileCustomTheme(profileCustomTheme) : profileBg;
+  const currentProfileBg = resolvedProfileBg;
 
   const hasChanges =
     name.trim() !== contact.displayName ||
@@ -441,7 +443,7 @@ export default function EditContactProfileScreen() {
           </Pressable>
           {unlockedFeaturedThemeNames.map((name) => {
             const isCustom = name === 'custom';
-            const t = isCustom ? profileCustomThemeColors : themes[name].light;
+            const t = isCustom ? profileCustomThemeColors : themes[name][resolvedMode];
             const selected = isCustom ? customProfileThemeSelected : profileBg === name;
             return (
               <Pressable key={name} onPress={() => isCustom ? selectCustomProfileTheme() : setProfileBg(name)} style={[styles.themeSwatch, selected && styles.themeSwatchSelected]}>
@@ -459,7 +461,7 @@ export default function EditContactProfileScreen() {
             <Text style={styles.themeGroupLabel}>Advanced / legacy themes</Text>
             <View style={styles.bgRow}>
               {unlockedLegacyThemeNames.map((name) => {
-                const t = themes[name].light;
+                const t = themes[name][resolvedMode];
                 const selected = profileBg === name;
                 return (
                   <Pressable key={name} onPress={() => setProfileBg(name)} style={[styles.themeSwatch, styles.themeSwatchLegacy, selected && styles.themeSwatchSelected]}>
@@ -514,7 +516,7 @@ export default function EditContactProfileScreen() {
               <Ionicons name={showCustomThemeFineTune ? 'chevron-up' : 'chevron-down'} size={16} color={colors.inkSoft} />
             </Pressable>
             {showCustomThemeFineTune ? (
-              <>
+              <View style={styles.customThemeSliderPanel}>
                 <CustomThemeSlider
                   colors={colors}
                   fonts={effectiveFonts}
@@ -542,7 +544,7 @@ export default function EditContactProfileScreen() {
                   onSlidingComplete={(backgroundIntensity) => commitProfileCustomTheme({ backgroundIntensity })}
                   onValueChange={(backgroundIntensity) => previewProfileCustomTheme({ backgroundIntensity })}
                 />
-              </>
+              </View>
             ) : null}
           </View>
         ) : null}
@@ -671,7 +673,7 @@ function CustomThemeSlider({
 
 const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
   StyleSheet.create({
-    topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    topBar: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     backButton: { minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
     backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
     saveButton: {
@@ -1097,6 +1099,14 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       justifyContent: 'space-between',
     },
     fineTuneToggleLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.inkSoft },
+    customThemeSliderPanel: {
+      gap: spacing.md,
+      borderRadius: radius.lg,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.line,
+      backgroundColor: colors.paper,
+      padding: spacing.md,
+    },
     themeGroupLabel: {
       fontFamily: fonts.bodyBold,
       fontSize: 11,

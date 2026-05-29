@@ -44,7 +44,7 @@ export function MemoryTextStylePicker({
 
   return (
     <View style={styles.section}>
-      <Text style={[styles.sectionLabel, { color: colors.inkMuted, fontFamily: fonts.bodyBold }]}>Note Style</Text>
+      <Text style={[styles.sectionLabel, { color: colors.inkSoft, fontFamily: fonts.bodyBold }]}>Note Style</Text>
 
       <View style={styles.group}>
         <Text style={[styles.groupLabel, { color: colors.inkSoft, fontFamily: fonts.bodyMedium }]}>Font</Text>

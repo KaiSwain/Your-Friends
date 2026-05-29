@@ -1,7 +1,7 @@
 export const LEGAL_LINKS = {
-  privacyPolicy: 'https://yourfriendsapp.com/privacypolicy',
+  privacyPolicy: 'http://yourfriendsapp.com/privacypolicy',
   termsOfUse: 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/',
-  supportEmail: 'https://yourfriendsapp.com/support',
+  supportEmail: 'http://yourfriendsapp.com/support',
 } as const;
 
 export const SUBSCRIPTION_LEGAL_COPY =

@@ -304,16 +304,18 @@ export default function CalendarScreen() {
     setDraft(createDraftFromEvent(event, subjectOptions, ownerShares));
   }
 
-  function openBirthdayMemory(event: CalendarEvent) {
+  function openBirthdayGiftNote(event: CalendarEvent) {
     const friendUserId = getBirthdayEventUserId(event, authenticatedUserId);
     if (!friendUserId) return;
     pushOnce(router, {
-      pathname: '/(app)/memories/add',
+      pathname: '/(app)/gifts/add',
       params: {
         subjectId: friendUserId,
         subjectType: 'user',
-        targetKeys: `user:${friendUserId}`,
-        backTo: '/calendar',
+        recipientUserId: friendUserId,
+        unlockDate: getNextFutureDateForMonthDay(selectedDateKey),
+        unlockTime: '09:00',
+        backTo: `/calendar?date=${selectedDateKey}`,
       },
     });
   }
@@ -717,7 +719,7 @@ export default function CalendarScreen() {
                       ) : null}
                       {birthdayUserId ? (
                         <Pressable
-                          onPress={() => openBirthdayMemory(event)}
+                          onPress={() => openBirthdayGiftNote(event)}
                           style={styles.birthdayMemoryAction}
                           accessibilityRole="button"
                           accessibilityLabel={`Add a birthday memory for ${getUserById(birthdayUserId)?.displayName ?? 'this friend'}`}
@@ -1484,6 +1486,18 @@ function isValidDateKey(dateKey: string) {
   if (!parts) return false;
   const date = new Date(parts.year, parts.month - 1, parts.day);
   return getLocalDateKey(date) === dateKey;
+}
+
+function getNextFutureDateForMonthDay(dateKey: string) {
+  const parts = parseDateParts(dateKey);
+  if (!parts) return dateKey;
+  const todayKey = getLocalDateKey(new Date());
+  if (dateKey >= todayKey) return dateKey;
+  const todayParts = parseDateParts(todayKey);
+  if (!todayParts) return dateKey;
+  const next = new Date(todayParts.year, parts.month - 1, parts.day, 12);
+  if (getLocalDateKey(next) < todayKey) next.setFullYear(todayParts.year + 1);
+  return getLocalDateKey(next);
 }
 
 function isValidTime(value: string) {

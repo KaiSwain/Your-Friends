@@ -1,4 +1,4 @@
-import type { MemoryPromptRequest, MemoryPromptRequestStatus, MemoryPromptType, SongAttachment, VoiceAttachment } from '../../types/domain';
+import type { MemoryPromptRequest, MemoryPromptRequestStatus, MemoryPromptType, SavedMemoryPrompt, SavedMemoryPromptSource, SongAttachment, VoiceAttachment } from '../../types/domain';
 import { rowToVoiceAttachment, voiceToDbColumns } from '../../lib/voiceAttachmentDb';
 import { getPromptExpiresAt } from '../../lib/promptExpiration';
 
@@ -20,6 +20,19 @@ export function rowToMemoryPromptRequest(row: any): MemoryPromptRequest {
     expiresAt: row.expires_at ?? getPromptExpiresAt(row.created_at),
     updatedAt: row.updated_at ?? row.created_at,
     completedAt: row.completed_at ?? null,
+  };
+}
+
+export function rowToSavedMemoryPrompt(row: any): SavedMemoryPrompt {
+  return {
+    id: row.id,
+    ownerUserId: row.owner_user_id,
+    promptType: normalizeMemoryPromptType(row.prompt_type),
+    promptText: String(row.prompt_text ?? ''),
+    category: row.category ?? null,
+    source: normalizeSavedMemoryPromptSource(row.source),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
   };
 }
 
@@ -86,5 +99,10 @@ function normalizeMemoryPromptType(value: unknown): MemoryPromptType {
 function normalizeMemoryPromptRequestStatus(value: unknown): MemoryPromptRequestStatus {
   if (value === 'completed' || value === 'cancelled') return value;
   return 'pending';
+}
+
+function normalizeSavedMemoryPromptSource(value: unknown): SavedMemoryPromptSource {
+  if (value === 'curated' || value === 'ai') return value;
+  return 'user';
 }
 

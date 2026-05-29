@@ -18,7 +18,7 @@ import { resyncFriendNotificationReminders } from '../../lib/friendNotificationR
 import { getPromptExpiresAt, isPromptExpired } from '../../lib/promptExpiration';
 import { syncProfileBirthdayCalendarEvent } from '../calendar/queries';
 import { canDeleteWallPost, canEditWallPostContent } from '../../lib/wallPostPermissions';
-import { encodeWallPostTextStyle, splitWallPostPresentation } from '../../lib/wallPostTextStyle';
+import { encodeWallPostTextStyle } from '../../lib/wallPostTextStyle';
 import { useSyntheticNotificationReads } from '../../hooks/useSyntheticNotificationReads';
 import {
   AppUser,
@@ -36,6 +36,7 @@ import {
   CreateGiftNoteInput,
   CreateOfficialBroadcastInput,
   CreateMemoryPromptRequestInput,
+  CreateSavedMemoryPromptInput,
   CompleteMovieReviewRequestInput,
   CreateMovieReviewRequestInput,
   UpdateContactPrivateNoteBlockInput,
@@ -52,6 +53,7 @@ import {
   OfficialBroadcastResult,
   PeopleListItem,
   ProfileWallItem,
+  SavedMemoryPrompt,
   SaveWallPostLayoutInput,
   SongAttachment,
   VoiceAttachment,
@@ -74,7 +76,10 @@ import {
   cancelMemoryPromptRequest,
   completeMemoryPromptRequest,
   createMemoryPromptRequest,
+  createSavedMemoryPrompt,
+  deleteSavedMemoryPrompt,
   fetchMemoryPromptRequests,
+  fetchSavedMemoryPrompts,
   memoryPromptQueryKeys,
 } from '../memoryPromptRequests/queries';
 import {
@@ -97,6 +102,8 @@ import {
   upsertWallPostLayout,
   deleteWallPostLayout,
 } from './queries';
+import { createPendingMemoryEdit, type PendingMemoryEditUpdates } from '../memories/pendingMemoryEditQueue';
+import { applyPendingMemoryEditsToCache, syncPendingMemoryEditToCache } from '../memories/pendingMemoryEditSync';
 
 // Re-export so existing imports keep working.
 export { socialQueryKeys } from './queries';
@@ -123,6 +130,7 @@ interface SocialGraphContextValue {
   giftNotes: GiftNote[];
   movieReviewRequests: MovieReviewRequest[];
   memoryPromptRequests: MemoryPromptRequest[];
+  savedMemoryPrompts: SavedMemoryPrompt[];
   addFriendByCode: (currentUserId: string, friendCode: string) => Promise<
     | { ok: true; friend: AppUser; contactId: string | null; candidateContactIds: string[]; requested?: boolean; requestId?: string; alreadyFriends?: boolean }
     | { ok: false; error: string }
@@ -159,6 +167,8 @@ interface SocialGraphContextValue {
   completeMemoryPromptRequest: (reviewerUserId: string, input: CompleteMemoryPromptRequestInput) => Promise<void>;
   getMemoryPromptRequestsForPair: (leftUserId: string, rightUserId: string) => MemoryPromptRequest[];
   getMemoryPromptRequestById: (requestId: string) => MemoryPromptRequest | undefined;
+  createSavedMemoryPrompt: (ownerUserId: string, input: CreateSavedMemoryPromptInput) => Promise<SavedMemoryPrompt>;
+  deleteSavedMemoryPrompt: (promptId: string, ownerUserId: string) => Promise<void>;
   getPrivateNotesForContact: (contactId: string) => ContactPrivateNote[];
   getPrivateNoteById: (noteId: string) => ContactPrivateNote | undefined;
   getPrivateNoteBlocks: (noteId: string) => ContactPrivateNoteBlock[];
@@ -185,6 +195,7 @@ interface SocialGraphContextValue {
   isPostOnProfileWall: (ownerUserId: string, wallPostId: string) => boolean;
   addPostToProfileWall: (ownerUserId: string, wallPostId: string, options?: { repliesHidden?: boolean }) => Promise<{ ok: true } | { ok: false; error: string }>;
   removePostFromProfileWall: (ownerUserId: string, wallPostId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  setProfileWallRepliesHidden: (ownerUserId: string, wallPostId: string, repliesHidden: boolean) => Promise<{ ok: true } | { ok: false; error: string }>;
   getVisiblePostsByAuthor: (authorId: string) => WallPost[];
   getContactAboutMe: (ownerUserId: string, myUserId: string) => Contact | undefined;
   isConnected: (leftUserId: string, rightUserId: string) => boolean;
@@ -289,6 +300,11 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     enabled: socialEnabled,
     refetchInterval: socialEnabled ? LIVE_SOCIAL_REFRESH_MS : false,
   });
+  const savedMemoryPromptsQuery = useQuery({
+    queryKey: memoryPromptQueryKeys.savedPrompts(currentUser?.id ?? 'anonymous'),
+    queryFn: () => fetchSavedMemoryPrompts(currentUser!.id),
+    enabled: Boolean(currentUser?.id),
+  });
   const friendFactsQuery = useQuery({ queryKey: socialQueryKeys.friendFacts, queryFn: fetchFriendFacts, enabled: socialEnabled });
   const notificationsQuery = useQuery({
     queryKey: socialQueryKeys.notifications,
@@ -315,12 +331,13 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   const giftNotes = giftNotesQuery.data ?? [];
   const movieReviewRequests = movieReviewRequestsQuery.data ?? [];
   const memoryPromptRequests = memoryPromptRequestsQuery.data ?? [];
+  const savedMemoryPrompts = savedMemoryPromptsQuery.data ?? [];
   const friendFacts = friendFactsQuery.data ?? [];
   const persistedNotifications = notificationsQuery.data ?? [];
   const { readIds: syntheticNotificationReadIds } = useSyntheticNotificationReads(currentUser?.id ?? null);
   const notifications = useMemo(
-    () => mergeSyntheticNotifications(persistedNotifications, friendRequests, movieReviewRequests, memoryPromptRequests, users, currentUser?.id ?? null, syntheticNotificationReadIds),
-    [persistedNotifications, friendRequests, movieReviewRequests, memoryPromptRequests, users, currentUser?.id, syntheticNotificationReadIds],
+    () => mergeSyntheticNotifications(persistedNotifications, friendRequests, wallPosts, movieReviewRequests, memoryPromptRequests, users, currentUser?.id ?? null, syntheticNotificationReadIds),
+    [persistedNotifications, friendRequests, wallPosts, movieReviewRequests, memoryPromptRequests, users, currentUser?.id, syntheticNotificationReadIds],
   );
   const calendarEventReactions = calendarEventReactionsQuery.data ?? [];
   const unreadCount = notifications.filter((n) => !n.read).length;
@@ -339,6 +356,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     && giftNotesQuery.isFetched
     && movieReviewRequestsQuery.isFetched
     && memoryPromptRequestsQuery.isFetched
+    && savedMemoryPromptsQuery.isFetched
     && friendFactsQuery.isFetched
     && notificationsQuery.isFetched
     && calendarEventReactionsQuery.isFetched;
@@ -442,6 +460,9 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         queryClient.invalidateQueries({ queryKey: memoryPromptQueryKeys.requests });
         queryClient.invalidateQueries({ queryKey: socialQueryKeys.notifications });
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'saved_memory_prompts' }, () => {
+        if (currentUser?.id) queryClient.invalidateQueries({ queryKey: memoryPromptQueryKeys.savedPrompts(currentUser.id) });
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contacts' }, () => {
         queryClient.invalidateQueries({ queryKey: socialQueryKeys.contacts });
       })
@@ -462,7 +483,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [queryClient, socialEnabled]);
+  }, [currentUser?.id, queryClient, socialEnabled]);
 
   useEffect(() => {
     if (!socialEnabled) return;
@@ -1980,6 +2001,22 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     );
   }
 
+  async function createSavedMemoryPromptForUser(ownerUserId: string, input: CreateSavedMemoryPromptInput) {
+    const prompt = await createSavedMemoryPrompt(ownerUserId, input);
+    queryClient.setQueryData<SavedMemoryPrompt[]>(memoryPromptQueryKeys.savedPrompts(ownerUserId), (old) => {
+      const existing = old ?? [];
+      return [prompt, ...existing.filter((entry) => entry.id !== prompt.id)];
+    });
+    return prompt;
+  }
+
+  async function deleteSavedMemoryPromptForUser(promptId: string, ownerUserId: string) {
+    await deleteSavedMemoryPrompt(promptId, ownerUserId);
+    queryClient.setQueryData<SavedMemoryPrompt[]>(memoryPromptQueryKeys.savedPrompts(ownerUserId), (old) =>
+      (old ?? []).filter((entry) => entry.id !== promptId),
+    );
+  }
+
   async function completeMemoryPromptRequestForUser(reviewerUserId: string, input: CompleteMemoryPromptRequestInput) {
     const pendingRequest = memoryPromptRequests.find((entry) => entry.id === input.requestId);
     if (pendingRequest?.promptType === 'voice' && !isPremium) throw new Error('Voice prompt responses are a Premium feature.');
@@ -2165,6 +2202,24 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     return { ok: true as const };
   }
 
+  async function setProfileWallRepliesHidden(ownerUserId: string, wallPostId: string, repliesHidden: boolean) {
+    const { error } = await supabase
+      .from('profile_wall_items')
+      .update({ replies_hidden: repliesHidden })
+      .eq('owner_user_id', ownerUserId)
+      .eq('wall_post_id', wallPostId);
+    if (error) return { ok: false as const, error: error.message };
+
+    queryClient.setQueryData<ProfileWallItem[]>(socialQueryKeys.profileWallItems, (old) =>
+      (old ?? []).map((entry) =>
+        entry.ownerUserId === ownerUserId && entry.wallPostId === wallPostId
+          ? { ...entry, repliesHidden }
+          : entry,
+      ),
+    );
+    return { ok: true as const };
+  }
+
   async function saveWallPostLayout(input: SaveWallPostLayoutInput) {
     try {
       const layout = await upsertWallPostLayout(input);
@@ -2212,88 +2267,28 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     const post = wallPosts.find((p) => p.id === postId);
     if (!currentUser || !post || !canEditWallPostContent(post, currentUser.id)) throw new Error('You can only edit your own memories.');
 
-    const updateData: Record<string, unknown> = { body };
+    const updates: PendingMemoryEditUpdates = {
+      body,
+      hasImageChange: newLocalImageUri !== undefined,
+      imageUri: newLocalImageUri ?? null,
+      hasVoiceChange: voice !== undefined,
+      voice,
+    };
+    if (visibility !== undefined) updates.visibility = visibility;
+    if (backText !== undefined) updates.backText = backText;
+    if (cardColor !== undefined) updates.cardColor = cardColor;
+    if (filter !== undefined) updates.filter = filter;
+    if (song !== undefined) updates.song = song;
+    if (videoMuted !== undefined) updates.videoMuted = videoMuted;
+    if (locationName !== undefined) updates.locationName = locationName;
 
-    if (visibility !== undefined) {
-      updateData.visibility = visibility;
-    }
-
-    if (backText !== undefined) {
-      updateData.back_text = backText;
-    }
-
-    if (cardColor !== undefined) {
-      updateData.card_color = cardColor;
-    }
-
-    if (filter !== undefined) {
-      updateData.filter = filter;
-    }
-
-    if (song !== undefined) {
-      updateData.song_provider = song?.provider ?? null;
-      updateData.song_provider_id = song?.providerTrackId ?? null;
-      updateData.song_title = song?.title ?? null;
-      updateData.song_artist = song?.artist ?? null;
-      updateData.song_artwork_url = song?.artworkUrl ?? null;
-      updateData.song_preview_url = song?.previewUrl ?? null;
-      updateData.song_external_url = song?.externalUrl ?? null;
-    }
-
-    if (videoMuted !== undefined) {
-      updateData.video_muted = videoMuted;
-    }
-
-    if (locationName !== undefined) {
-      updateData.location_name = locationName;
-    }
-
-    if (voice !== undefined) {
-      updateData.audio_path = voice?.uri ?? null;
-      updateData.audio_duration_ms = voice?.durationMs ?? null;
-    }
-
-    if (newLocalImageUri !== undefined) {
-      if (newLocalImageUri) {
-        const uploadedImage = await uploadMemoryImageVariants(newLocalImageUri, { prefix: 'uploads' });
-        updateData.image_path = uploadedImage.imageUri;
-        updateData.image_thumb_path = uploadedImage.imageThumbUri;
-      } else {
-        updateData.image_path = null;
-        updateData.image_thumb_path = null;
-      }
-    }
-
-    const { error } = await supabase.from('wall_posts').update(updateData).eq('id', postId).eq('author_user_id', currentUser.id);
-    if (error) throw new Error(error.message);
-    const newImageUri = typeof updateData.image_path === 'string' ? updateData.image_path : (updateData.image_path === null ? null : undefined);
-    const newImageThumbUri = typeof updateData.image_thumb_path === 'string'
-      ? updateData.image_thumb_path
-      : (updateData.image_thumb_path === null ? null : undefined);
-    queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) =>
-      (old ?? []).map((p) => {
-        if (p.id !== postId) return p;
-        const updated = { ...p, body };
-        if (newImageUri !== undefined) updated.imageUri = newImageUri;
-        if (newImageThumbUri !== undefined) updated.imageThumbUri = newImageThumbUri;
-        if (cardColor !== undefined) updated.cardColor = cardColor;
-        if (backText !== undefined) updated.backText = backText;
-        if (filter !== undefined) {
-          const presentation = splitWallPostPresentation(filter);
-          updated.filter = presentation.filter;
-          updated.textFont = presentation.textFont;
-          updated.textSize = presentation.textSize;
-          updated.textEffect = presentation.textEffect;
-          updated.textColor = presentation.textColor;
-        }
-        if (visibility !== undefined) updated.visibility = visibility;
-        if (song !== undefined) updated.song = song;
-        if (videoMuted !== undefined) updated.videoMuted = videoMuted;
-        if (locationName !== undefined) updated.locationName = locationName;
-        if (voice !== undefined) updated.voice = voice;
-        return updated;
-      }),
-    );
+    const pendingEdit = await createPendingMemoryEdit({
+      postId,
+      authorUserId: currentUser.id,
+      updates,
+    });
+    applyPendingMemoryEditsToCache(queryClient, [pendingEdit]);
+    syncPendingMemoryEditToCache(queryClient, pendingEdit).catch((error) => console.warn('[pending memory edits] immediate sync failed:', error));
   }
 
   // ── Mutations: Friend Facts ──────────────────────────────────────────
@@ -2456,9 +2451,10 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ queryKey: giftQueryKeys.all }),
       queryClient.invalidateQueries({ queryKey: movieQueryKeys.requests }),
       queryClient.invalidateQueries({ queryKey: memoryPromptQueryKeys.requests }),
+      currentUser?.id ? queryClient.invalidateQueries({ queryKey: memoryPromptQueryKeys.savedPrompts(currentUser.id) }) : Promise.resolve(),
       queryClient.invalidateQueries({ queryKey: socialQueryKeys.memoryReplies }),
     ]);
-  }, [queryClient]);
+  }, [currentUser?.id, queryClient]);
 
   // ── Provider ─────────────────────────────────────────────────────────
   return (
@@ -2476,6 +2472,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         giftNotes,
         movieReviewRequests,
         memoryPromptRequests,
+        savedMemoryPrompts,
         addFriendByCode,
         getIncomingFriendRequests,
         getOutgoingFriendRequests,
@@ -2506,6 +2503,8 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         completeMemoryPromptRequest: completeMemoryPromptRequestForUser,
         getMemoryPromptRequestsForPair,
         getMemoryPromptRequestById,
+        createSavedMemoryPrompt: createSavedMemoryPromptForUser,
+        deleteSavedMemoryPrompt: deleteSavedMemoryPromptForUser,
         getPrivateNotesForContact,
         getPrivateNoteById,
         getPrivateNoteBlocks,
@@ -2532,6 +2531,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         isPostOnProfileWall,
         addPostToProfileWall,
         removePostFromProfileWall,
+        setProfileWallRepliesHidden,
         getVisiblePostsByAuthor,
         getContactAboutMe,
         isConnected,
@@ -2589,6 +2589,7 @@ function getNotificationEventId(notification: Notification) {
 function mergeSyntheticNotifications(
   persistedNotifications: Notification[],
   friendRequests: FriendRequest[],
+  wallPosts: WallPost[],
   movieReviewRequests: MovieReviewRequest[],
   memoryPromptRequests: MemoryPromptRequest[],
   users: AppUser[],
@@ -2634,6 +2635,24 @@ function mergeSyntheticNotifications(
     }
   }
 
+  for (const post of wallPosts) {
+    if (post.subjectUserId !== currentUserId || post.authorUserId === currentUserId) continue;
+    if (hasWallPostNotification(persistedNotifications, post.id)) continue;
+    const author = users.find((user) => user.id === post.authorUserId);
+    const id = `wall-post-fallback:${post.id}`;
+    syntheticNotifications.push({
+      id,
+      recipientUserId: currentUserId,
+      actorUserId: post.authorUserId,
+      type: 'wall_post',
+      referenceId: post.id,
+      metadata: { wallPostId: post.id, postType: post.postType, source: 'wall_post' },
+      message: `${author?.displayName ?? 'Someone'} added a ${post.postType === 'song' ? 'song memory' : post.postType === 'voice' ? 'voice memory' : post.postType === 'movie' ? 'movie review' : 'memory'} about you`,
+      read: syntheticNotificationReadIds.has(id),
+      createdAt: post.createdAt,
+    });
+  }
+
   for (const request of movieReviewRequests) {
     if (request.recipientUserId !== currentUserId || request.status !== 'pending') continue;
     if (hasMovieReviewRequestNotification(persistedNotifications, request.id)) continue;
@@ -2673,6 +2692,16 @@ function mergeSyntheticNotifications(
   return [...persistedNotifications, ...syntheticNotifications].sort(
     (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
   );
+}
+
+function hasWallPostNotification(notifications: Notification[], postId: string) {
+  return notifications.some((notification) => {
+    if (notification.type !== 'wall_post') return false;
+    const notificationPostId = typeof notification.metadata.wallPostId === 'string'
+      ? notification.metadata.wallPostId
+      : notification.referenceId;
+    return notificationPostId === postId;
+  });
 }
 
 function hasMovieReviewRequestNotification(notifications: Notification[], requestId: string) {

@@ -17,7 +17,6 @@ import { useTheme } from '../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../src/features/theme/themes';
 import { AI_CAPTION_TONES, AiCaptionContext, AiCaptionTone, generateAiCaptions } from '../../../src/lib/aiCaptions';
 import { backOnce, pushOnce } from '../../../src/lib/navigationGuard';
-import { uploadMemoryAudio } from '../../../src/lib/memoryMediaUpload';
 import { normalizeLocationName } from '../../../src/lib/memoryLocation';
 import { getCureProgress } from '../../../src/lib/polaroidCure';
 import { showAiCaptionPaywall } from '../../../src/lib/premiumGates';
@@ -255,12 +254,7 @@ export default function EditMemoryScreen() {
     if (selectedTargets.length === 0) { setError('Keep this memory on at least one wall, or delete it.'); return; }
     setSaving(true);
     try {
-      const voiceForSave = selectedVoice && selectedVoice.uri !== editablePost.voice?.uri
-        ? {
-          ...selectedVoice,
-          uri: await uploadMemoryAudio(selectedVoice.uri, { prefix: `${authenticatedUser.id}/voice` }),
-        }
-        : selectedVoice;
+      const voiceForSave = selectedVoice;
       for (const relatedPost of selectedExistingPosts) {
         await updateWallPost(
           relatedPost.id,

@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { Audio, type AVPlaybackStatus } from 'expo-av';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -40,7 +39,7 @@ export function VoiceMemoryCard({ voice, postId, body, authorName, createdAt, th
   const { colors: appColors, fonts, resolvedMode } = useTheme();
   const colors = themeColors ?? appColors;
   const editBorderColor = editingAccentColor ?? semanticColors.voiceRed;
-  const styles = useMemo(() => makeStyles(colors, fonts, editBorderColor), [colors, editBorderColor, fonts]);
+  const styles = useMemo(() => makeStyles(colors, fonts, editBorderColor, resolvedMode), [colors, editBorderColor, fonts, resolvedMode]);
   const soundRef = useRef<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -230,9 +229,7 @@ export function VoiceMemoryCard({ voice, postId, body, authorName, createdAt, th
 
   const card = isEmbedded ? embeddedCard : (
     <View style={[styles.card, displayMode === 'grid' && styles.cardGrid, isCompact && styles.cardCompact, preview && styles.previewCard, editing && styles.editingCard]}>
-      <BlurView intensity={isCompact ? 28 : 42} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={[styles.cardBlur, isCompact && styles.cardBlurCompact]}>
-        <View pointerEvents="none" style={styles.memoryGlassTint} />
-        <View pointerEvents="none" style={styles.memoryGlassHighlight} />
+      <View style={[styles.cardBlur, isCompact && styles.cardBlurCompact]}>
         {promptContent}
         <View style={[styles.headerRow, isCompact && styles.headerRowCompact]}>
           <View style={[styles.iconBadge, (displayMode === 'grid' || isCompact) && styles.iconBadgeSmall]}>
@@ -277,7 +274,7 @@ export function VoiceMemoryCard({ voice, postId, body, authorName, createdAt, th
         {playbackError && !isCompact ? <Text style={styles.error}>Could not play this voice memory.</Text> : null}
 
         {body && !isCompact ? <Text style={[styles.body, displayMode === 'grid' && styles.bodyGrid]} numberOfLines={displayMode === 'grid' ? 3 : undefined}>{body}</Text> : null}
-      </BlurView>
+      </View>
     </View>
   );
 
@@ -289,7 +286,11 @@ export function VoiceMemoryCard({ voice, postId, body, authorName, createdAt, th
   );
 }
 
-const makeStyles = (colors: ColorTokens, fonts: FontSet, editBorderColor: string) => StyleSheet.create({
+const makeStyles = (colors: ColorTokens, fonts: FontSet, editBorderColor: string, mode: 'light' | 'dark') => {
+  const scrapbookSurface = mode === 'light' ? withAlpha(colors.paperMuted, 0.84) : withAlpha(colors.paper, 0.72);
+  const scrapbookBorder = withAlpha(colors.line, 0.42);
+
+  return StyleSheet.create({
   embeddedCard: {
     width: '100%',
     alignSelf: 'stretch',
@@ -377,15 +378,15 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, editBorderColor: string
     maxWidth: 390,
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: withAlpha(colors.white, 0.18),
-    backgroundColor: withAlpha(colors.paper, 0.56),
+    borderColor: scrapbookBorder,
+    backgroundColor: scrapbookSurface,
     alignSelf: 'stretch',
     overflow: 'hidden',
     shadowColor: colors.black,
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
   },
   cardGrid: {
     width: '100%',
@@ -413,18 +414,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, editBorderColor: string
   },
   editingCard: {
     borderColor: editBorderColor,
-  },
-  memoryGlassTint: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: withAlpha(colors.paper, 0.12),
-  },
-  memoryGlassHighlight: {
-    position: 'absolute',
-    top: 1,
-    left: 18,
-    right: 18,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: withAlpha(colors.white, 0.72),
   },
   headerRow: {
     flexDirection: 'row',
@@ -561,7 +550,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, editBorderColor: string
   pressed: {
     opacity: 0.9,
   },
-});
+  });
+};
 
 function withAlpha(color: string, alpha: number) {
   const match = /^#([0-9a-f]{6})$/i.exec(color);

@@ -31,9 +31,9 @@ import { useTheme } from '../../../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../../../src/features/theme/themes';
 import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
 import type { FontSet } from '../../../../src/theme/typography';
-import { accentPalette, radius, spacing } from '../../../../src/theme/tokens';
+import { accentPalette, colors as baseColors, radius, spacing } from '../../../../src/theme/tokens';
 import { notifyMemoryAuthorRecipientDeveloped } from '../../../../src/lib/memoryRecipientDevelopNotifications';
-import { backOnce, pushOnce, replaceOnce } from '../../../../src/lib/navigationGuard';
+import { backOnce, navigateOnce, pushOnce, replaceOnce } from '../../../../src/lib/navigationGuard';
 import { createPrivateNoteImageUrl, removePrivateNoteImage, uploadPrivateNoteImage } from '../../../../src/lib/privateNoteMedia';
 import { showGalleryPaywall, showGiftNotePaywall, showMediaMemoryPaywall, showPromptPaywall } from '../../../../src/lib/premiumGates';
 import { showPhotoSourceSheet } from '../../../../src/lib/photoSourceSheet';
@@ -114,6 +114,9 @@ export default function ContactProfileScreen() {
   const [activePane, setActivePane] = useState<'profile' | 'notes'>('profile');
   const [memoryWallViewMode, setMemoryWallViewMode] = useState<MemoryWallViewMode>('timeline');
   const [memoryFilter, setMemoryFilter] = useState<MemoryFilter>('all');
+  const [viewedGlowPostIds, setViewedGlowPostIds] = useState<Set<string>>(() => new Set());
+  const [viewedGlowMemoryPromptIds, setViewedGlowMemoryPromptIds] = useState<Set<string>>(() => new Set());
+  const [viewedGlowMoviePromptIds, setViewedGlowMoviePromptIds] = useState<Set<string>>(() => new Set());
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [noteEditorOpen, setNoteEditorOpen] = useState(false);
   const [noteTitleDraft, setNoteTitleDraft] = useState('');
@@ -269,22 +272,26 @@ export default function ContactProfileScreen() {
   const unreadMemoryPromptIds = useMemo(() => getUnreadMemoryPromptIds(notifications), [notifications]);
   const unreadMoviePromptIds = useMemo(() => getUnreadMoviePromptIds(notifications), [notifications]);
   const unreadWallPostIds = useMemo(() => getUnreadWallPostIds(notifications), [notifications]);
+  const highlightedMemoryPromptIds = useMemo(() => mergeStringSets(unreadMemoryPromptIds, viewedGlowMemoryPromptIds), [unreadMemoryPromptIds, viewedGlowMemoryPromptIds]);
+  const highlightedMoviePromptIds = useMemo(() => mergeStringSets(unreadMoviePromptIds, viewedGlowMoviePromptIds), [unreadMoviePromptIds, viewedGlowMoviePromptIds]);
+  const highlightedWallPostIds = useMemo(() => mergeStringSets(unreadWallPostIds, viewedGlowPostIds), [unreadWallPostIds, viewedGlowPostIds]);
+  const unreadIncomingPromptCount = currentUser?.id
+    ? memoryPromptRequests.filter((request) => request.recipientUserId === currentUser.id && unreadMemoryPromptIds.has(request.id)).length
+      + moviePromptRequests.filter((request) => request.recipientUserId === currentUser.id && unreadMoviePromptIds.has(request.id)).length
+    : 0;
   const newMemoryPromptIds = memoryPromptRequests
-    .filter((request) => request.recipientUserId === currentUser?.id && unreadMemoryPromptIds.has(request.id))
+    .filter((request) => request.recipientUserId === currentUser?.id && highlightedMemoryPromptIds.has(request.id))
     .map((request) => request.id);
   const newMoviePromptIds = moviePromptRequests
-    .filter((request) => request.recipientUserId === currentUser?.id && unreadMoviePromptIds.has(request.id))
+    .filter((request) => request.recipientUserId === currentUser?.id && highlightedMoviePromptIds.has(request.id))
     .map((request) => request.id);
-  const newIncomingPromptCount = currentUser?.id
-    ? newMemoryPromptIds.length + newMoviePromptIds.length
-    : 0;
   const newSharedMemoryCount = wallMode === 'shared'
-    ? sharedWallPosts.filter((post) => unreadWallPostIds.has(post.id)).length
+    ? sharedWallPosts.filter((post) => highlightedWallPostIds.has(post.id)).length
     : 0;
   const wallViewIndicators = {
     timeline: newSharedMemoryCount,
     grid: newSharedMemoryCount,
-    prompts: newIncomingPromptCount,
+    prompts: unreadIncomingPromptCount,
   };
   const privateNotes = contact ? getPrivateNotesForContact(contact.id) : [];
   const selectedPrivateNote = selectedNoteId ? getPrivateNoteById(selectedNoteId) : undefined;
@@ -491,6 +498,49 @@ export default function ContactProfileScreen() {
       autoSavePrivateNote();
     };
   }, [selectedPrivateNote?.id, autoSavePrivateNote]);
+
+  useEffect(() => {
+    if (!currentUser?.id || !contact) return undefined;
+
+    const visibleUnreadPostIds = wallPosts
+      .filter((post) => unreadWallPostIds.has(post.id))
+      .map((post) => post.id);
+    const shouldClearPromptNotifications = activePane === 'profile' && memoryWallViewMode === 'prompts';
+    const visibleUnreadMemoryPromptIds = shouldClearPromptNotifications
+      ? memoryPromptRequests
+        .filter((request) => request.recipientUserId === currentUser.id && unreadMemoryPromptIds.has(request.id))
+        .map((request) => request.id)
+      : [];
+    const visibleUnreadMoviePromptIds = shouldClearPromptNotifications
+      ? moviePromptRequests
+        .filter((request) => request.recipientUserId === currentUser.id && unreadMoviePromptIds.has(request.id))
+        .map((request) => request.id)
+      : [];
+    const profileActorId = contact.linkedUserId ?? null;
+    const profileUpdateNotificationIds = notifications
+      .filter((notification) =>
+        !notification.read
+        && notification.type === 'contact_update'
+        && (notification.referenceId === contact.id || (profileActorId ? notification.actorUserId === profileActorId : false)),
+      )
+      .map((notification) => notification.id);
+    const notificationIds = uniqueStrings([
+      ...profileUpdateNotificationIds,
+      ...visibleUnreadPostIds.flatMap((postId) => getNotificationIdsForWallPost(notifications, postId)),
+      ...visibleUnreadMemoryPromptIds.flatMap((requestId) => getNotificationIdsForMemoryPrompt(notifications, requestId)),
+      ...visibleUnreadMoviePromptIds.flatMap((requestId) => getNotificationIdsForMoviePrompt(notifications, requestId)),
+    ]);
+
+    if (notificationIds.length === 0) return undefined;
+    if (visibleUnreadPostIds.length > 0) setViewedGlowPostIds((current) => addStringsToSet(current, visibleUnreadPostIds));
+    if (visibleUnreadMemoryPromptIds.length > 0) setViewedGlowMemoryPromptIds((current) => addStringsToSet(current, visibleUnreadMemoryPromptIds));
+    if (visibleUnreadMoviePromptIds.length > 0) setViewedGlowMoviePromptIds((current) => addStringsToSet(current, visibleUnreadMoviePromptIds));
+
+    const timeout = setTimeout(() => {
+      markProfileNotificationIdsRead(notificationIds, markNotificationRead, markSyntheticRead);
+    }, 900);
+    return () => clearTimeout(timeout);
+  }, [activePane, contact, currentUser?.id, markNotificationRead, markSyntheticRead, memoryPromptRequests, memoryWallViewMode, moviePromptRequests, notifications, unreadMemoryPromptIds, unreadMoviePromptIds, unreadWallPostIds, wallPosts]);
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
 
@@ -1153,7 +1203,7 @@ export default function ContactProfileScreen() {
           </Pressable>
         ) : null}
         <Pressable
-          onPress={() => pushOnce(router, '/(app)/notifications')}
+          onPress={() => navigateOnce(router, '/(app)/notifications')}
           style={styles.notificationButton}
           accessibilityRole="button"
           accessibilityLabel={notificationBadgeCount > 0 ? `Notifications, ${notificationBadgeCount} unread` : 'Notifications'}
@@ -1760,7 +1810,7 @@ export default function ContactProfileScreen() {
             : undefined;
           const referencedPost = post.referencedWallPostId ? getWallPostById(post.referencedWallPostId) ?? null : null;
           const replies = getRepliesForWallPost(post.id);
-          const isNewWallPost = unreadWallPostIds.has(post.id);
+          const isNewWallPost = highlightedWallPostIds.has(post.id);
           const replyItems = replies.map((reply) => ({
             id: reply.id,
             body: reply.body,
@@ -1770,7 +1820,7 @@ export default function ContactProfileScreen() {
           return (
             <View
               key={post.id}
-              style={styles.wallPostWithProfileAction}
+              style={[styles.wallPostWithProfileAction, isNewWallPost && styles.glowRow]}
             >
               <WallPostCard
                 authorName={author?.displayName ?? 'Unknown'}
@@ -2001,6 +2051,19 @@ function getReplyGridExtraHeight(replies: { voice?: unknown }[]) {
   return 34 + visibleReplies.reduce((height, reply) => height + (reply.voice ? 42 : 28), 0) + (replies.length > visibleReplies.length ? 24 : 0);
 }
 
+function mergeStringSets(left: ReadonlySet<string>, right: ReadonlySet<string> | readonly string[]) {
+  return new Set([...left, ...right]);
+}
+
+function addStringsToSet(current: Set<string>, values: readonly string[]) {
+  if (values.every((value) => current.has(value))) return current;
+  return new Set([...current, ...values]);
+}
+
+function uniqueStrings(values: readonly string[]) {
+  return Array.from(new Set(values));
+}
+
 function withAlpha(color: string, alpha: number) {
   const match = /^#([0-9a-f]{6})$/i.exec(color);
   if (!match) return color;
@@ -2113,7 +2176,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgr
       justifyContent: 'center',
     },
     backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
-    topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm },
+    topBar: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     topBarRight: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -2744,7 +2807,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgr
       paddingVertical: 3,
       marginTop: -spacing.xs,
     },
-    newMemoryPillText: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.white, textTransform: 'uppercase' },
+    newMemoryPillText: { fontFamily: fonts.bodyBold, fontSize: 11, color: baseColors.success, textTransform: 'uppercase' },
     glowRow: {
       borderRadius: radius.lg,
       shadowColor: colors.accent,
