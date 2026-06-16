@@ -11,7 +11,7 @@ import { useSocialGraph } from '../../../src/features/social/SocialGraphContext'
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import { backOnce, replaceOnce, shouldPopForBackTarget } from '../../../src/lib/navigationGuard';
 import { uploadMemoryAudio } from '../../../src/lib/memoryMediaUpload';
-import { fetchPopularMovies, searchMovies } from '../../../src/lib/movieSearch';
+import { fetchPopularMovies, normalizeMovieSearchQuery, searchMovies } from '../../../src/lib/movieSearch';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import { radius, spacing } from '../../../src/theme/tokens';
 import type { MovieAttachment, PeopleListItem, VoiceAttachment } from '../../../src/types/domain';
@@ -50,9 +50,12 @@ export default function MovieRequestScreen() {
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [resultsHint, setResultsHint] = useState('');
   const [resultsVisible, setResultsVisible] = useState(true);
   const searchRequestSeq = useRef(0);
-  const skipNextQuerySearch = useRef(false);
+  const selectionLockedRef = useRef(false);
+  const lastNonEmptyResultsRef = useRef<MovieAttachment[]>([]);
+  const popularMoviesRef = useRef<MovieAttachment[]>([]);
 
   function handleBack() {
     if (backTo) {
@@ -67,19 +70,70 @@ export default function MovieRequestScreen() {
   }
 
   async function loadMovieResults(rawQuery: string, requestId: number) {
-    const trimmed = rawQuery.trim();
+    const searchTerm = normalizeMovieSearchQuery(rawQuery);
     setSearching(true);
+    setResultsHint('');
     setError('');
     setResultsVisible(true);
     try {
-      const movies = trimmed ? await searchMovies(trimmed) : await fetchPopularMovies();
+      let movies: MovieAttachment[];
+      if (!searchTerm) {
+        movies = await fetchPopularMovies();
+        if (movies.length > 0) {
+          popularMoviesRef.current = movies;
+          lastNonEmptyResultsRef.current = movies;
+        }
+      } else {
+        movies = await searchMovies(searchTerm);
+      }
+
       if (requestId !== searchRequestSeq.current) return;
-      setResults(movies);
-      if (trimmed && movies.length === 0) setError('No movies found. Try another title.');
-      if (!trimmed && movies.length === 0) setError('Popular movies are still loading. Try tapping search again.');
+
+      if (movies.length > 0) {
+        lastNonEmptyResultsRef.current = movies;
+        setResults(movies);
+        return;
+      }
+
+      if (!searchTerm) {
+        setResults([]);
+        setError('Popular movies are still loading. Try tapping search again.');
+        return;
+      }
+
+      let fallback = lastNonEmptyResultsRef.current;
+      let hint = 'No exact match — showing similar titles.';
+      if (fallback.length === 0) {
+        fallback = popularMoviesRef.current;
+        hint = 'No exact match — showing popular movies.';
+      }
+      if (fallback.length === 0) {
+        const popular = await fetchPopularMovies();
+        if (requestId !== searchRequestSeq.current) return;
+        popularMoviesRef.current = popular;
+        fallback = popular;
+        hint = popular.length > 0 ? 'No exact match — showing popular movies.' : '';
+      }
+
+      if (fallback.length > 0) {
+        setResults(fallback);
+        setResultsHint(hint);
+        return;
+      }
+
+      setResults([]);
     } catch (err) {
       if (requestId !== searchRequestSeq.current) return;
-      setError(err instanceof Error ? err.message : 'Could not load movies.');
+      const message = err instanceof Error ? err.message : 'Could not load movies.';
+      const fallback = lastNonEmptyResultsRef.current.length > 0
+        ? lastNonEmptyResultsRef.current
+        : popularMoviesRef.current;
+      if (fallback.length > 0) {
+        setResults(fallback);
+        setResultsHint('Could not refresh — showing earlier results.');
+        return;
+      }
+      setError(message);
     } finally {
       if (requestId === searchRequestSeq.current) setSearching(false);
     }
@@ -91,10 +145,7 @@ export default function MovieRequestScreen() {
   }, [initialTargetKey, selectedTargetKeys.length]);
 
   useEffect(() => {
-    if (skipNextQuerySearch.current) {
-      skipNextQuerySearch.current = false;
-      return;
-    }
+    if (selectionLockedRef.current) return;
 
     let cancelled = false;
     const requestId = searchRequestSeq.current + 1;
@@ -111,19 +162,26 @@ export default function MovieRequestScreen() {
   }, [query]);
 
   async function handleSearch() {
+    if (selectionLockedRef.current) {
+      setResultsVisible(true);
+      return;
+    }
     const requestId = searchRequestSeq.current + 1;
     searchRequestSeq.current = requestId;
     await loadMovieResults(query, requestId);
   }
 
   function handleQueryChange(value: string) {
+    selectionLockedRef.current = false;
     setQuery(value);
     setSelectedMovie(null);
     setResultsVisible(true);
+    setResultsHint('');
   }
 
   function handleSearchFocus() {
     setResultsVisible(true);
+    if (selectionLockedRef.current) return;
     if (!query.trim() && results.length === 0 && !searching) {
       const requestId = searchRequestSeq.current + 1;
       searchRequestSeq.current = requestId;
@@ -133,11 +191,12 @@ export default function MovieRequestScreen() {
 
   function handleSelectMovie(movie: MovieAttachment) {
     searchRequestSeq.current += 1;
-    skipNextQuerySearch.current = true;
+    selectionLockedRef.current = true;
     setSelectedMovie(movie);
-    setResults([movie]);
-    setQuery(movie.year ? `${movie.title} (${movie.year})` : movie.title);
+    setResults((current) => mergeMovieIntoResults(current, movie));
+    setQuery(formatMovieDisplay(movie));
     setResultsVisible(false);
+    setResultsHint('');
     setError('');
     setSearching(false);
   }
@@ -254,6 +313,7 @@ export default function MovieRequestScreen() {
             <>
               <Text style={styles.movieListLabel}>{query.trim() ? 'Matches' : 'Popular now'}</Text>
               {searching ? <Text style={styles.searchingText}>Loading movies...</Text> : null}
+              {!searching && resultsHint ? <Text style={styles.resultsHint}>{resultsHint}</Text> : null}
               {results.map((movie) => {
                 const active = selectedMovie?.tmdbId === movie.tmdbId;
                 return (
@@ -310,6 +370,15 @@ function getInitials(name: string) {
   return name.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || '?';
 }
 
+function formatMovieDisplay(movie: MovieAttachment) {
+  return movie.year ? `${movie.title} (${movie.year})` : movie.title;
+}
+
+function mergeMovieIntoResults(current: MovieAttachment[], movie: MovieAttachment) {
+  const without = current.filter((entry) => entry.tmdbId !== movie.tmdbId);
+  return [movie, ...without];
+}
+
 const makeStyles = (colors: ReturnType<typeof useTheme>['colors'], fonts: ReturnType<typeof useTheme>['fonts']) => StyleSheet.create({
   backButton: { alignSelf: 'flex-start', minHeight: 38, borderRadius: 999, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
   backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
@@ -336,6 +405,7 @@ const makeStyles = (colors: ReturnType<typeof useTheme>['colors'], fonts: Return
   movieList: { gap: spacing.sm },
   movieListLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase', letterSpacing: 0.6 },
   searchingText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft },
+  resultsHint: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkMuted },
   movieRow: { flexDirection: 'row', gap: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: spacing.sm },
   movieRowActive: { borderColor: colors.accent, backgroundColor: colors.paper },
   poster: { width: 54, height: 80, borderRadius: radius.sm, backgroundColor: colors.canvasAlt },

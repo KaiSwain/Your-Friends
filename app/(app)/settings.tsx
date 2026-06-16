@@ -18,7 +18,7 @@ import type { ThemeMode } from '../../src/features/theme/themes';
 import { featuredThemeNames, legacyThemeNames, themes } from '../../src/features/theme/themes';
 import { backOnce, pushOnce, replaceOnce } from '../../src/lib/navigationGuard';
 import { showErrorAlert } from '../../src/lib/alertUtils';
-import { showProfileBackgroundPaywall } from '../../src/lib/premiumGates';
+import { showCustomThemePaywall, showProfileBackgroundPaywall } from '../../src/lib/premiumGates';
 import { cropProfileBackgroundAsset } from '../../src/lib/profileBackgroundImage';
 import { profileBackgroundImagePickerOptions } from '../../src/lib/imagePickerPresets';
 import { LEGAL_LINKS } from '../../src/lib/legalLinks';
@@ -52,6 +52,7 @@ export default function SettingsScreen() {
   const { hasTheme, isPremium } = usePremium();
   const { backgroundBlur, colors, customTheme, fonts, resolvedMode, themeName, themeMode, setBackgroundBlur, setCustomTheme, setThemeName, setThemeMode } = useTheme();
   const { musicOpenPreference, setMusicOpenPreference } = useMusicPreference();
+  const canUseCustomTheme = hasTheme('custom');
   const availableFeaturedThemeNames = useMemo(() => featuredThemeNames.filter((name) => hasTheme(name)), [hasTheme]);
   const availableLegacyThemeNames = useMemo(() => legacyThemeNames.filter((name) => hasTheme(name)), [hasTheme]);
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
@@ -66,6 +67,11 @@ export default function SettingsScreen() {
   useEffect(() => {
     setDraftCustomTheme(customTheme);
   }, [customTheme]);
+
+  useEffect(() => {
+    if (canUseCustomTheme || themeName !== 'custom') return;
+    setThemeName('yourFriends');
+  }, [canUseCustomTheme, themeName, setThemeName]);
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
   const profileBackgroundUri = profileBgImageUri ?? currentUser.profileBgImagePath ?? null;
@@ -120,7 +126,15 @@ export default function SettingsScreen() {
     setDraftCustomTheme((current) => ({ ...current, ...updates }));
   }
 
+  function openCustomThemePaywall() {
+    showCustomThemePaywall(() => pushOnce(router, '/(app)/store'));
+  }
+
   function commitCustomTheme(updates: Partial<CustomThemeSettings> = {}) {
+    if (!canUseCustomTheme) {
+      openCustomThemePaywall();
+      return;
+    }
     const next = { ...draftCustomTheme, ...updates };
     setDraftCustomTheme(next);
     setCustomTheme(next);
@@ -239,77 +253,92 @@ export default function SettingsScreen() {
             </Pressable>
           ))}
         </View>
-        <View style={[styles.customThemePreview, { backgroundColor: customThemePreviewColors.canvas, borderColor: themeName === 'custom' ? customThemePreviewColors.accent : colors.line }]}>
-          <View style={styles.customThemePreviewCopy}>
-            <Text style={[styles.customThemePreviewTitle, { color: customThemePreviewColors.ink, fontFamily: fontSets[customFontOptions.find((option) => option.value === draftCustomTheme.fontKey)?.sampleTheme ?? 'default'].heading }]}>
-              Your custom theme
-            </Text>
-            <Text style={[styles.customThemePreviewSubtitle, { color: customThemePreviewColors.inkSoft }]}>
-              Tune colors and typography. Text colors are generated for readability.
-            </Text>
-          </View>
-          <View style={[styles.customThemeAccentOrb, { backgroundColor: customThemePreviewColors.accent }]} />
-        </View>
-        <CustomThemeVisualizer
-          colors={colors}
-          fonts={fonts}
-          onSelectAccentHue={(accentHue) => commitCustomTheme({ accentHue })}
-          onSelectBackgroundHue={(backgroundHue) => commitCustomTheme({ backgroundHue })}
-          previewColors={customThemePreviewColors}
-          settings={draftCustomTheme}
-        />
-        <View style={styles.customThemeFontGrid}>
-          {customFontOptions.map((option) => {
-            const active = draftCustomTheme.fontKey === option.value;
-            const optionFonts = fontSets[option.sampleTheme] ?? fontSets.default;
-            return (
-              <Pressable
-                key={option.value}
-                onPress={() => commitCustomTheme({ fontKey: option.value })}
-                style={[styles.customThemeFontPill, active && styles.customThemeFontPillActive]}
-              >
-                <Text style={[styles.customThemeFontLabel, active && styles.customThemeFontLabelActive, { fontFamily: optionFonts.heading }, protectTextFromFontClipping(optionFonts.heading, 13)]}>
-                  {option.label}
+        {canUseCustomTheme ? (
+          <>
+            <View style={[styles.customThemePreview, { backgroundColor: customThemePreviewColors.canvas, borderColor: themeName === 'custom' ? customThemePreviewColors.accent : colors.line }]}>
+              <View style={styles.customThemePreviewCopy}>
+                <Text style={[styles.customThemePreviewTitle, { color: customThemePreviewColors.ink, fontFamily: fontSets[customFontOptions.find((option) => option.value === draftCustomTheme.fontKey)?.sampleTheme ?? 'default'].heading }]}>
+                  Your custom theme
                 </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <Pressable onPress={() => setShowCustomThemeFineTune((open) => !open)} style={styles.fineTuneToggle} accessibilityRole="button">
-          <Text style={styles.fineTuneToggleLabel}>Fine tune</Text>
-          <Ionicons name={showCustomThemeFineTune ? 'chevron-up' : 'chevron-down'} size={16} color={colors.inkSoft} />
-        </Pressable>
-        {showCustomThemeFineTune ? (
-          <View style={styles.customThemeSliderPanel}>
-            <CustomThemeSlider
+                <Text style={[styles.customThemePreviewSubtitle, { color: customThemePreviewColors.inkSoft }]}>
+                  Tune colors and typography. Text colors are generated for readability.
+                </Text>
+              </View>
+              <View style={[styles.customThemeAccentOrb, { backgroundColor: customThemePreviewColors.accent }]} />
+            </View>
+            <CustomThemeVisualizer
               colors={colors}
               fonts={fonts}
-              label="Accent color"
-              maximumValue={359}
-              value={draftCustomTheme.accentHue}
-              onSlidingComplete={(accentHue) => commitCustomTheme({ accentHue })}
-              onValueChange={(accentHue) => previewCustomTheme({ accentHue })}
+              onSelectAccentHue={(accentHue) => commitCustomTheme({ accentHue })}
+              onSelectBackgroundHue={(backgroundHue) => commitCustomTheme({ backgroundHue })}
+              previewColors={customThemePreviewColors}
+              settings={draftCustomTheme}
             />
-            <CustomThemeSlider
-              colors={colors}
-              fonts={fonts}
-              label="Background hue"
-              maximumValue={359}
-              value={draftCustomTheme.backgroundHue}
-              onSlidingComplete={(backgroundHue) => commitCustomTheme({ backgroundHue })}
-              onValueChange={(backgroundHue) => previewCustomTheme({ backgroundHue })}
-            />
-            <CustomThemeSlider
-              colors={colors}
-              fonts={fonts}
-              label="Background intensity"
-              maximumValue={100}
-              value={draftCustomTheme.backgroundIntensity}
-              onSlidingComplete={(backgroundIntensity) => commitCustomTheme({ backgroundIntensity })}
-              onValueChange={(backgroundIntensity) => previewCustomTheme({ backgroundIntensity })}
-            />
-          </View>
-        ) : null}
+            <View style={styles.customThemeFontGrid}>
+              {customFontOptions.map((option) => {
+                const active = draftCustomTheme.fontKey === option.value;
+                const optionFonts = fontSets[option.sampleTheme] ?? fontSets.default;
+                return (
+                  <Pressable
+                    key={option.value}
+                    onPress={() => commitCustomTheme({ fontKey: option.value })}
+                    style={[styles.customThemeFontPill, active && styles.customThemeFontPillActive]}
+                  >
+                    <Text style={[styles.customThemeFontLabel, active && styles.customThemeFontLabelActive, { fontFamily: optionFonts.heading }, protectTextFromFontClipping(optionFonts.heading, 13)]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Pressable onPress={() => setShowCustomThemeFineTune((open) => !open)} style={styles.fineTuneToggle} accessibilityRole="button">
+              <Text style={styles.fineTuneToggleLabel}>Fine tune</Text>
+              <Ionicons name={showCustomThemeFineTune ? 'chevron-up' : 'chevron-down'} size={16} color={colors.inkSoft} />
+            </Pressable>
+            {showCustomThemeFineTune ? (
+              <View style={styles.customThemeSliderPanel}>
+                <CustomThemeSlider
+                  colors={colors}
+                  fonts={fonts}
+                  label="Accent color"
+                  maximumValue={359}
+                  value={draftCustomTheme.accentHue}
+                  onSlidingComplete={(accentHue) => commitCustomTheme({ accentHue })}
+                  onValueChange={(accentHue) => previewCustomTheme({ accentHue })}
+                />
+                <CustomThemeSlider
+                  colors={colors}
+                  fonts={fonts}
+                  label="Background hue"
+                  maximumValue={359}
+                  value={draftCustomTheme.backgroundHue}
+                  onSlidingComplete={(backgroundHue) => commitCustomTheme({ backgroundHue })}
+                  onValueChange={(backgroundHue) => previewCustomTheme({ backgroundHue })}
+                />
+                <CustomThemeSlider
+                  colors={colors}
+                  fonts={fonts}
+                  label="Background intensity"
+                  maximumValue={100}
+                  value={draftCustomTheme.backgroundIntensity}
+                  onSlidingComplete={(backgroundIntensity) => commitCustomTheme({ backgroundIntensity })}
+                  onValueChange={(backgroundIntensity) => previewCustomTheme({ backgroundIntensity })}
+                />
+              </View>
+            ) : null}
+          </>
+        ) : (
+          <Pressable onPress={openCustomThemePaywall} style={styles.customThemeLockedCard} accessibilityRole="button">
+            <View style={styles.customThemeLockedHeader}>
+              <Ionicons name="lock-closed-outline" size={18} color={colors.accent} />
+              <Text style={styles.customThemeLockedTitle}>Custom theme</Text>
+            </View>
+            <Text style={styles.customThemeLockedBody}>
+              Build your own palette with custom accent, background, and fonts. Included with Premium.
+            </Text>
+            <Text style={styles.customThemeLockedCta}>Unlock Premium</Text>
+          </Pressable>
+        )}
         {availableLegacyThemeNames.length > 0 ? (
           <>
             <Text style={styles.themeGroupLabel}>Advanced / legacy themes</Text>
@@ -639,6 +668,18 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     themeSwatch: { width: 10, height: 10, borderRadius: 5, marginRight: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.15)' },
     themeTileLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.ink },
     themeTileLabelActive: { color: colors.white },
+    customThemeLockedCard: {
+      gap: spacing.sm,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
+      padding: spacing.md,
+    },
+    customThemeLockedHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+    customThemeLockedTitle: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
+    customThemeLockedBody: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.inkSoft },
+    customThemeLockedCta: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.accent },
     customThemePreview: {
       flexDirection: 'row',
       alignItems: 'center',

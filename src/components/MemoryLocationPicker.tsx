@@ -188,7 +188,7 @@ export function MemoryLocationPicker({ value, onChange }: MemoryLocationPickerPr
         value={searchText}
         onChangeText={setSearchText}
         placeholder="Search for another place"
-        placeholderTextColor={colors.ink}
+        placeholderTextColor={colors.inkMuted}
         autoCapitalize="words"
         autoCorrect={false}
         maxLength={80}
@@ -312,7 +312,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderRadius: radius.md,
       borderWidth: 1,
       borderColor: colors.line,
-      backgroundColor: colors.white,
+      backgroundColor: colors.canvas,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
       fontFamily: fonts.body,

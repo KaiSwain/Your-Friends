@@ -21,6 +21,7 @@ import { PendingMemorySyncProvider } from '../src/features/memories/PendingMemor
 import { MusicPreferenceProvider } from '../src/features/music/MusicPreferenceContext';
 import { OnboardingProvider } from '../src/features/onboarding/OnboardingContext';
 import { PremiumProvider } from '../src/features/premium/PremiumContext';
+import { PremiumThemeGuard } from '../src/features/premium/PremiumThemeGuard';
 import { ThemeProvider, useTheme } from '../src/features/theme/ThemeContext';
 import { initializeMobileAds } from '../src/lib/initializeMobileAds';
 import { asyncStoragePersister, queryClient } from '../src/lib/queryClient';
@@ -89,9 +90,11 @@ export default function RootLayout() {
             <AuthProvider>
               <OnboardingProvider>
                 <PremiumProvider>
-                  <PendingMemorySyncProvider>
-                    <ThemedStack />
-                  </PendingMemorySyncProvider>
+                  <PremiumThemeGuard>
+                    <PendingMemorySyncProvider>
+                      <ThemedStack />
+                    </PendingMemorySyncProvider>
+                  </PremiumThemeGuard>
                 </PremiumProvider>
               </OnboardingProvider>
             </AuthProvider>

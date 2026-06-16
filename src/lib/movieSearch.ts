@@ -1,8 +1,11 @@
 import { supabase } from './supabase';
 import type { MovieAttachment } from '../types/domain';
+import { normalizeMovieSearchQuery } from './movieSearchQuery';
+
+export { normalizeMovieSearchQuery } from './movieSearchQuery';
 
 export async function searchMovies(query: string): Promise<MovieAttachment[]> {
-  const trimmed = query.trim();
+  const trimmed = normalizeMovieSearchQuery(query);
   if (!trimmed) return [];
 
   const { data, error } = await supabase.functions.invoke('search-movies', {

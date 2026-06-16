@@ -434,7 +434,7 @@ export default function StoreScreen() {
       {!isPremium ? (
       <SectionCard eyebrow="Sponsored" title="Free plan support">
         <Text style={styles.bodyText}>
-          Ads help support continued development on the free plan. Premium keeps the app ad-free and focused on your people.
+          Ads help support continued development on the free plan. Tap the close button on a banner to hide it for a few hours. Premium keeps the app ad-free.
         </Text>
         <StoreBannerAd />
       </SectionCard>

@@ -52,6 +52,26 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
   const seenCalendarShareEventsRef = useRef<Set<string> | null>(null);
   const calendarSharesSeededRef = useRef(false);
   const seededUserIdRef = useRef<string | null>(null);
+  // Canonical keys for toasts already shown this session, so the synthetic
+  // (friend request / calendar share) paths and the persisted-notification
+  // diff path can never toast the same logical event twice.
+  const shownDedupKeysRef = useRef<Set<string>>(new Set());
+
+  // Single chokepoint for enqueueing toasts. Drops any item whose canonical
+  // dedup key has already been shown, regardless of which code path produced it.
+  const enqueueToasts = useCallback((items: Notification[]) => {
+    if (items.length === 0) return;
+    const shown = shownDedupKeysRef.current;
+    const deduped: Notification[] = [];
+    for (const item of items) {
+      const key = getNotificationDedupKey(item);
+      if (shown.has(key)) continue;
+      shown.add(key);
+      deduped.push(item);
+    }
+    if (deduped.length === 0) return;
+    setQueue((prev) => [...prev, ...deduped]);
+  }, []);
 
   useEffect(() => {
     const userId = currentUser?.id ?? null;
@@ -63,14 +83,14 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
     friendRequestsSeededRef.current = false;
     seenCalendarShareEventsRef.current = null;
     calendarSharesSeededRef.current = false;
+    shownDedupKeysRef.current = new Set();
     setQueue([]);
     setActive(null);
   }, [currentUser?.id]);
 
   useEffect(() => {
     const unsubscribe = subscribeMemoryDevelopedNotifications(({ postId, message }) => {
-      setQueue((prev) => [
-        ...prev,
+      enqueueToasts([
         {
           id: `memory-developed:${postId}:${Date.now()}`,
           recipientUserId: currentUser?.id ?? '',
@@ -87,7 +107,7 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
     return () => {
       unsubscribe();
     };
-  }, [currentUser?.id]);
+  }, [currentUser?.id, enqueueToasts]);
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -96,6 +116,7 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
     // so we don't miss brand-new notifications that arrive on the very first
     // render. An empty array still counts as a valid seed.
     seenIdsRef.current = new Set(notifications.map((n) => n.id));
+    for (const n of notifications) shownDedupKeysRef.current.add(getNotificationDedupKey(n));
     seededRef.current = true;
   }, [currentUser?.id, notifications]);
 
@@ -114,8 +135,8 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
     if (fresh.length === 0) return;
     // Newest first
     fresh.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    setQueue((prev) => [...prev, ...fresh]);
-  }, [notifications, currentUser?.id]);
+    enqueueToasts(fresh);
+  }, [notifications, currentUser?.id, enqueueToasts]);
 
   // Friend requests should toast even if the separate notifications table
   // insert is blocked by RLS. The Add Friend page remains the source of truth.
@@ -180,8 +201,8 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
     }
     if (fresh.length === 0) return;
     fresh.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    setQueue((prev) => [...prev, ...fresh]);
-  }, [currentUser?.id, friendRequests, getUserById, notifications]);
+    enqueueToasts(fresh);
+  }, [currentUser?.id, friendRequests, getUserById, notifications, enqueueToasts]);
 
   // Shared calendar events should toast from the calendar share itself, even if
   // the persisted notification is delayed or blocked.
@@ -227,8 +248,8 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
     }
     if (fresh.length === 0) return;
     fresh.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    setQueue((prev) => [...prev, ...fresh]);
-  }, [currentUser?.id, events, getUserById]);
+    enqueueToasts(fresh);
+  }, [currentUser?.id, events, getUserById, enqueueToasts]);
 
   // Animation values for the active toast.
   const translateY = useRef(new Animated.Value(-120)).current;
@@ -359,8 +380,8 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
   );
 
   const show = useCallback((n: Notification) => {
-    setQueue((prev) => [...prev, n]);
-  }, []);
+    enqueueToasts([n]);
+  }, [enqueueToasts]);
 
   const showLocal = useCallback(
     (message: string, options?: { referenceId?: string | null; metadata?: Notification['metadata'] }) => {
@@ -442,6 +463,22 @@ export function useInAppNotification(): InAppNotificationContextValue {
   const ctx = useContext(InAppNotificationContext);
   if (!ctx) throw new Error('useInAppNotification must be used inside InAppNotificationProvider');
   return ctx;
+}
+
+// Canonical key shared by the synthetic (friend request / calendar share) toast
+// paths and the persisted-notification diff path so the same logical event is
+// only ever toasted once, regardless of which arrives first.
+function getNotificationDedupKey(n: Notification): string {
+  if (n.type === 'friend_request') {
+    const requestId = typeof n.metadata.friendRequestId === 'string' ? n.metadata.friendRequestId : n.referenceId;
+    const action = typeof n.metadata.action === 'string' ? n.metadata.action : 'requested';
+    if (requestId) return `friend-request:${action}:${requestId}`;
+  }
+  if (n.type === 'calendar_event') {
+    const shareId = typeof n.metadata.shareId === 'string' ? n.metadata.shareId : null;
+    if (shareId) return `calendar-share:${shareId}`;
+  }
+  return `id:${n.id}`;
 }
 
 function hasFriendRequestNotification(notifications: Notification[], requestId: string, action: 'requested' | 'accepted') {

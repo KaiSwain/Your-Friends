@@ -3,6 +3,7 @@ import { createContext, ReactNode, useContext, useEffect, useState } from 'react
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Linking from 'expo-linking';
 
+import { clearInvalidAuthSession, isInvalidRefreshTokenError, recoverStoredAuthSession } from '../../lib/authSessionRecovery';
 import { supabase } from '../../lib/supabase';
 import { AppUser } from '../../types/domain';
 import { createFriendCode } from '../../lib/friendCode';
@@ -455,9 +456,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Sign the current user out and clear the local profile cache.
   async function signOut() {
-    // Ask Supabase Auth to end the current session.
-    await supabase.auth.signOut();
-    // Immediately clear the local current user profile.
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      if (!isInvalidRefreshTokenError(error)) throw error;
+      await clearInvalidAuthSession();
+    }
+    setSession(null);
     setCurrentUser(null);
   } // End signOut after clearing auth-related local state.
 

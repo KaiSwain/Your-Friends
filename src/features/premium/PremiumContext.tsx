@@ -64,7 +64,7 @@ export const PREMIUM_PLANS: PremiumPlan[] = [
 export const PREMIUM_SUBSCRIPTION_PRICE = '$29.99 / year';
 export { QR_PREMIUM_ACTIVE_GRANT_LIMIT, QR_PREMIUM_GRANT_DAYS, QR_PREMIUM_GRANT_LABEL };
 
-const FREE_THEMES: ReadonlySet<ThemeName> = new Set<ThemeName>(['default', 'yourFriends', 'custom']);
+const FREE_THEMES: ReadonlySet<ThemeName> = new Set<ThemeName>(['default', 'yourFriends']);
 const IAP_UNAVAILABLE_MESSAGE = 'Premium purchases require a development build or TestFlight build.';
 
 function isIapNativeRuntime() {

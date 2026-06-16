@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 
 import { CURE_DURATION_MS } from './polaroidCure';
@@ -42,8 +43,11 @@ export async function notifyMemoryDevelopedNow(postId: string) {
   const message = 'Your memory card has developed!';
   for (const listener of listeners) listener({ postId, message });
 
-  // This is mainly a fallback for the moment the app transitions away.
-  // Foreground display is handled by the in-app toast subscriber.
+  // Foreground display is handled by the in-app toast subscriber above, so only
+  // schedule the OS fallback when the app is not active. Otherwise a quick
+  // background transition could surface a second (OS) notification on top of the
+  // toast the user just saw.
+  if (AppState.currentState === 'active') return;
   await Notifications.scheduleNotificationAsync({
     content: getMemoryDevelopedNotificationContent(postId),
     trigger: {

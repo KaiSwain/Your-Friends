@@ -6,6 +6,7 @@ import { Alert, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInpu
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
+import { DateDropdownPicker } from '../../../src/components/DateDropdownPicker';
 import { MemoryLocationPicker } from '../../../src/components/MemoryLocationPicker';
 import { MemoryPromptPicker } from '../../../src/components/MemoryPromptPicker';
 import { MemoryTextStylePicker } from '../../../src/components/MemoryTextStylePicker';
@@ -68,6 +69,12 @@ export default function AddMemoryScreen() {
   const [videoMuted, setVideoMuted] = useState(false);
   const [photoSource, setPhotoSource] = useState<PhotoSource>(null);
   const [memoryDateInput, setMemoryDateInput] = useState(() => getDateKey(new Date()));
+  // Memories happen in the past, so let the date dropdown reach years back and cap at today.
+  const memoryDateMinDate = useMemo(() => {
+    const earliest = new Date();
+    earliest.setFullYear(earliest.getFullYear() - 30);
+    return earliest;
+  }, []);
   const [selectedSong, setSelectedSong] = useState<SongAttachment | null>(null);
   const [selectedVoice, setSelectedVoice] = useState<VoiceAttachment | null>(null);
   const [composerMode, setComposerMode] = useState<'text' | 'voice'>('text');
@@ -88,6 +95,57 @@ export default function AddMemoryScreen() {
   const [captionSuggestions, setCaptionSuggestions] = useState<string[]>([]);
   const [isGeneratingCaption, setIsGeneratingCaption] = useState(false);
   const [selectedTargetKeys, setSelectedTargetKeys] = useState<string[]>(() => parseInitialTargetKeys(targetKeysParam, subjectId, subjectType));
+  // Extra styling options stay hidden behind toggles to keep the composer clean.
+  const [enableLocation, setEnableLocation] = useState(false);
+  const [enableTextStyle, setEnableTextStyle] = useState(false);
+  const [enableCardColor, setEnableCardColor] = useState(false);
+
+  const toggleLocation = useCallback((on: boolean) => {
+    setEnableLocation(on);
+    if (!on) setLocationNameInput('');
+  }, []);
+  const toggleTextStyle = useCallback((on: boolean) => {
+    setEnableTextStyle(on);
+    if (!on) {
+      setTextFont(defaultWallPostTextFont);
+      setTextSize(defaultWallPostTextSize);
+      setTextEffect(defaultWallPostTextEffect);
+      setTextColor(defaultWallPostTextColor);
+    }
+  }, []);
+  const toggleCardColor = useCallback((on: boolean) => {
+    setEnableCardColor(on);
+    if (!on) setCardColor(null);
+  }, []);
+  const [enableSong, setEnableSong] = useState(false);
+  const toggleSong = useCallback((on: boolean) => {
+    setEnableSong(on);
+    if (!on) {
+      setSelectedSong(null);
+      setSongPreviewRequestKey(null);
+    }
+  }, []);
+  const [enableSongNote, setEnableSongNote] = useState(false);
+  const toggleSongNote = useCallback((on: boolean) => {
+    setEnableSongNote(on);
+    if (!on) {
+      setBody('');
+      setSelectedVoice(null);
+    }
+  }, []);
+  const [enableMediaCaption, setEnableMediaCaption] = useState(false);
+  const toggleMediaCaption = useCallback((on: boolean) => {
+    setEnableMediaCaption(on);
+    if (!on) {
+      setBody('');
+      setSelectedVoice(null);
+    }
+  }, []);
+  const [enableMemoryDate, setEnableMemoryDate] = useState(false);
+  const toggleMemoryDate = useCallback((on: boolean) => {
+    setEnableMemoryDate(on);
+    if (!on) setMemoryDateInput(getDateKey(new Date()));
+  }, []);
 
   const onFlip = useCallback((back: boolean) => setShowingBack(back), []);
 
@@ -373,7 +431,7 @@ export default function AddMemoryScreen() {
       authorName: authenticatedUser.displayName,
       subjectName: contact?.nickname || contact?.displayName || user?.displayName || subjectName || 'someone',
       subjectType: primarySubjectType ?? 'contact',
-      memoryDate: canChooseMemoryDate ? (parseMemoryDateInput(memoryDateInput) ?? new Date().toISOString()) : new Date().toISOString(),
+      memoryDate: useCustomMemoryDate ? (parseMemoryDateInput(memoryDateInput) ?? new Date().toISOString()) : new Date().toISOString(),
       draftCaption: body.trim() || null,
       relationshipTags: contact?.tags ?? [],
       personalityTraits: [...(contact?.personalityTraits ?? []), ...(user?.profilePersonalityTraits ?? [])],
@@ -434,8 +492,8 @@ export default function AddMemoryScreen() {
     }
     if (isMediaMemory && !imageUri && !videoUri) { setError('Add a photo or video.'); return; }
     if (selectedTargets.length === 0) { setError('Choose at least one wall.'); return; }
-    const selectedMemoryDate = canChooseMemoryDate ? parseMemoryDateInput(memoryDateInput) : null;
-    if (canChooseMemoryDate && !selectedMemoryDate) { setError('Choose a valid memory date like 2026-05-15.'); return; }
+    const selectedMemoryDate = useCustomMemoryDate ? parseMemoryDateInput(memoryDateInput) : null;
+    if (useCustomMemoryDate && !selectedMemoryDate) { setError('Choose a valid memory date like 2026-05-15.'); return; }
     if (selectedMemoryDate && isFutureDateKey(selectedMemoryDate)) { setError('Memory dates cannot be in the future.'); return; }
     setError('');
     const postType = isSongMemory ? 'song' : isMediaMemory ? 'media' : isPolaroidMemory && imageUri ? 'polaroid' : 'note';
@@ -538,10 +596,12 @@ export default function AddMemoryScreen() {
       : 'What do you want to remember?';
   const showSongPicker = memoryKind === 'song' || memoryKind === 'note' || (memoryKind === 'photo' && !!imageUri);
   const showMemoryPromptPicker = memoryKind === 'note' && composerMode === 'text' && !showingBack && !hasPolaroidInState;
-  const showComposer = !isMediaChoiceAwaitingSource;
-  const canChooseMemoryDate = isPremium
-    && ((memoryKind === 'photo' && !!imageUri && photoSource === 'gallery' && !videoUri)
-      || (memoryKind === 'media' && !!(imageUri || videoUri) && photoSource === 'gallery'));
+  const showComposer = !isMediaChoiceAwaitingSource
+    && (memoryKind !== 'song' || enableSongNote)
+    && (!isMediaMemory || enableMediaCaption);
+  // Premium users can backdate any memory; the picker stays hidden behind a slider.
+  const canChooseMemoryDate = isPremium;
+  const useCustomMemoryDate = canChooseMemoryDate && enableMemoryDate;
 
   return (
     <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={addMemory.isPending ? 'Saving…' : 'Save Memory'} onPress={handleSave} disabled={addMemory.isPending} />}>
@@ -593,9 +653,32 @@ export default function AddMemoryScreen() {
         />
       </View>
 
-      <MemoryLocationPicker value={locationNameInput} onChange={setLocationNameInput} />
+      <View style={styles.visibilityRow}>
+        <Text style={styles.visibilityLabel}>Add location</Text>
+        <Switch
+          value={enableLocation}
+          onValueChange={toggleLocation}
+          trackColor={{ false: colors.line, true: colors.accent }}
+          thumbColor={colors.white}
+        />
+      </View>
+      {enableLocation ? (
+        <MemoryLocationPicker value={locationNameInput} onChange={setLocationNameInput} />
+      ) : null}
 
       {canChooseMemoryDate ? (
+        <View style={styles.visibilityRow}>
+          <Text style={styles.visibilityLabel}>Change date</Text>
+          <Switch
+            value={enableMemoryDate}
+            onValueChange={toggleMemoryDate}
+            trackColor={{ false: colors.line, true: colors.accent }}
+            thumbColor={colors.white}
+          />
+        </View>
+      ) : null}
+
+      {useCustomMemoryDate ? (
       <View style={styles.memoryDateSection}>
         <View style={styles.memoryDateHeader}>
           <View style={styles.memoryDateCopy}>
@@ -619,14 +702,12 @@ export default function AddMemoryScreen() {
             );
           })}
         </View>
-        <TextInput
+        <DateDropdownPicker
+          label="Memory date"
           value={memoryDateInput}
-          onChangeText={setMemoryDateInput}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={colors.ink}
-          autoCapitalize="none"
-          keyboardType="numbers-and-punctuation"
-          style={styles.memoryDateInput}
+          onChange={setMemoryDateInput}
+          minDate={memoryDateMinDate}
+          maxYearOffset={30}
         />
       </View>
       ) : null}
@@ -635,12 +716,28 @@ export default function AddMemoryScreen() {
         <MemoryPromptPicker prompts={memoryPrompts} onSelectPrompt={applyMemoryPrompt} />
       ) : null}
 
-      {showSongPicker ? (
+      {showSongPicker && memoryKind !== 'song' ? (
+        <View style={styles.visibilityRow}>
+          <Text style={styles.visibilityLabel}>Add a song</Text>
+          <Switch
+            value={enableSong}
+            onValueChange={toggleSong}
+            trackColor={{ false: colors.line, true: colors.accent }}
+            thumbColor={colors.white}
+          />
+        </View>
+      ) : null}
+
+      {showSongPicker && (memoryKind === 'song' || enableSong) ? (
         <SongSearchPicker
           selectedSong={selectedSong}
           onSelect={(song) => {
             setSelectedSong(song);
-            if (memoryKind === 'note' || memoryKind === 'song') setMemoryKind('song');
+            if (memoryKind === 'note' || memoryKind === 'song') {
+              setMemoryKind('song');
+              // Keep any note the user already wrote visible after it becomes a song memory.
+              if (body.trim() || selectedVoice) setEnableSongNote(true);
+            }
             setSongPreviewRequestKey(`${song.provider}:${song.providerTrackId}:${Date.now()}`);
             if (memoryKind === 'song') {
               setImageUri(null);
@@ -677,7 +774,7 @@ export default function AddMemoryScreen() {
               imageUri: memoryKind === 'song' ? null : imageUri,
               videoUri: memoryKind === 'song' ? null : videoUri,
               videoMuted: memoryKind === 'song' ? false : !!videoUri && videoMuted,
-              memoryDate: canChooseMemoryDate ? parseMemoryDateInput(memoryDateInput) : null,
+              memoryDate: useCustomMemoryDate ? parseMemoryDateInput(memoryDateInput) : null,
               createdAt: new Date().toISOString(),
               filter: isPolaroidMemory && imageUri ? filter : null,
               textFont: previewPostType === 'note' ? textFont : null,
@@ -703,6 +800,30 @@ export default function AddMemoryScreen() {
           ) : null}
         </View>
       )}
+
+      {memoryKind === 'song' ? (
+        <View style={styles.visibilityRow}>
+          <Text style={styles.visibilityLabel}>Add a note</Text>
+          <Switch
+            value={enableSongNote}
+            onValueChange={toggleSongNote}
+            trackColor={{ false: colors.line, true: colors.accent }}
+            thumbColor={colors.white}
+          />
+        </View>
+      ) : null}
+
+      {isMediaMemory && hasMediaAsset ? (
+        <View style={styles.visibilityRow}>
+          <Text style={styles.visibilityLabel}>Add a caption</Text>
+          <Switch
+            value={enableMediaCaption}
+            onValueChange={toggleMediaCaption}
+            trackColor={{ false: colors.line, true: colors.accent }}
+            thumbColor={colors.white}
+          />
+        </View>
+      ) : null}
 
       {showComposer ? (
         <View style={styles.inputSection}>
@@ -767,16 +888,29 @@ export default function AddMemoryScreen() {
       ) : null}
 
       {memoryKind === 'note' && !imageUri && !videoUri ? (
-        <MemoryTextStylePicker
-          selectedFont={textFont}
-          selectedSize={textSize}
-          selectedEffect={textEffect}
-          selectedColor={textColor}
-          onSelectFont={setTextFont}
-          onSelectSize={setTextSize}
-          onSelectEffect={setTextEffect}
-          onSelectColor={setTextColor}
-        />
+        <>
+          <View style={styles.visibilityRow}>
+            <Text style={styles.visibilityLabel}>Customize text style</Text>
+            <Switch
+              value={enableTextStyle}
+              onValueChange={toggleTextStyle}
+              trackColor={{ false: colors.line, true: colors.accent }}
+              thumbColor={colors.white}
+            />
+          </View>
+          {enableTextStyle ? (
+            <MemoryTextStylePicker
+              selectedFont={textFont}
+              selectedSize={textSize}
+              selectedEffect={textEffect}
+              selectedColor={textColor}
+              onSelectFont={setTextFont}
+              onSelectSize={setTextSize}
+              onSelectEffect={setTextEffect}
+              onSelectColor={setTextColor}
+            />
+          ) : null}
+        </>
       ) : null}
 
       {memoryKind === 'media' ? <View style={styles.photoRow}>
@@ -876,6 +1010,18 @@ export default function AddMemoryScreen() {
       )}
 
       {isPolaroidMemory && imageUri && (
+        <View style={styles.visibilityRow}>
+          <Text style={styles.visibilityLabel}>Customize card color</Text>
+          <Switch
+            value={enableCardColor}
+            onValueChange={toggleCardColor}
+            trackColor={{ false: colors.line, true: colors.accent }}
+            thumbColor={colors.white}
+          />
+        </View>
+      )}
+
+      {isPolaroidMemory && imageUri && enableCardColor && (
       <View style={styles.colorSection}>
         <Text style={styles.colorLabel}>Card Color</Text>
         <View style={styles.colorRow}>
@@ -916,7 +1062,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     subtitle: { fontFamily: fonts.body, fontSize: 15, color: colors.inkSoft },
     targetSection: { gap: spacing.xs },
     targetHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    targetLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+    targetLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
     targetCount: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
     targetScroll: { gap: spacing.sm, paddingVertical: 2 },
     targetChip: {
@@ -979,7 +1125,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     memoryDateHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
     memoryDateCopy: { flex: 1, gap: 3 },
-    memoryDateLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+    memoryDateLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
     memoryDateHint: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkSoft },
     premiumBadge: {
       flexDirection: 'row' as const,
@@ -1003,17 +1149,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     memoryDateChipActive: { borderColor: colors.accent, backgroundColor: colors.paper },
     memoryDateChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.ink },
     memoryDateChipTextActive: { fontFamily: fonts.bodyBold, color: colors.accent },
-    memoryDateInput: {
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.line,
-      backgroundColor: colors.paperMuted,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm,
-      fontFamily: fonts.bodyMedium,
-      fontSize: 14,
-      color: colors.ink,
-    },
     memoryDateLockedButton: {
       alignSelf: 'flex-start',
       borderRadius: radius.pill,
@@ -1026,7 +1161,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     memoryDateLockedText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.accent },
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
     colorSection: { gap: spacing.xs },
-    colorLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+    colorLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
     colorRow: { flexDirection: 'row' as const, gap: spacing.sm, flexWrap: 'wrap' as const },
     colorSwatch: {
       width: 36, height: 36, borderRadius: 18, borderWidth: 2, alignItems: 'center' as const, justifyContent: 'center' as const,
@@ -1034,8 +1169,8 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     colorSwatchLocked: { opacity: 0.45 },
     colorCheck: { fontSize: 14, fontFamily: fonts.bodyBold, color: colors.ink },
     previewSection: { gap: spacing.sm, alignItems: 'center' as const },
-    previewLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
-    previewHint: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted, textAlign: 'center' as const },
+    previewLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase', letterSpacing: 0.5 },
+    previewHint: { fontFamily: fonts.body, fontSize: 12, color: colors.ink, textAlign: 'center' as const },
     inputSection: { gap: spacing.xs },
     inputHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
     inputLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkSoft, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
@@ -1076,7 +1211,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     captionSuggestionActive: { borderColor: colors.accent, backgroundColor: colors.paper },
     captionSuggestionText: { fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 19, color: colors.ink },
     filterSection: { gap: spacing.xs },
-    filterLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+    filterLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
     filterScroll: { gap: spacing.sm },
     filterChip: { alignItems: 'center' as const, gap: 4 },
     filterChipActive: {},
@@ -1092,7 +1227,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       gap: spacing.sm,
       paddingVertical: spacing.xs,
     },
-    dateStampLabel: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.inkMuted },
+    dateStampLabel: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.ink },
     dateStampLabelActive: { color: colors.ink },
   });
 

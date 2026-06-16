@@ -84,6 +84,41 @@ export default function EditMemoryScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Secondary options stay behind sliders to keep the editor clean. Defaults
+  // reflect the existing memory so nothing already set gets hidden or wiped.
+  const [enableLocation, setEnableLocation] = useState(() => !!post?.locationName);
+  const [enableTextStyle, setEnableTextStyle] = useState(() => hasCustomTextStyle(post));
+  const [enableSong, setEnableSong] = useState(() => !!post?.song);
+  const [enableSongNote, setEnableSongNote] = useState(() => !!(post?.body?.trim() || post?.voice));
+
+  const toggleLocation = useCallback((on: boolean) => {
+    setEnableLocation(on);
+    if (!on) setLocationNameInput('');
+  }, []);
+  const toggleTextStyle = useCallback((on: boolean) => {
+    setEnableTextStyle(on);
+    if (!on) {
+      setTextFont(defaultWallPostTextFont);
+      setTextSize(defaultWallPostTextSize);
+      setTextEffect(defaultWallPostTextEffect);
+      setTextColor(defaultWallPostTextColor);
+    }
+  }, []);
+  const toggleSong = useCallback((on: boolean) => {
+    setEnableSong(on);
+    if (!on) {
+      setSelectedSong(null);
+      setSongPreviewRequestKey(null);
+    }
+  }, []);
+  const toggleSongNote = useCallback((on: boolean) => {
+    setEnableSongNote(on);
+    if (!on) {
+      setBody('');
+      setSelectedVoice(null);
+    }
+  }, []);
+
   // Live developing progress
   const [now, setNow] = useState(Date.now());
   const developing = post?.imageUri ? getCureProgress(post.createdAt, now) < 1 : false;
@@ -104,6 +139,10 @@ export default function EditMemoryScreen() {
     setSongPreviewRequestKey(null);
     setVideoMuted(post?.videoMuted ?? false);
     setLocationNameInput(post?.locationName ?? '');
+    setEnableLocation(!!post?.locationName);
+    setEnableTextStyle(hasCustomTextStyle(post));
+    setEnableSong(!!post?.song);
+    setEnableSongNote(!!(post?.body?.trim() || post?.voice));
   }, [post?.id, post?.locationName]);
 
   useEffect(() => {
@@ -167,6 +206,8 @@ export default function EditMemoryScreen() {
   const isVoicePost = editablePost.postType === 'voice';
   const isNotePost = editablePost.postType === 'note' && !editablePost.imageUri;
   const canEditAttachedSong = !isSongPost && !isVoicePost;
+  // For song memories the note/voice composer hides behind a slider, matching the add screen.
+  const showComposer = !isSongPost || enableSongNote;
 
   function buildCaptionContext(): AiCaptionContext {
     const linkedContact = editablePost.subjectUserId
@@ -421,7 +462,18 @@ export default function EditMemoryScreen() {
         />
       </View>
 
-      <MemoryLocationPicker value={locationNameInput} onChange={setLocationNameInput} />
+      <View style={styles.visibilityRow}>
+        <Text style={styles.visibilityLabel}>Add location</Text>
+        <Switch
+          value={enableLocation}
+          onValueChange={toggleLocation}
+          trackColor={{ false: colors.line, true: colors.accent }}
+          thumbColor={colors.white}
+        />
+      </View>
+      {enableLocation ? (
+        <MemoryLocationPicker value={locationNameInput} onChange={setLocationNameInput} />
+      ) : null}
 
       {(body.trim() || backText.trim() || post.imageUri || selectedVoice || (canEditAttachedSong ? selectedSong : post.song)) && (
         <View style={styles.previewSection}>
@@ -465,20 +517,46 @@ export default function EditMemoryScreen() {
       ) : null}
 
       {canEditAttachedSong ? (
-        <SongSearchPicker
-          selectedSong={selectedSong}
-          onSelect={(song) => {
-            setSelectedSong(song);
-            setSongPreviewRequestKey(`${song.provider}:${song.providerTrackId}:${Date.now()}`);
-            setError('');
-          }}
-          onRemove={() => {
-            setSelectedSong(null);
-            setSongPreviewRequestKey(null);
-          }}
-        />
+        <>
+          <View style={styles.visibilityRow}>
+            <Text style={styles.visibilityLabel}>Add a song</Text>
+            <Switch
+              value={enableSong}
+              onValueChange={toggleSong}
+              trackColor={{ false: colors.line, true: colors.accent }}
+              thumbColor={colors.white}
+            />
+          </View>
+          {enableSong ? (
+            <SongSearchPicker
+              selectedSong={selectedSong}
+              onSelect={(song) => {
+                setSelectedSong(song);
+                setSongPreviewRequestKey(`${song.provider}:${song.providerTrackId}:${Date.now()}`);
+                setError('');
+              }}
+              onRemove={() => {
+                setSelectedSong(null);
+                setSongPreviewRequestKey(null);
+              }}
+            />
+          ) : null}
+        </>
       ) : null}
 
+      {isSongPost ? (
+        <View style={styles.visibilityRow}>
+          <Text style={styles.visibilityLabel}>Add a note</Text>
+          <Switch
+            value={enableSongNote}
+            onValueChange={toggleSongNote}
+            trackColor={{ false: colors.line, true: colors.accent }}
+            thumbColor={colors.white}
+          />
+        </View>
+      ) : null}
+
+      {showComposer ? (
       <View style={styles.inputSection}>
         <View style={styles.inputHeaderRow}>
           <Text style={styles.inputLabel}>{inputLabel}</Text>
@@ -536,18 +614,32 @@ export default function EditMemoryScreen() {
           </View>
         ) : null}
       </View>
+      ) : null}
 
       {isNotePost ? (
-        <MemoryTextStylePicker
-          selectedFont={textFont}
-          selectedSize={textSize}
-          selectedEffect={textEffect}
-          selectedColor={textColor}
-          onSelectFont={setTextFont}
-          onSelectSize={setTextSize}
-          onSelectEffect={setTextEffect}
-          onSelectColor={setTextColor}
-        />
+        <>
+          <View style={styles.visibilityRow}>
+            <Text style={styles.visibilityLabel}>Customize text style</Text>
+            <Switch
+              value={enableTextStyle}
+              onValueChange={toggleTextStyle}
+              trackColor={{ false: colors.line, true: colors.accent }}
+              thumbColor={colors.white}
+            />
+          </View>
+          {enableTextStyle ? (
+            <MemoryTextStylePicker
+              selectedFont={textFont}
+              selectedSize={textSize}
+              selectedEffect={textEffect}
+              selectedColor={textColor}
+              onSelectFont={setTextFont}
+              onSelectSize={setTextSize}
+              onSelectEffect={setTextEffect}
+              onSelectColor={setTextColor}
+            />
+          ) : null}
+        </>
       ) : null}
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -572,7 +664,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     error: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.error },
     inputSection: { gap: spacing.xs },
     inputHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
-    inputLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+    inputLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
     aiButton: {
       flexDirection: 'row' as const,
       alignItems: 'center' as const,
@@ -610,7 +702,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     captionSuggestionActive: { borderColor: colors.accent, backgroundColor: colors.paper },
     captionSuggestionText: { fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 19, color: colors.ink },
     previewSection: { gap: spacing.sm, alignItems: 'center' as const },
-    previewHint: { fontFamily: fonts.body, fontSize: 12, color: colors.inkMuted, textAlign: 'center' as const },
+    previewHint: { fontFamily: fonts.body, fontSize: 12, color: colors.ink, textAlign: 'center' as const },
     developingRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: spacing.xs },
     developingHint: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft, textAlign: 'center' as const },
     videoAudioRow: {
@@ -629,7 +721,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     videoAudioHint: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkSoft },
     targetSection: { gap: spacing.xs },
     targetHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    targetLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+    targetLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.ink, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
     targetCount: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
     targetScroll: { gap: spacing.sm, paddingVertical: 2 },
     targetChip: {
@@ -670,7 +762,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     targetChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.inkSoft },
     targetChipTextActive: { fontFamily: fonts.bodyBold, color: colors.ink },
     targetChipTextRemoved: { color: colors.error },
-    targetStatusText: { marginTop: 1, fontFamily: fonts.body, fontSize: 10, color: colors.inkMuted },
+    targetStatusText: { marginTop: 1, fontFamily: fonts.body, fontSize: 10, color: colors.ink },
     targetStatusTextRemoved: { color: colors.error },
     visibilityRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const },
     visibilityLabel: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.ink },
@@ -832,4 +924,12 @@ function buildAdditionalWallPostInput({
 
 function getInitials(value: string) {
   return value.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('');
+}
+
+function hasCustomTextStyle(post: WallPost | undefined) {
+  if (!post) return false;
+  return (!!post.textFont && post.textFont !== defaultWallPostTextFont)
+    || (!!post.textSize && post.textSize !== defaultWallPostTextSize)
+    || (!!post.textEffect && post.textEffect !== defaultWallPostTextEffect)
+    || (!!post.textColor && post.textColor !== defaultWallPostTextColor);
 }

@@ -103,3 +103,14 @@ export function showProfileBackgroundPaywall(onUpgrade: () => void) {
     ],
   );
 }
+
+export function showCustomThemePaywall(onUpgrade: () => void) {
+  Alert.alert(
+    'Premium feature',
+    'Custom themes are part of Premium. Unlock everything to build your own colors, fonts, and readable palette.',
+    [
+      { text: 'Not now', style: 'cancel' },
+      { text: 'Unlock Premium', onPress: onUpgrade },
+    ],
+  );
+}

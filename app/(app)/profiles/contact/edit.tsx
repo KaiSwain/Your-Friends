@@ -20,7 +20,7 @@ import { featuredThemeNames, legacyThemeNames, themes } from '../../../../src/fe
 import { createCustomThemePair, decodeProfileCustomTheme, encodeProfileCustomTheme, isProfileCustomTheme, DEFAULT_CUSTOM_THEME_SETTINGS, type CustomThemeFontKey, type CustomThemeSettings } from '../../../../src/features/theme/customTheme';
 import { onCapturedUri } from '../../../../src/lib/cameraHandoff';
 import { backOnce, pushOnce } from '../../../../src/lib/navigationGuard';
-import { showGalleryPaywall, showProfileBackgroundPaywall } from '../../../../src/lib/premiumGates';
+import { showCustomThemePaywall, showGalleryPaywall, showProfileBackgroundPaywall } from '../../../../src/lib/premiumGates';
 import { cropProfileBackgroundAsset } from '../../../../src/lib/profileBackgroundImage';
 import { isCardColorUnlocked, getCardColorLockMessage } from '../../../../src/features/theme/cardColorUnlocks';
 import { MemoryProfileCardPreview } from '../../../../src/components/profile';
@@ -88,7 +88,8 @@ export default function EditContactProfileScreen() {
   const params = useLocalSearchParams<{ contactId: string | string[]; capturedUri: string | string[]; capturedVideoUri: string | string[] }>();
   const { currentUser } = useAuth();
   const { getContactById, getPeopleListForUser, updateContact } = useSocialGraph();
-  const { purchasedThemes, isPremium } = usePremium();
+  const { purchasedThemes, isPremium, hasTheme } = usePremium();
+  const canUseCustomTheme = hasTheme('custom');
   const unlockedThemeSet = useMemo(() => new Set<string>(['default', 'yourFriends', ...purchasedThemes]), [purchasedThemes]);
   const unlockedFeaturedThemeNames = useMemo(
     () => featuredThemeNames.filter((name) => name !== 'default' && unlockedThemeSet.has(name)),
@@ -233,6 +234,10 @@ export default function EditContactProfileScreen() {
   }
 
   function selectCustomProfileTheme() {
+    if (!canUseCustomTheme) {
+      showCustomThemePaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
     setProfileBg(encodeProfileCustomTheme(profileCustomTheme));
   }
 
@@ -241,6 +246,10 @@ export default function EditContactProfileScreen() {
   }
 
   function commitProfileCustomTheme(updates: Partial<CustomThemeSettings> = {}) {
+    if (!canUseCustomTheme) {
+      showCustomThemePaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
     const next = { ...profileCustomTheme, ...updates };
     setProfileCustomTheme(next);
     setProfileBg(encodeProfileCustomTheme(next));
@@ -455,6 +464,19 @@ export default function EditContactProfileScreen() {
               </Pressable>
             );
           })}
+          {!canUseCustomTheme ? (
+            <Pressable
+              onPress={() => showCustomThemePaywall(() => pushOnce(router, '/(app)/store'))}
+              style={[styles.themeSwatch, styles.themeSwatchLocked]}
+              accessibilityRole="button"
+              accessibilityLabel="Unlock custom profile theme"
+            >
+              <View style={[styles.themeSwatchInner, { backgroundColor: colors.canvasAlt, borderColor: colors.line }]}>
+                <Ionicons name="lock-closed-outline" size={16} color={colors.inkSoft} />
+              </View>
+              <Text style={styles.bgSwatchLabel}>Custom</Text>
+            </Pressable>
+          ) : null}
         </View>
         {unlockedLegacyThemeNames.length > 0 ? (
           <>
@@ -476,7 +498,7 @@ export default function EditContactProfileScreen() {
             </View>
           </>
         ) : null}
-        {customProfileThemeSelected ? (
+        {customProfileThemeSelected && canUseCustomTheme ? (
           <View style={styles.customThemeEditor}>
             <Text style={styles.fieldHint}>Custom profile themes stay attached to this person only.</Text>
             <View style={[styles.customThemePreview, { backgroundColor: profileCustomThemeColors.canvas, borderColor: profileCustomThemeColors.accent }]}>
@@ -1026,6 +1048,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       opacity: 0.7,
     },
     themeSwatchLegacy: { opacity: 0.58 },
+    themeSwatchLocked: { opacity: 0.92 },
     themeSwatchSelected: { opacity: 1 },
     themeSwatchInner: {
       width: 52,
