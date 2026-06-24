@@ -1,5 +1,6 @@
 import { Session } from '@supabase/supabase-js';
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Linking from 'expo-linking';
 
@@ -88,6 +89,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Return a cleanup function so React unsubscribes when the provider unmounts.
     return () => subscription.unsubscribe();
   }, []); // Run this setup effect only once when the provider mounts.
+
+  // Best-effort activity ping so the admin dashboard can compute DAU/WAU/MAU.
+  // Stamps last_seen_at on sign-in and each time the app returns to foreground.
+  useEffect(() => {
+    const signedInUserId = session?.user?.id;
+    if (!signedInUserId) return;
+
+    const ping = () => {
+      void supabase.rpc('touch_last_seen').then(({ error }) => {
+        if (error) console.warn('[activity] last_seen update failed:', error.message);
+      });
+    };
+
+    ping();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') ping();
+    });
+    return () => subscription.remove();
+  }, [session?.user?.id]);
 
   // Load a profile row from the `profiles` table and map it into the app's user shape.
   async function fetchProfile(userId: string) {

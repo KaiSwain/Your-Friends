@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
     messages: [
       {
         role: 'system',
-        content: 'You write short captions for a private friendship memory app. The photo is the source of concrete visual details. Relationship tags are a high-priority emotional lens: captions should clearly fit the relationship type without feeling like a tag list. Favor crisp wit, specific observations, and clever relationship-aware wording over generic sentimental captions. Witty means charming and observant, not random jokes. Never mention AI, prompts, private notes, metadata, or tags as metadata. Keep each caption under 90 characters. Avoid crude sexual content. Return JSON only in this shape: {"captions":["caption"]}.',
+        content: 'You write short, original captions for a private friendship memory app. The photo is the primary source of inspiration: read the concrete visual details and the moment it captures, then write something specific and creative. Relationship context is light background only — let it gently inform the warmth or humor, but never build the caption around it and never name or list relationship tags. Favor fresh, specific, clever lines over generic sentimental ones. Witty means charming and observant, not random jokes. Never mention AI, prompts, private notes, metadata, or tags. Keep each caption under 90 characters. Avoid crude sexual content. Return JSON only in this shape: {"captions":["caption"]}.',
       },
       {
         role: 'user',
@@ -86,8 +86,16 @@ Deno.serve(async (req) => {
     ],
   };
 
-  openAiBody[usesCompletionTokens ? 'max_completion_tokens' : 'max_tokens'] = usesCompletionTokens ? 900 : 160;
-  if (!usesCompletionTokens) openAiBody.temperature = 0.9;
+  if (usesCompletionTokens) {
+    // GPT-5 / o-series spend max_completion_tokens on hidden reasoning before any
+    // visible output, so a tight budget yields an empty message. Give plenty of
+    // room and keep reasoning effort minimal — caption writing needs none.
+    openAiBody.max_completion_tokens = 2000;
+    openAiBody.reasoning_effort = /^gpt-5/i.test(model) ? 'minimal' : 'low';
+  } else {
+    openAiBody.max_tokens = 160;
+    openAiBody.temperature = 1.05;
+  }
 
   const openAiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -123,19 +131,16 @@ function buildPrompt(context: Record<string, unknown>, tone: string) {
   const relationshipTags = Array.isArray(context.relationshipTags) ? context.relationshipTags : [];
   return [
     `Tone: ${tone}. ${toneInstructions[tone]}`,
-    'Write 3 distinct caption options for this photo memory.',
-    'First, look closely at the visible photo: people, faces, pose, setting, action, colors, mood, objects, and composition.',
-    'Make the captions feel grounded in what is visibly happening in the photo.',
-    'Make the captions sharper and more memorable than generic lines like "making memories" or "good times".',
-    'Use small clever twists, observational humor, or understated punchlines when the selected tone allows it.',
-    `Relationship tags, high priority: ${relationshipTags.length > 0 ? relationshipTags.join(', ') : 'none'}.`,
-    'Use those relationship tags strongly to choose the emotional angle, closeness, wording, and humor level.',
-    'A New Friend caption should feel different from Best Friend, Partner, Sibling, Coworker, or Online Friend.',
-    'It is okay to naturally say friend, best friend, partner, sibling, or similar if the tag supports it, but do not output hashtags or a literal tag list.',
-    'Treat personality traits, facts, notes, and previous memories as secondary flavor only.',
-    'Use personality traits to tune the voice and emotional angle without naming them like labels.',
-    'Do not force facts or traits into the captions unless they clearly match the visible photo.',
-    'Do not invent specific visual details that are not visible in the photo.',
+    'Write 3 distinct, creative caption options for this photo memory.',
+    'Start from the photo: people, faces, expressions, pose, setting, action, colors, mood, objects, and composition.',
+    'Ground every caption in what is actually visible, and make each one feel specific to this exact moment.',
+    'Be original and surprising — avoid clichés like "making memories", "good times", or "squad goals".',
+    'Vary the three options in angle and structure so they do not read like rewrites of each other.',
+    `Relationship context (light background only — do not center the caption on this, do not name it): ${relationshipTags.length > 0 ? relationshipTags.join(', ') : 'none'}.`,
+    'Let the relationship gently shape the warmth and humor level, but the photo and the moment drive the caption.',
+    'Personality traits, facts, notes, and previous memories are optional flavor — only use them if they clearly match what is visible.',
+    'Do not force facts or traits into the captions, and do not invent visual details that are not in the photo.',
+    'Do not output hashtags or a literal tag list.',
     `Secondary context JSON: ${JSON.stringify(context)}`,
   ].join('\n');
 }

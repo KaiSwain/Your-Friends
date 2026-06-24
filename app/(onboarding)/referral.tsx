@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -29,12 +29,15 @@ const OPTIONS: ReferralOption[] = [
 
 export default function OnboardingReferralScreen() {
   const router = useRouter();
-  const { setReferralSource, referralSource } = useOnboarding();
+  const { setReferralSource, referralSource, tourReplay } = useOnboarding();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
   const [selected, setSelected] = useState<ReferralSource | null>(referralSource);
   const [busy, setBusy] = useState(false);
+
+  // When re-watching the tour from Help, skip the "how did you hear" survey.
+  if (tourReplay) return <Redirect href="/(onboarding)/calendar-intro" />;
 
   async function handleNext() {
     if (!selected || busy) return;

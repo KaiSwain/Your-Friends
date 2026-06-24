@@ -1,0 +1,8 @@
+/.well-known/apple-app-site-association
+  Content-Type: application/json
+
+/admin/*
+  X-Robots-Tag: noindex, nofollow
+
+/admin
+  X-Robots-Tag: noindex, nofollow

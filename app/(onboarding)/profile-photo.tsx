@@ -1,16 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../src/components/ActionButton';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
+import { useOnboarding } from '../../src/features/onboarding/OnboardingContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
 import { cropAvatarImage } from '../../src/lib/avatarImage';
-import { onCapturedUri } from '../../src/lib/cameraHandoff';
 import { avatarImagePickerOptions } from '../../src/lib/imagePickerPresets';
 import { pushOnce } from '../../src/lib/navigationGuard';
 import type { FontSet } from '../../src/theme/typography';
@@ -19,17 +19,15 @@ import { radius, spacing } from '../../src/theme/tokens';
 export default function OnboardingProfilePhotoScreen() {
   const router = useRouter();
   const { currentUser, updateProfile } = useAuth();
+  const { tourReplay } = useOnboarding();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
   const [localUri, setLocalUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => onCapturedUri((uri) => {
-    cropAvatarImage(uri)
-      .then(setLocalUri)
-      .catch(() => setLocalUri(uri));
-  }), []);
+  // Re-watching the tour from Help is informational only — don't ask for a photo.
+  if (tourReplay) return <Redirect href="/(onboarding)/features" />;
 
   const initials = (currentUser?.displayName ?? '?')
     .trim()
@@ -39,8 +37,24 @@ export default function OnboardingProfilePhotoScreen() {
     .join('')
     .toUpperCase();
 
-  function takePhoto() {
-    pushOnce(router, { pathname: '/(app)/camera', params: { handoff: '1', avatarHandoff: '1' } });
+  async function takePhoto() {
+    // Use the OS camera directly. Routing to the in-app `/(app)/camera` screen
+    // would enter the (app) group, whose layout guard redirects users who
+    // haven't finished onboarding back to the start of the walkthrough.
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = await ImagePicker.launchCameraAsync(avatarImagePickerOptions);
+    } catch {
+      Alert.alert('Camera unavailable', 'We could not open your camera. Try again or choose from your gallery.');
+      return;
+    }
+    if (!result.canceled && result.assets[0]?.uri) {
+      try {
+        setLocalUri(await cropAvatarImage(result.assets[0].uri));
+      } catch {
+        setLocalUri(result.assets[0].uri);
+      }
+    }
   }
 
   async function chooseFromGallery() {

@@ -4,6 +4,7 @@ import { CreateWallPostInput, WallPost } from '../types/domain';
 import { compareWallPostsByMemoryDateDesc } from '../lib/memoryDate';
 import { buildOptimisticWallPosts, createPendingMemory, type PendingMemoryRecord } from '../features/memories/pendingMemoryQueue';
 import { syncPendingMemoryToCache } from '../features/memories/pendingMemorySync';
+import { recordReviewableMoment } from '../lib/appReview';
 
 interface AddMemoryInput {
   authorUserId: string;
@@ -32,6 +33,9 @@ export function useAddMemory() {
     onSuccess: ({ record, posts }) => {
       queryClient.setQueryData<WallPost[]>(socialQueryKeys.wallPosts, (old) => [...posts, ...(old ?? [])].sort(compareWallPostsByMemoryDateDesc));
       syncPendingMemoryToCache(queryClient, record).catch((error) => console.warn('[pending memories] immediate sync failed:', error));
+      // Creating a memory is a core delightful moment; count it toward asking
+      // for an App Store review (gated + spaced out inside the helper).
+      void recordReviewableMoment();
     },
   });
 }

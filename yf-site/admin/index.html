@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Your Friends — Admin</title>
+    <style>
+      :root {
+        --bg: #0f0d18;
+        --panel: #1b1726;
+        --panel-2: #241e33;
+        --ink: #f5f1ea;
+        --ink-soft: #b6acc4;
+        --ink-muted: #7e7690;
+        --accent: #8e72f2;
+        --line: #2e2740;
+        --good: #4ec77f;
+        --warn: #e0a23a;
+        --bad: #e26d6d;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: var(--accent); }
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 20px 80px; }
+      header.bar {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 16px; margin-bottom: 24px; flex-wrap: wrap;
+      }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+      .brand .mark {
+        width: 30px; height: 30px; border-radius: 9px; background: var(--accent);
+        display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 13px;
+      }
+      .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      button {
+        font: inherit; font-weight: 600; cursor: pointer; border: 0; border-radius: 10px;
+        padding: 10px 16px; background: var(--accent); color: #fff;
+      }
+      button.ghost { background: var(--panel-2); color: var(--ink); }
+      button:disabled { opacity: 0.5; cursor: default; }
+      input {
+        font: inherit; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line);
+        background: var(--panel-2); color: var(--ink); width: 100%;
+      }
+      input::placeholder { color: var(--ink-muted); }
+      .muted { color: var(--ink-muted); font-size: 13px; }
+      .center { min-height: 70vh; display: grid; place-items: center; }
+      .card-login { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 28px; width: 360px; max-width: 100%; }
+      .card-login h1 { font-size: 20px; margin: 0 0 4px; }
+      .field { margin-top: 14px; }
+      .err { color: var(--bad); font-size: 13px; margin-top: 12px; min-height: 16px; }
+
+      .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+      .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+      .stat .label { color: var(--ink-soft); font-size: 12.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+      .stat .value { font-size: 28px; font-weight: 800; margin-top: 6px; line-height: 1.05; }
+      .stat .sub { color: var(--ink-muted); font-size: 12.5px; margin-top: 4px; }
+
+      section.block { margin-top: 30px; }
+      section.block > h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); margin: 0 0 12px; }
+
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
+      th { color: var(--ink-muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+      td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+      .chart { display: flex; align-items: flex-end; gap: 3px; height: 140px; padding-top: 10px; }
+      .chart .bar { flex: 1; background: linear-gradient(180deg, var(--accent), #5b46a8); border-radius: 3px 3px 0 0; min-height: 2px; position: relative; }
+      .chart .bar:hover::after {
+        content: attr(data-label); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+        background: #000; color: #fff; font-size: 11px; padding: 3px 6px; border-radius: 5px; white-space: nowrap; margin-bottom: 4px;
+      }
+      .chart-axis { display: flex; justify-content: space-between; color: var(--ink-muted); font-size: 11px; margin-top: 6px; }
+      .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+      .pill.good { background: rgba(78,199,127,.16); color: var(--good); }
+      .pill.warn { background: rgba(224,162,58,.16); color: var(--warn); }
+
+      .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+      .toggle-group { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; }
+      .toggle-group button { background: transparent; color: var(--ink-soft); padding: 7px 13px; border-radius: 7px; font-size: 13px; font-weight: 600; }
+      .toggle-group button.active { background: var(--accent); color: #fff; }
+      .chart .bar.zero { background: var(--line); }
+      .bar-labels { display: flex; gap: 3px; margin-top: 6px; }
+      .bar-labels span { flex: 1; text-align: center; color: var(--ink-muted); font-size: 10.5px; overflow: hidden; white-space: nowrap; }
+      .delta { font-weight: 700; }
+      .delta.up { color: var(--good); }
+      .delta.down { color: var(--bad); }
+      .delta.flat { color: var(--ink-muted); }
+      .two-col { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+      @media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <!-- Login / setup view -->
+    <div id="loginView" class="center">
+      <div class="card-login">
+        <div class="brand" style="margin-bottom:18px"><span class="mark">YF</span> Admin</div>
+
+        <div id="setupBlock" class="hidden">
+          <h1>One-time setup</h1>
+          <p class="muted">Paste your Supabase publishable (anon) key. It's safe in the browser — access is protected by row-level security and admin checks. Stored locally on this device only.</p>
+          <div class="field"><input id="pkInput" type="text" placeholder="sb_publishable_..." autocomplete="off"></div>
+          <div class="field"><button id="savePkBtn" style="width:100%">Save key</button></div>
+        </div>
+
+        <form id="loginForm" class="hidden">
+          <h1>Sign in</h1>
+          <p class="muted">Team admin access only.</p>
+          <div class="field"><input id="email" type="email" placeholder="Email" autocomplete="username"></div>
+          <div class="field"><input id="password" type="password" placeholder="Password" autocomplete="current-password"></div>
+          <div class="field"><button id="loginBtn" type="submit" style="width:100%">Sign in</button></div>
+          <div id="loginErr" class="err"></div>
+          <p class="muted" style="margin-top:8px"><a href="#" id="resetPkLink">Use a different Supabase key</a></p>
+        </form>
+      </div>
+    </div>
+
+    <!-- Dashboard view -->
+    <div id="dashView" class="wrap hidden">
+      <header class="bar">
+        <div class="brand"><span class="mark">YF</span> Admin Dashboard</div>
+        <div class="row">
+          <span id="generatedAt" class="muted"></span>
+          <button id="refreshBtn" class="ghost">Refresh</button>
+          <button id="signOutBtn" class="ghost">Sign out</button>
+        </div>
+      </header>
+      <div id="dashErr" class="err"></div>
+      <div id="dashBody"></div>
+    </div>
+
+    <script type="module">
+      import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+      const SUPABASE_URL = 'https://lxprnlhffkdsecfrvodv.supabase.co';
+      const PK_STORAGE_KEY = 'yf_admin_supabase_pk';
+
+      const el = (id) => document.getElementById(id);
+      const loginView = el('loginView');
+      const dashView = el('dashView');
+      const setupBlock = el('setupBlock');
+      const loginForm = el('loginForm');
+
+      let supabase = null;
+
+      function getPublishableKey() {
+        return (localStorage.getItem(PK_STORAGE_KEY) || '').trim();
+      }
+
+      function initClient() {
+        const key = getPublishableKey();
+        if (!key) return false;
+        supabase = createClient(SUPABASE_URL, key, {
+          auth: { persistSession: true, autoRefreshToken: true },
+        });
+        return true;
+      }
+
+      function showSetup() {
+        loginView.classList.remove('hidden');
+        dashView.classList.add('hidden');
+        setupBlock.classList.remove('hidden');
+        loginForm.classList.add('hidden');
+      }
+      function showLogin() {
+        loginView.classList.remove('hidden');
+        dashView.classList.add('hidden');
+        setupBlock.classList.add('hidden');
+        loginForm.classList.remove('hidden');
+      }
+      function showDash() {
+        loginView.classList.add('hidden');
+        dashView.classList.remove('hidden');
+      }
+
+      // ---- Setup (publishable key) ----
+      el('savePkBtn').addEventListener('click', () => {
+        const v = el('pkInput').value.trim();
+        if (!v) return;
+        localStorage.setItem(PK_STORAGE_KEY, v);
+        if (initClient()) start();
+      });
+      el('resetPkLink').addEventListener('click', (e) => {
+        e.preventDefault();
+        localStorage.removeItem(PK_STORAGE_KEY);
+        showSetup();
+      });
+
+      // ---- Login ----
+      loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        el('loginErr').textContent = '';
+        el('loginBtn').disabled = true;
+        try {
+          const { error } = await supabase.auth.signInWithPassword({
+            email: el('email').value.trim().toLowerCase(),
+            password: el('password').value,
+          });
+          if (error) { el('loginErr').textContent = error.message; return; }
+          await loadDashboard();
+        } catch (err) {
+          el('loginErr').textContent = err.message || 'Sign in failed.';
+        } finally {
+          el('loginBtn').disabled = false;
+        }
+      });
+
+      el('signOutBtn').addEventListener('click', async () => {
+        await supabase.auth.signOut();
+        showLogin();
+      });
+      el('refreshBtn').addEventListener('click', loadDashboard);
+
+      // ---- Dashboard data + render ----
+      async function loadDashboard() {
+        el('dashErr').textContent = '';
+        showDash();
+        el('dashBody').innerHTML = '<p class="muted">Loading stats…</p>';
+        const { data, error } = await supabase.rpc('admin_app_stats');
+        if (error) {
+          if (/not authorized/i.test(error.message)) {
+            el('dashBody').innerHTML = '';
+            el('dashErr').textContent = 'This account is not a team admin. Ask for is_team_admin = true on your profile.';
+          } else {
+            el('dashBody').innerHTML = '';
+            el('dashErr').textContent = error.message;
+          }
+          return;
+        }
+        render(data);
+      }
+
+      const n = (v) => (v == null ? '0' : Number(v).toLocaleString());
+      const pct = (v) => (v == null ? '—' : `${v}%`);
+      const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+      function statCard(label, value, sub) {
+        return `<div class="stat"><div class="label">${esc(label)}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+      }
+
+      function objTable(obj, cols = ['Type', 'Count']) {
+        const entries = Object.entries(obj || {});
+        if (!entries.length) return '<p class="muted">No data yet.</p>';
+        const rows = entries
+          .sort((a, b) => Number(b[1]) - Number(a[1]))
+          .map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${n(v)}</td></tr>`)
+          .join('');
+        return `<table><thead><tr><th>${esc(cols[0])}</th><th class="num">${esc(cols[1])}</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      // ---- Growth explorer ----
+      let STATS = null;
+      let growthMetric = 'signups';
+      let growthGran = 'day';
+      const GRAN_LABEL = { day: 'Last 30 days', month: 'Last 12 months', year: 'By year' };
+
+      function fmtBucket(iso, gran) {
+        const d = new Date(iso);
+        if (gran === 'year') return String(d.getFullYear());
+        if (gran === 'month') return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+        return d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+      }
+
+      function growthChart(series, gran) {
+        const arr = series || [];
+        const max = Math.max(1, ...arr.map((d) => Number(d.count)));
+        const bars = arr.map((d) => {
+          const c = Number(d.count);
+          const h = (c / max) * 100;
+          return `<div class="bar ${c === 0 ? 'zero' : ''}" style="height:${Math.max(h, c === 0 ? 0 : 2)}%" data-label="${esc(fmtBucket(d.bucket, gran))}: ${n(c)}"></div>`;
+        }).join('');
+        // For sparse views (month/year) label every bar; for daily show first/last only.
+        let labels = '';
+        if (arr.length <= 12) {
+          labels = `<div class="bar-labels">${arr.map((d) => `<span>${esc(fmtBucket(d.bucket, gran))}</span>`).join('')}</div>`;
+        } else {
+          const first = arr.length ? fmtBucket(arr[0].bucket, gran) : '';
+          const last = arr.length ? fmtBucket(arr[arr.length - 1].bucket, gran) : '';
+          labels = `<div class="chart-axis"><span>${esc(first)}</span><span>${esc(last)}</span></div>`;
+        }
+        return `<div class="chart">${bars}</div>${labels}`;
+      }
+
+      function deltaHtml(cur, prev) {
+        cur = Number(cur || 0); prev = Number(prev || 0);
+        if (prev === 0 && cur === 0) return '<span class="delta flat">—</span>';
+        if (prev === 0) return '<span class="delta up">▲ new</span>';
+        const change = Math.round(((cur - prev) / prev) * 100);
+        if (change === 0) return '<span class="delta flat">0%</span>';
+        const cls = change > 0 ? 'up' : 'down';
+        const arrow = change > 0 ? '▲' : '▼';
+        return `<span class="delta ${cls}">${arrow} ${Math.abs(change)}%</span>`;
+      }
+
+      function compareCard(label, cur, prev, prevLabel) {
+        return `<div class="stat">
+          <div class="label">${esc(label)}</div>
+          <div class="value">${n(cur)}</div>
+          <div class="sub">${deltaHtml(cur, prev)} &nbsp;vs ${n(prev)} ${esc(prevLabel)}</div>
+        </div>`;
+      }
+
+      function renderGrowth() {
+        const container = document.getElementById('growthSection');
+        if (!container || !STATS) return;
+        const series = (STATS.series?.[growthMetric]?.[growthGran]) || [];
+        const cmp = STATS.compare?.[growthMetric] || {};
+        const metricBtn = (id, lbl) => `<button data-metric="${id}" class="${growthMetric === id ? 'active' : ''}">${lbl}</button>`;
+        const granBtn = (id, lbl) => `<button data-gran="${id}" class="${growthGran === id ? 'active' : ''}">${lbl}</button>`;
+
+        container.innerHTML = `
+          <div class="toolbar">
+            <div class="toggle-group">
+              ${metricBtn('signups', 'Signups')}${metricBtn('memories', 'Memories')}${metricBtn('purchases', 'Purchases')}
+            </div>
+            <div class="toggle-group">
+              ${granBtn('day', 'Day')}${granBtn('month', 'Month')}${granBtn('year', 'Year')}
+            </div>
+          </div>
+          <div class="panel">
+            <div class="muted" style="margin-bottom:6px">${esc(GRAN_LABEL[growthGran])}</div>
+            ${growthChart(series, growthGran)}
+          </div>
+          <div class="grid" style="margin-top:14px">
+            ${compareCard('Today', cmp.today, cmp.yesterday, 'yesterday')}
+            ${compareCard('This week', cmp.this_week, cmp.last_week, 'last week')}
+            ${compareCard('This month', cmp.this_month, cmp.last_month, 'last month')}
+            ${compareCard('This year', cmp.this_year, cmp.last_year, 'last year')}
+          </div>
+        `;
+      }
+
+      // Toggle handling (delegated so it survives re-renders).
+      document.addEventListener('click', (e) => {
+        const btn = e.target.closest('#growthSection [data-metric], #growthSection [data-gran]');
+        if (!btn) return;
+        if (btn.dataset.metric) growthMetric = btn.dataset.metric;
+        if (btn.dataset.gran) growthGran = btn.dataset.gran;
+        renderGrowth();
+      });
+
+      function render(s) {
+        STATS = s;
+        const u = s.users || {}, a = s.active || {}, m = s.memories || {}, soc = s.social || {},
+          fr = s.friend_requests || {}, mr = s.movie_requests || {}, mp = s.memory_prompts || {},
+          mon = s.monetization || {}, pur = s.purchases || {}, act = s.activation || {}, con = s.content || {};
+
+        el('generatedAt').textContent = 'Updated ' + new Date(s.generated_at).toLocaleString();
+
+        const totalUsers = s.total_users || 0;
+        const newPaid = mon.premium_paid_active || 0;
+
+        el('dashBody').innerHTML = `
+          <section class="block">
+            <h2>Growth</h2>
+            <div class="grid">
+              ${statCard('Total users', n(u.total), `${n(u.new_30d)} in last 30d`)}
+              ${statCard('New today', n(u.new_today), `${n(u.new_7d)} this week`)}
+              ${statCard('DAU', n(a.dau), 'active last 24h')}
+              ${statCard('WAU', n(a.wau), 'active last 7d')}
+              ${statCard('MAU', n(a.mau), 'active last 30d')}
+              ${statCard('Push reachable', n(u.with_push_token), totalUsers ? `${Math.round(100 * (u.with_push_token || 0) / totalUsers)}% of users` : '')}
+            </div>
+          </section>
+
+          <section class="block">
+            <h2>Growth explorer</h2>
+            <div id="growthSection"></div>
+          </section>
+
+          <section class="block">
+            <h2>Monetization</h2>
+            <div class="grid">
+              ${statCard('Premium active', n(mon.premium_active_total), 'any active premium')}
+              ${statCard('Paid subscribers', n(mon.premium_paid_active), 'real App Store buyers')}
+              ${statCard('Sandbox / test', n(mon.premium_paid_sandbox), 'TestFlight, not real')}
+              ${statCard('Free-granted', n(mon.premium_free_active), 'QR / referral comps')}
+              ${statCard('Comped / manual', n(mon.premium_comped_active), 'granted via SQL')}
+              ${statCard('Conversion', pct(mon.conversion_rate), 'real paid ÷ total users')}
+              ${statCard('Purchases (30d)', n(pur.production_last_30d), `${n(pur.production)} real all-time`)}
+              ${statCard('Referrals', n(s.referrals_total), `${n(s.qr_grants_total)} QR grants`)}
+            </div>
+            <div class="two-col" style="margin-top:14px">
+              <div class="panel"><h3 style="margin:0 0 10px;font-size:14px;color:var(--ink-soft)">Purchases by plan</h3>${objTable(pur.by_product, ['Product', 'Count'])}</div>
+              <div class="panel"><h3 style="margin:0 0 10px;font-size:14px;color:var(--ink-soft)">Activation</h3>
+                <table><tbody>
+                  <tr><td>Created ≥1 memory</td><td class="num">${pct(act.pct_created_memory)}</td></tr>
+                  <tr><td>Added ≥1 friend</td><td class="num">${pct(act.pct_added_friend)}</td></tr>
+                </tbody></table>
+              </div>
+            </div>
+          </section>
+
+          <section class="block">
+            <h2>Memories &amp; engagement</h2>
+            <div class="grid">
+              ${statCard('Total memories', n(m.total), `${n(m.new_7d)} this week`)}
+              ${statCard('Avg per user', m.avg_per_user ?? '0')}
+              ${statCard('New today', n(m.new_today))}
+              ${statCard('Replies', n(s.replies_total))}
+              ${statCard('Calendar events', n(con.calendar_events))}
+              ${statCard('Private notes', n(con.private_notes))}
+            </div>
+            <div class="panel" style="margin-top:14px"><h3 style="margin:0 0 10px;font-size:14px;color:var(--ink-soft)">Memories by type</h3>${objTable(m.by_type)}</div>
+          </section>
+
+          <section class="block">
+            <h2>Social graph</h2>
+            <div class="grid">
+              ${statCard('Friendships', n(soc.friendships_total))}
+              ${statCard('Avg friends / user', soc.avg_friends_per_user ?? '0')}
+              ${statCard('Zero-friend users', n(soc.users_zero_friends), 'activation leak')}
+              ${statCard('5+ friends', n(soc.users_5plus))}
+              ${statCard('10+ friends', n(soc.users_10plus))}
+              ${statCard('Req. acceptance', pct(fr.acceptance_rate), `${n(fr.pending)} pending`)}
+            </div>
+          </section>
+
+          <section class="block">
+            <h2>Prompts &amp; movie reviews</h2>
+            <div class="two-col">
+              <div class="panel">
+                <h3 style="margin:0 0 10px;font-size:14px;color:var(--ink-soft)">Memory prompts <span class="pill ${(mp.completion_rate||0) >= 50 ? 'good' : 'warn'}">${pct(mp.completion_rate)} completed</span></h3>
+                <table><tbody>
+                  <tr><td>Pending</td><td class="num">${n(mp.pending)}</td></tr>
+                  <tr><td>Completed</td><td class="num">${n(mp.completed)}</td></tr>
+                  <tr><td>Cancelled</td><td class="num">${n(mp.cancelled)}</td></tr>
+                </tbody></table>
+                <div style="margin-top:10px">${objTable(mp.by_type, ['Prompt type', 'Count'])}</div>
+              </div>
+              <div class="panel">
+                <h3 style="margin:0 0 10px;font-size:14px;color:var(--ink-soft)">Movie reviews <span class="pill ${(mr.completion_rate||0) >= 50 ? 'good' : 'warn'}">${pct(mr.completion_rate)} completed</span></h3>
+                <table><tbody>
+                  <tr><td>Pending</td><td class="num">${n(mr.pending)}</td></tr>
+                  <tr><td>Completed</td><td class="num">${n(mr.completed)}</td></tr>
+                  <tr><td>Cancelled</td><td class="num">${n(mr.cancelled)}</td></tr>
+                </tbody></table>
+              </div>
+            </div>
+          </section>
+
+          <section class="block">
+            <h2>Top creators</h2>
+            <div class="panel">
+              <table><thead><tr><th>User</th><th class="num">Memories</th></tr></thead><tbody>
+                ${(s.top_authors || []).map((r) => `<tr><td>${esc(r.display_name)}</td><td class="num">${n(r.memories)}</td></tr>`).join('') || '<tr><td class="muted">No data yet.</td><td></td></tr>'}
+              </tbody></table>
+            </div>
+          </section>
+        `;
+        renderGrowth();
+      }
+
+      // ---- Boot ----
+      async function start() {
+        if (!initClient()) { showSetup(); return; }
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          await loadDashboard();
+        } else {
+          showLogin();
+        }
+      }
+      start();
+    </script>
+  </body>
+</html>

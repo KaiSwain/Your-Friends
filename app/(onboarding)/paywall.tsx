@@ -93,8 +93,6 @@ const PERKS: Perk[] = [
   },
 ];
 
-const PRICE_LABEL = '$29.99 / year';
-
 export default function OnboardingPaywallScreen() {
   const router = useRouter();
   const { purchase, premiumPlans, purchaseLoading, purchaseError } = usePremium();
@@ -103,6 +101,10 @@ export default function OnboardingPaywallScreen() {
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
   const [busy, setBusy] = useState(false);
+
+  // Render the localized StoreKit price for the yearly plan instead of hard-coding it.
+  const yearlyPlan = premiumPlans.find((plan) => plan.id === PREMIUM_PRODUCT_IDS.yearly);
+  const yearlyPriceLabel = yearlyPlan ? `${yearlyPlan.displayPrice} / ${yearlyPlan.period}` : null;
 
   async function finish() {
     await completeOnboarding();
@@ -145,7 +147,11 @@ export default function OnboardingPaywallScreen() {
       totalSteps={13}
       eyebrow="One last thing"
       title="Make every friendship feel personal."
-      subtitle={`Unlock every creative tool for ${PRICE_LABEL}. Cancel anytime in Settings.`}
+      subtitle={
+        yearlyPriceLabel
+          ? `Unlock every creative tool for ${yearlyPriceLabel}. Cancel anytime in Settings.`
+          : 'Unlock every creative tool. Cancel anytime in Settings.'
+      }
       onClose={handleLater}
       footer={
         <ActionButton

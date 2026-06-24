@@ -33,6 +33,7 @@ export function FormField({
     <View style={styles.wrapper}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
+        accessibilityLabel={label}
         autoCapitalize={autoCapitalize}
         keyboardType={keyboardType}
         onBlur={() => setFocused(false)}

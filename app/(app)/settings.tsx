@@ -11,6 +11,7 @@ import { CustomThemeVisualizer } from '../../src/components/CustomThemeVisualize
 import { SectionCard } from '../../src/components/SectionCard';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { MusicOpenPreference, useMusicPreference } from '../../src/features/music/MusicPreferenceContext';
+import { useOnboarding } from '../../src/features/onboarding/OnboardingContext';
 import { usePremium } from '../../src/features/premium/PremiumContext';
 import { DEFAULT_BACKGROUND_BLUR, MAX_BACKGROUND_BLUR, MIN_BACKGROUND_BLUR, useTheme } from '../../src/features/theme/ThemeContext';
 import { createCustomThemePair, type CustomThemeFontKey, type CustomThemeSettings } from '../../src/features/theme/customTheme';
@@ -49,6 +50,7 @@ const customFontOptions: { label: string; value: CustomThemeFontKey; sampleTheme
 export default function SettingsScreen() {
   const router = useRouter();
   const { currentUser, signOut, updateProfile, deleteAccount } = useAuth();
+  const { beginTourReplay } = useOnboarding();
   const { hasTheme, isPremium } = usePremium();
   const { backgroundBlur, colors, customTheme, fonts, resolvedMode, themeName, themeMode, setBackgroundBlur, setCustomTheme, setThemeName, setThemeMode } = useTheme();
   const { musicOpenPreference, setMusicOpenPreference } = useMusicPreference();
@@ -472,7 +474,7 @@ export default function SettingsScreen() {
           fonts={fonts}
           icon="sparkles-outline"
           label="Replay onboarding tour"
-          onPress={() => pushOnce(router, '/(onboarding)/referral')}
+          onPress={() => { beginTourReplay(); pushOnce(router, '/(onboarding)/referral'); }}
         />
         <LegalRow
           colors={colors}

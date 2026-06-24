@@ -39,6 +39,7 @@ import { navigateOnce, pushOnce } from '../../src/lib/navigationGuard';
 import { createNotifications } from '../../src/lib/notifications';
 import { stopAllSongPreviews } from '../../src/lib/songPreviewPlayback';
 import { getWallPostMemoryDate } from '../../src/lib/memoryDate';
+import { dedupeMemoriesForDisplay } from '../../src/lib/memoryGrouping';
 import { getCachedMemoryDeveloped, loadMemoryDeveloped } from '../../src/lib/memoryDevelopNotifications';
 import { notifyMemoryAuthorRecipientDeveloped } from '../../src/lib/memoryRecipientDevelopNotifications';
 import { getPromptExpirationLabel, isPromptExpired } from '../../src/lib/promptExpiration';
@@ -50,7 +51,7 @@ import { radius, spacing } from '../../src/theme/tokens';
 import type { CalendarEvent, MemoryPromptRequest, MovieReviewRequest, Notification, PeopleListItem, WallPost } from '../../src/types/domain';
 
 const HOME_LIVE_POLAROID_SCOPE = 'home';
-const REGULAR_VIDEO_MAX_DURATION_MS = 5000;
+const REGULAR_VIDEO_MAX_DURATION_MS = 30000;
 const FREE_PREMIUM_REMINDER_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
 
 const freePremiumReminderLastShownKey = (userId: string) => `yourfriends:premiumReminder:lastShown:${userId}`;
@@ -215,12 +216,16 @@ export default function FriendsListScreen() {
 
   const developingPosts = useMemo(
     () =>
-      (wallPosts ?? []).filter((p) => {
-        if (p.postType !== 'polaroid' || !p.imageUri) return false;
-        if (developedByPostId[p.id] || getCachedMemoryDeveloped(p.id)) return false;
-        const shakeBoostMs = shakeBoostsByPostId[p.id] ?? getCachedPolaroidShakeBoost(p.id);
-        return getCureProgress(getIncomingDevelopStartAt(p) ?? p.createdAt, now + shakeBoostMs) < 1;
-      }),
+      // Collapse the same photo shared to multiple walls into a single developing
+      // card (otherwise one polaroid posted to N walls shows N times here).
+      dedupeMemoriesForDisplay(
+        (wallPosts ?? []).filter((p) => {
+          if (p.postType !== 'polaroid' || !p.imageUri) return false;
+          if (developedByPostId[p.id] || getCachedMemoryDeveloped(p.id)) return false;
+          const shakeBoostMs = shakeBoostsByPostId[p.id] ?? getCachedPolaroidShakeBoost(p.id);
+          return getCureProgress(getIncomingDevelopStartAt(p) ?? p.createdAt, now + shakeBoostMs) < 1;
+        }),
+      ),
     [developedByPostId, getIncomingDevelopStartAt, wallPosts, now, shakeBoostsByPostId],
   );
   useEffect(() => {
@@ -263,13 +268,15 @@ export default function FriendsListScreen() {
       return left.createdAt.localeCompare(right.createdAt);
     };
 
-    const yesterdayPosts = posts.filter((p) => sameDay(getWallPostMemoryDate(p), yesterday)).sort(oldestFirst);
-    const weekPosts = posts.filter((p) => sameDay(getWallPostMemoryDate(p), oneWeekAgo)).sort(oldestFirst);
-    const monthPosts = posts.filter((p) => sameDay(getWallPostMemoryDate(p), oneMonthAgo)).sort(oldestFirst);
-    const yearPosts = posts.filter((p) => {
+    // Dedupe per bucket so a memory shared to multiple walls (or with extra
+    // people tagged in) shows once instead of once per wall.
+    const yesterdayPosts = dedupeMemoriesForDisplay(posts.filter((p) => sameDay(getWallPostMemoryDate(p), yesterday)).sort(oldestFirst));
+    const weekPosts = dedupeMemoriesForDisplay(posts.filter((p) => sameDay(getWallPostMemoryDate(p), oneWeekAgo)).sort(oldestFirst));
+    const monthPosts = dedupeMemoriesForDisplay(posts.filter((p) => sameDay(getWallPostMemoryDate(p), oneMonthAgo)).sort(oldestFirst));
+    const yearPosts = dedupeMemoriesForDisplay(posts.filter((p) => {
       const dt = getWallPostMemoryDate(p);
       return dt.getMonth() === oneYearAgo.getMonth() && dt.getDate() === oneYearAgo.getDate() && dt.getFullYear() <= oneYearAgo.getFullYear();
-    }).sort(oldestFirst);
+    }).sort(oldestFirst));
 
     return [
       { label: '1 Year Ago', posts: yearPosts },
@@ -526,7 +533,7 @@ export default function FriendsListScreen() {
     const asset = result.canceled ? null : result.assets[0];
     if (!asset?.uri) return;
     if (asset.type === 'video' && asset.duration && asset.duration > REGULAR_VIDEO_MAX_DURATION_MS + 250) {
-      Alert.alert('Video too long', 'Regular video memories can be up to 5 seconds.');
+      Alert.alert('Video too long', 'Regular video memories can be up to 30 seconds.');
       return;
     }
     pushOnce(router, {
@@ -558,7 +565,7 @@ export default function FriendsListScreen() {
     const asset = result.canceled ? null : result.assets[0];
     if (!asset?.uri) return;
     if (asset.type === 'video' && asset.duration && asset.duration > REGULAR_VIDEO_MAX_DURATION_MS + 250) {
-      Alert.alert('Video too long', 'Regular video memories can be up to 5 seconds.');
+      Alert.alert('Video too long', 'Regular video memories can be up to 30 seconds.');
       return;
     }
     pushOnce(router, {

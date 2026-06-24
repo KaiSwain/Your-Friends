@@ -96,6 +96,43 @@ export async function getNearbyLocationSuggestions(): Promise<NearbyLocationSugg
   return { status: 'ready', suggestions, context };
 }
 
+// Turn raw coordinates (e.g. from a photo's EXIF GPS) into a clean, human
+// readable location label. Reverse geocoding given coordinates does not require
+// location permission, so this is safe to call silently. Returns null when the
+// point can't be resolved to a place.
+export async function reverseGeocodeLocationLabel(
+  latitude: number,
+  longitude: number,
+): Promise<string | null> {
+  try {
+    const results = await Location.reverseGeocodeAsync({ latitude, longitude });
+    if (!results.length) return null;
+
+    const primary = results[0];
+    const state = primary.region?.trim() ?? null;
+    const city = primary.city?.trim() ?? primary.subregion?.trim() ?? null;
+    const place = primary.name?.trim() ?? null;
+
+    // Prefer a named place when it isn't just a street number, otherwise fall
+    // back to city/state so the label always reads cleanly.
+    if (place && !/^\d/.test(place) && place !== city) {
+      const label = formatPlaceLocationLabel(place, city, state);
+      if (label) return label;
+    }
+    if (city) {
+      const label = formatCityLocationLabel(city, state);
+      if (label) return label;
+    }
+    if (state) {
+      const label = formatStateLocationLabel(state);
+      if (label) return label;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function searchLocationSuggestions(
   query: string,
   context?: LocationSearchContext | null,

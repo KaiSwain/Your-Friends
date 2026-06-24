@@ -59,6 +59,10 @@ export function ActionButton({
     <Pressable
       // Pass the disabled state down to the native touchable behavior.
       disabled={disabled}
+      // Expose the button to screen readers with its label and disabled state.
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
       // Forward the optional press callback.
       onPress={onPress}
       // Build the final style array based on variant, pressed state, and disabled state.

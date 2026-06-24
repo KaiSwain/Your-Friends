@@ -35,6 +35,12 @@ interface OnboardingContextValue {
   hasCompletedOnboarding: boolean;
   referralSource: ReferralSource | null;
   excitedFeatures: ExcitedFeature[];
+  // True while the user is re-watching the intro tour from Help/Settings. In
+  // this mode the setup-only screens (survey, photo, fact) are skipped so the
+  // tour is purely informational.
+  tourReplay: boolean;
+  beginTourReplay: () => void;
+  endTourReplay: () => void;
   setReferralSource: (source: ReferralSource) => Promise<void>;
   setExcitedFeatures: (features: ExcitedFeature[]) => Promise<void>;
   completeOnboarding: () => Promise<void>;
@@ -43,26 +49,44 @@ interface OnboardingContextValue {
 
 const OnboardingContext = createContext<OnboardingContextValue | null>(null);
 
+// Sentinel meaning "we have not resolved flags for any identity yet". Kept at
+// module scope so its identity is stable across renders.
+const UNRESOLVED = Symbol('yourfriends.onboarding.unresolved');
+
 export function OnboardingProvider({ children }: { children: ReactNode }) {
   const { currentUser } = useAuth();
   const userId = currentUser?.id ?? null;
 
-  const [loaded, setLoaded] = useState(false);
+  // Track which user id the currently-held flags were loaded for. `loaded` is
+  // DERIVED from this during render (see below) rather than being its own piece
+  // of state. This matters: on a cold start `userId` flips null -> id in a
+  // single render commit, but the reload effect only runs AFTER that commit. If
+  // `loaded` were independent state left over as `true` from the no-user pass,
+  // the auth layout would briefly see "loaded + not completed + signed in" and
+  // wrongly redirect into the onboarding walkthrough (the intermittent
+  // "walkthrough retriggers until I restart" bug). Deriving it keeps `loaded`
+  // false the instant the identity changes, so the gate shows a spinner instead.
+  const [dataUserId, setDataUserId] = useState<string | null | typeof UNRESOLVED>(UNRESOLVED);
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [referralSource, setReferralSourceState] = useState<ReferralSource | null>(null);
   const [excitedFeatures, setExcitedFeaturesState] = useState<ExcitedFeature[]>([]);
+  // In-memory only — a replay never persists, so it resets on relaunch.
+  const [tourReplay, setTourReplay] = useState(false);
+
+  const loaded = dataUserId === userId;
 
   // Reload the per-user flags whenever the signed-in user changes.
   useEffect(() => {
     let cancelled = false;
-    setLoaded(false);
     setHasCompletedOnboarding(false);
     setReferralSourceState(null);
     setExcitedFeaturesState([]);
+    setTourReplay(false);
 
     if (!userId) {
-      // No user — nothing to load. Mark loaded so the index gate can render.
-      setLoaded(true);
+      // No user — nothing to load. Mark the flags as resolved for the null
+      // identity so the gate can render (derived `loaded` becomes true).
+      setDataUserId(null);
       return;
     }
 
@@ -80,7 +104,9 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       } catch {
         // Ignore — defaults are fine.
       } finally {
-        if (!cancelled) setLoaded(true);
+        // Mark the flags as resolved for THIS user last, so by the time the
+        // derived `loaded` flips true the completion flag is already set.
+        if (!cancelled) setDataUserId(userId);
       }
     })();
 
@@ -110,8 +136,12 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     }
   }, [userId]);
 
+  const beginTourReplay = useCallback(() => setTourReplay(true), []);
+  const endTourReplay = useCallback(() => setTourReplay(false), []);
+
   const completeOnboarding = useCallback(async () => {
     setHasCompletedOnboarding(true);
+    setTourReplay(false);
     if (!userId) return;
     try {
       await AsyncStorage.setItem(doneKey(userId), '1');
@@ -141,6 +171,9 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       hasCompletedOnboarding,
       referralSource,
       excitedFeatures,
+      tourReplay,
+      beginTourReplay,
+      endTourReplay,
       setReferralSource,
       setExcitedFeatures,
       completeOnboarding,
@@ -151,6 +184,9 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       hasCompletedOnboarding,
       referralSource,
       excitedFeatures,
+      tourReplay,
+      beginTourReplay,
+      endTourReplay,
       setReferralSource,
       setExcitedFeatures,
       completeOnboarding,

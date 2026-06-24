@@ -1,6 +1,6 @@
 import { usePathname, useRouter } from 'expo-router';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, PanResponder, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CachedRemoteImage } from '../../components/CachedRemoteImage';
@@ -351,32 +351,44 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
     });
   }, [active, contacts, hideActive, markNotificationRead, markSyntheticRead, router]);
 
+  // Owns BOTH the tap and the swipe-up gesture. Spreading PanResponder handlers
+  // onto a Pressable lets Pressable win the responder negotiation on iOS, which
+  // is why swipe-to-dismiss felt broken — so the toast is a plain responder view
+  // and we detect a tap here (tiny movement) vs a swipe (upward drag or flick).
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 4 && Math.abs(g.dy) > Math.abs(g.dx),
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 3 || Math.abs(g.dx) > 3,
         onPanResponderGrant: () => {
           clearDismissTimer();
         },
         onPanResponderMove: (_e, g) => {
           if (g.dy < 0) {
             translateY.setValue(g.dy);
-            opacity.setValue(Math.max(0, 1 + g.dy / 80));
+            opacity.setValue(Math.max(0, 1 + g.dy / 90));
           }
         },
         onPanResponderRelease: (_e, g) => {
-          if (g.dy < SWIPE_DISMISS_THRESHOLD) {
-            hideActive();
-          } else {
-            Animated.parallel([
-              Animated.timing(translateY, { toValue: 0, duration: 120, useNativeDriver: true }),
-              Animated.timing(opacity, { toValue: 1, duration: 120, useNativeDriver: true }),
-            ]).start();
-            dismissTimerRef.current = setTimeout(() => hideActive(), AUTO_DISMISS_MS);
+          const isTap = Math.abs(g.dy) < 6 && Math.abs(g.dx) < 6;
+          if (isTap) {
+            handlePress();
+            return;
           }
+          // Dismiss on a deliberate upward drag OR a quick upward flick.
+          if (g.dy < SWIPE_DISMISS_THRESHOLD || g.vy < -0.45) {
+            hideActive();
+            return;
+          }
+          Animated.parallel([
+            Animated.timing(translateY, { toValue: 0, duration: 120, useNativeDriver: true }),
+            Animated.timing(opacity, { toValue: 1, duration: 120, useNativeDriver: true }),
+          ]).start();
+          dismissTimerRef.current = setTimeout(() => hideActive(), AUTO_DISMISS_MS);
         },
+        onPanResponderTerminationRequest: () => false,
       }),
-    [clearDismissTimer, hideActive, opacity, translateY],
+    [clearDismissTimer, handlePress, hideActive, opacity, translateY],
   );
 
   const show = useCallback((n: Notification) => {
@@ -425,10 +437,9 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
             { top: insets.top + spacing.xs, opacity, transform: [{ translateY }] },
           ]}
         >
-          <Pressable
-            onPress={handlePress}
+          <View
             accessibilityRole="button"
-            accessibilityLabel={`Notification: ${active.message}.${activeCanOpen ? ' Tap to view.' : ''}`}
+            accessibilityLabel={`Notification: ${active.message}.${activeCanOpen ? ' Tap to view, or swipe up to dismiss.' : ' Swipe up to dismiss.'}`}
             style={styles.toastShadow}
             {...panResponder.panHandlers}
           >
@@ -452,7 +463,7 @@ export function InAppNotificationProvider({ children }: { children: ReactNode })
               </View>
               <ThemedIcon name="bell" size={18} color={colors.accent} />
             </View>
-          </Pressable>
+          </View>
         </Animated.View>
       ) : null}
     </InAppNotificationContext.Provider>

@@ -62,7 +62,8 @@ import {
   WallPostLayoutContext,
   WallPostVisibility,
 } from '../../types/domain';
-import { rowToContact, rowToContactPrivateNote, rowToContactPrivateNoteBlock, rowToFriendship, rowToUser, rowToWallPost, rowToFriendFact, rowToFriendRequest, rowToMemoryReply, rowToProfileWallItem } from './mappers';
+import { rowToContact, rowToFriendship, rowToUser, rowToWallPost, rowToFriendFact, rowToFriendRequest, rowToMemoryReply, rowToProfileWallItem } from './mappers';
+import { enqueuePrivateNoteOp, newPrivateNoteId, replayPrivateNoteOps } from './privateNoteQueue';
 import { buildPeopleListForUser } from './selectors';
 import { cancelGiftNote, createGiftNote, fetchGiftNotes, giftQueryKeys, revealDueGiftNotes } from '../gifts/queries';
 import {
@@ -203,10 +204,13 @@ interface SocialGraphContextValue {
   deleteFriendFact: (factId: string) => Promise<void>;
   getFriendFactsFor: (authorUserId: string, subjectUserId: string) => FriendFact[];
   deleteWallPost: (postId: string) => Promise<void>;
-  updateWallPost: (postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean, locationName?: string | null, voice?: VoiceAttachment | null) => Promise<void>;
+  updateWallPost: (postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean, locationName?: string | null, voice?: VoiceAttachment | null, memoryDate?: string | null) => Promise<void>;
   updateContact: (contactId: string, updates: {
     displayName?: string;
     avatarLocalUri?: string | null;
+    // Point the card photo at an already-stored image URL (e.g. the linked
+    // friend's account avatar) without re-uploading.
+    avatarRemoteUrl?: string | null;
     avatarVideoLocalUri?: string | null;
     avatarVideoMuted?: boolean;
     tags?: string[];
@@ -772,105 +776,113 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       .sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt.localeCompare(b.createdAt));
   }
 
+  // Private notes are offline-first: every mutation is applied optimistically
+  // to the cache and queued in the private-note outbox, which replays against
+  // Supabase when connectivity returns. Client-generated UUIDs are reused as
+  // server primary keys so an op references the same id before and after sync.
   async function touchPrivateNote(noteId: string, updatedAt = new Date().toISOString()) {
-    const { error } = await supabase
-      .from('contact_private_notes')
-      .update({ updated_at: updatedAt })
-      .eq('id', noteId);
-    if (error) throw new Error(error.message);
     queryClient.setQueryData<ContactPrivateNote[]>(socialQueryKeys.privateNotes, (old) =>
       (old ?? []).map((note) => (note.id === noteId ? { ...note, updatedAt } : note)),
     );
+    await enqueuePrivateNoteOp({ kind: 'note.update', id: noteId, updatedAt });
   }
 
   async function createPrivateNote(ownerUserId: string, contactId: string, input: CreateContactPrivateNoteInput = {}) {
     const title = input.title?.trim() || 'Untitled note';
-    const { data, error } = await supabase
-      .from('contact_private_notes')
-      .insert({ owner_user_id: ownerUserId, contact_id: contactId, title })
-      .select()
-      .single();
-    if (error || !data) throw new Error(error?.message ?? 'Failed to create note');
-
-    const note = rowToContactPrivateNote(data);
+    const now = new Date().toISOString();
+    const note: ContactPrivateNote = {
+      id: newPrivateNoteId(),
+      ownerUserId,
+      contactId,
+      title,
+      createdAt: now,
+      updatedAt: now,
+    };
     queryClient.setQueryData<ContactPrivateNote[]>(socialQueryKeys.privateNotes, (old) => [note, ...(old ?? [])]);
+    await enqueuePrivateNoteOp({
+      kind: 'note.insert',
+      id: note.id,
+      ownerUserId,
+      contactId,
+      title,
+      createdAt: now,
+      updatedAt: now,
+    });
+    void replayPrivateNoteOps();
     return note;
   }
 
   async function updatePrivateNote(noteId: string, updates: UpdateContactPrivateNoteInput) {
-    const dbUpdate: Record<string, unknown> = {};
-    if (updates.title !== undefined) dbUpdate.title = updates.title.trim() || 'Untitled note';
-    if (Object.keys(dbUpdate).length === 0) return;
-
+    if (updates.title === undefined) return;
+    const title = updates.title.trim() || 'Untitled note';
     const updatedAt = new Date().toISOString();
-    dbUpdate.updated_at = updatedAt;
-    const { error } = await supabase.from('contact_private_notes').update(dbUpdate).eq('id', noteId);
-    if (error) throw new Error(error.message);
 
     queryClient.setQueryData<ContactPrivateNote[]>(socialQueryKeys.privateNotes, (old) =>
-      (old ?? []).map((note) => {
-        if (note.id !== noteId) return note;
-        return {
-          ...note,
-          title: typeof dbUpdate.title === 'string' ? dbUpdate.title : note.title,
-          updatedAt,
-        };
-      }),
+      (old ?? []).map((note) => (note.id === noteId ? { ...note, title, updatedAt } : note)),
     );
+    await enqueuePrivateNoteOp({ kind: 'note.update', id: noteId, title, updatedAt });
+    void replayPrivateNoteOps();
   }
 
   async function deletePrivateNote(noteId: string) {
-    const { error } = await supabase.from('contact_private_notes').delete().eq('id', noteId);
-    if (error) throw new Error(error.message);
     queryClient.setQueryData<ContactPrivateNote[]>(socialQueryKeys.privateNotes, (old) =>
       (old ?? []).filter((note) => note.id !== noteId),
     );
     queryClient.setQueryData<ContactPrivateNoteBlock[]>(socialQueryKeys.privateNoteBlocks, (old) =>
       (old ?? []).filter((block) => block.noteId !== noteId),
     );
+    await enqueuePrivateNoteOp({ kind: 'note.delete', id: noteId });
+    void replayPrivateNoteOps();
   }
 
   async function addPrivateNoteBlock(noteId: string, input: CreateContactPrivateNoteBlockInput) {
     const note = privateNotes.find((entry) => entry.id === noteId);
     const ownerUserId = note?.ownerUserId ?? currentUser?.id;
     if (!ownerUserId) throw new Error('Note not found.');
-    const nextSortOrder = input.sortOrder ?? getPrivateNoteBlocks(noteId).length;
-    const { data, error } = await supabase
-      .from('contact_private_note_blocks')
-      .insert({
-        note_id: noteId,
-        owner_user_id: ownerUserId,
-        type: input.type,
-        content: input.content ?? null,
-        url: input.url ?? null,
-        image_path: input.imagePath ?? null,
-        sort_order: nextSortOrder,
-      })
-      .select()
-      .single();
-    if (error || !data) throw new Error(error?.message ?? 'Failed to add note block');
-
-    const block = rowToContactPrivateNoteBlock(data);
+    const now = new Date().toISOString();
+    const sortOrder = input.sortOrder ?? getPrivateNoteBlocks(noteId).length;
+    const block: ContactPrivateNoteBlock = {
+      id: newPrivateNoteId(),
+      noteId,
+      ownerUserId,
+      type: input.type,
+      content: input.content ?? null,
+      url: input.url ?? null,
+      imagePath: input.imagePath ?? null,
+      sortOrder,
+      createdAt: now,
+      updatedAt: now,
+    };
     queryClient.setQueryData<ContactPrivateNoteBlock[]>(socialQueryKeys.privateNoteBlocks, (old) => [...(old ?? []), block]);
-    await touchPrivateNote(noteId);
+    await enqueuePrivateNoteOp({
+      kind: 'block.insert',
+      id: block.id,
+      noteId,
+      ownerUserId,
+      type: block.type,
+      content: block.content,
+      url: block.url,
+      imagePath: block.imagePath,
+      sortOrder,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await touchPrivateNote(noteId, now);
+    void replayPrivateNoteOps();
     return block;
   }
 
   async function updatePrivateNoteBlock(blockId: string, updates: UpdateContactPrivateNoteBlockInput) {
     const block = privateNoteBlocks.find((entry) => entry.id === blockId);
     if (!block) throw new Error('Note block not found.');
-    const dbUpdate: Record<string, unknown> = {};
-    if (updates.content !== undefined) dbUpdate.content = updates.content;
-    if (updates.url !== undefined) dbUpdate.url = updates.url;
-    if (updates.imagePath !== undefined) dbUpdate.image_path = updates.imagePath;
-    if (updates.sortOrder !== undefined) dbUpdate.sort_order = updates.sortOrder;
-    if (Object.keys(dbUpdate).length === 0) return;
+    const hasChange =
+      updates.content !== undefined ||
+      updates.url !== undefined ||
+      updates.imagePath !== undefined ||
+      updates.sortOrder !== undefined;
+    if (!hasChange) return;
 
     const updatedAt = new Date().toISOString();
-    dbUpdate.updated_at = updatedAt;
-    const { error } = await supabase.from('contact_private_note_blocks').update(dbUpdate).eq('id', blockId);
-    if (error) throw new Error(error.message);
-
     queryClient.setQueryData<ContactPrivateNoteBlock[]>(socialQueryKeys.privateNoteBlocks, (old) =>
       (old ?? []).map((entry) => {
         if (entry.id !== blockId) return entry;
@@ -884,17 +896,27 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         };
       }),
     );
-    await touchPrivateNote(block.noteId);
+    await enqueuePrivateNoteOp({
+      kind: 'block.update',
+      id: blockId,
+      updatedAt,
+      ...(updates.content !== undefined ? { content: updates.content } : {}),
+      ...(updates.url !== undefined ? { url: updates.url } : {}),
+      ...(updates.imagePath !== undefined ? { imagePath: updates.imagePath } : {}),
+      ...(updates.sortOrder !== undefined ? { sortOrder: updates.sortOrder } : {}),
+    });
+    await touchPrivateNote(block.noteId, updatedAt);
+    void replayPrivateNoteOps();
   }
 
   async function deletePrivateNoteBlock(blockId: string) {
     const block = privateNoteBlocks.find((entry) => entry.id === blockId);
-    const { error } = await supabase.from('contact_private_note_blocks').delete().eq('id', blockId);
-    if (error) throw new Error(error.message);
     queryClient.setQueryData<ContactPrivateNoteBlock[]>(socialQueryKeys.privateNoteBlocks, (old) =>
       (old ?? []).filter((entry) => entry.id !== blockId),
     );
+    await enqueuePrivateNoteOp({ kind: 'block.delete', id: blockId });
     if (block) await touchPrivateNote(block.noteId);
+    void replayPrivateNoteOps();
   }
 
   function getContactAboutMe(ownerUserId: string, myUserId: string) {
@@ -1454,6 +1476,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   async function updateContact(contactId: string, updates: {
     displayName?: string;
     avatarLocalUri?: string | null;
+    avatarRemoteUrl?: string | null;
     avatarVideoLocalUri?: string | null;
     avatarVideoMuted?: boolean;
     tags?: string[];
@@ -1484,6 +1507,9 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       } else {
         dbUpdate.avatar_path = null;
       }
+    } else if (updates.avatarRemoteUrl !== undefined) {
+      // Reference an existing stored image (the friend's account photo) directly.
+      dbUpdate.avatar_path = updates.avatarRemoteUrl;
     }
 
     if (updates.avatarVideoLocalUri !== undefined) {
@@ -2263,7 +2289,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function updateWallPost(postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean, locationName?: string | null, voice?: VoiceAttachment | null) {
+  async function updateWallPost(postId: string, body: string, newLocalImageUri?: string | null, cardColor?: string | null, backText?: string | null, filter?: string | null, visibility?: WallPostVisibility, song?: SongAttachment | null, videoMuted?: boolean, locationName?: string | null, voice?: VoiceAttachment | null, memoryDate?: string | null) {
     const post = wallPosts.find((p) => p.id === postId);
     if (!currentUser || !post || !canEditWallPostContent(post, currentUser.id)) throw new Error('You can only edit your own memories.');
 
@@ -2281,6 +2307,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
     if (song !== undefined) updates.song = song;
     if (videoMuted !== undefined) updates.videoMuted = videoMuted;
     if (locationName !== undefined) updates.locationName = locationName;
+    if (memoryDate !== undefined) updates.memoryDate = memoryDate;
 
     const pendingEdit = await createPendingMemoryEdit({
       postId,

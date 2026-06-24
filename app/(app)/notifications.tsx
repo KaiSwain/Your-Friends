@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { type ListRenderItem, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AppScreen } from '../../src/components/AppScreen';
 import { CachedRemoteImage } from '../../src/components/CachedRemoteImage';
@@ -144,97 +144,109 @@ export default function NotificationsScreen() {
     }
   }
 
-  return (
-    <AppScreen header={topBar} floatingHeaderOnScroll onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }} refreshing={refreshing}>
-
+  const listHeader = (
+    <View>
       <View style={styles.titleSpacer} />
       <Text style={styles.title}>Notifications</Text>
+    </View>
+  );
 
-      {loading ? (
-        <View style={styles.list}>
-          <ListRowSkeleton />
-          <ListRowSkeleton />
-          <ListRowSkeleton />
-          <ListRowSkeleton />
+  const listEmpty = loading ? (
+    <View style={styles.list}>
+      <ListRowSkeleton />
+      <ListRowSkeleton />
+      <ListRowSkeleton />
+      <ListRowSkeleton />
+    </View>
+  ) : (
+    <View style={styles.emptyState}>
+      <ThemedIcon name="bell" size={40} color={colors.ink} />
+      <Text style={styles.emptyTitle}>All caught up</Text>
+      <Text style={styles.emptySubtitle}>
+        Notifications will appear here when friends share memories about you.
+      </Text>
+    </View>
+  );
+
+  const renderNotification: ListRenderItem<Notification> = ({ item: n }) => {
+    const actor = getUserById(n.actorUserId);
+    const eventId = getCalendarNotificationEventId(n);
+    const showReactions = n.type === 'calendar_event' && !!eventId;
+    const reactionSummary = eventId ? getCalendarEventReactionSummary(eventId) : null;
+    const reacting = reactingNotificationId === n.id;
+    const iconName = iconForNotificationType(n);
+    return (
+      <Pressable onPress={() => handlePress(n)} style={[styles.row, !n.read && styles.rowUnread]} accessibilityRole="button" accessibilityLabel={`${n.read ? '' : 'Unread: '}${n.message}`}>
+        <View style={styles.avatarCircle}>
+          {actor?.avatarPath ? (
+            <CachedRemoteImage uri={actor.avatarPath} style={styles.avatarImage} />
+          ) : (
+            <Text style={styles.avatarInitials}>
+              {(actor?.displayName ?? '?').split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('')}
+            </Text>
+          )}
         </View>
-      ) : visibleNotifications.length > 0 ? (
-        <View style={styles.list}>
-          {visibleNotifications.map((n) => {
-            const actor = getUserById(n.actorUserId);
-            const eventId = getCalendarNotificationEventId(n);
-            const showReactions = n.type === 'calendar_event' && !!eventId;
-            const reactionSummary = eventId ? getCalendarEventReactionSummary(eventId) : null;
-            const reacting = reactingNotificationId === n.id;
-            const iconName = iconForNotificationType(n);
-            return (
-              <Pressable key={n.id} onPress={() => handlePress(n)} style={[styles.row, !n.read && styles.rowUnread]} accessibilityRole="button" accessibilityLabel={`${n.read ? '' : 'Unread: '}${n.message}`}>
-                <View style={styles.avatarCircle}>
-                  {actor?.avatarPath ? (
-                    <CachedRemoteImage uri={actor.avatarPath} style={styles.avatarImage} />
-                  ) : (
-                    <Text style={styles.avatarInitials}>
-                      {(actor?.displayName ?? '?').split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('')}
-                    </Text>
-                  )}
-                </View>
-                <View style={styles.typeIcon}>
-                  <Ionicons name={iconName} size={15} color={colors.accent} />
-                </View>
-                <View style={styles.rowContent}>
-                  <Text style={[styles.rowMessage, !n.read && styles.rowMessageUnread]} numberOfLines={2}>{n.message}</Text>
-                  <Text style={styles.rowTime}>{timeAgo(n.createdAt)}</Text>
-                  {showReactions && reactionSummary ? (
-                    <View style={styles.reactionPanel}>
-                      <View style={styles.reactionButtons}>
-                        <Pressable
-                          onPress={() => toggleReaction(n, 'up')}
-                          disabled={reacting}
-                          style={[styles.reactionButton, reactionSummary.myReaction === 'up' && styles.reactionButtonActive]}
-                          accessibilityRole="button"
-                          accessibilityLabel="Thumbs up this event"
-                        >
-                          <Ionicons name="thumbs-up-outline" size={14} color={reactionSummary.myReaction === 'up' ? colors.white : colors.ink} />
-                          <Text style={[styles.reactionButtonText, reactionSummary.myReaction === 'up' && styles.reactionButtonTextActive]}>
-                            {reactionSummary.upCount}
-                          </Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => toggleReaction(n, 'down')}
-                          disabled={reacting}
-                          style={[styles.reactionButton, reactionSummary.myReaction === 'down' && styles.reactionButtonActive]}
-                          accessibilityRole="button"
-                          accessibilityLabel="Thumbs down this event"
-                        >
-                          <Ionicons name="thumbs-down-outline" size={14} color={reactionSummary.myReaction === 'down' ? colors.white : colors.ink} />
-                          <Text style={[styles.reactionButtonText, reactionSummary.myReaction === 'down' && styles.reactionButtonTextActive]}>
-                            {reactionSummary.downCount}
-                          </Text>
-                        </Pressable>
-                      </View>
-                      <Text style={styles.reactionCountText}>
-                        {reactionSummary.upCount} thumbs up · {reactionSummary.downCount} thumbs down
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-                <View style={styles.rowMeta}>
-                  {!n.read ? <View style={styles.unreadDot} /> : null}
-                  <Ionicons name="chevron-forward" size={16} color={colors.ink} />
-                </View>
-              </Pressable>
-            );
-          })}
+        <View style={styles.typeIcon}>
+          <Ionicons name={iconName} size={15} color={colors.accent} />
         </View>
-      ) : (
-        <View style={styles.emptyState}>
-          <ThemedIcon name="bell" size={40} color={colors.ink} />
-          <Text style={styles.emptyTitle}>All caught up</Text>
-          <Text style={styles.emptySubtitle}>
-            Notifications will appear here when friends share memories about you.
-          </Text>
+        <View style={styles.rowContent}>
+          <Text style={[styles.rowMessage, !n.read && styles.rowMessageUnread]} numberOfLines={2}>{n.message}</Text>
+          <Text style={styles.rowTime}>{timeAgo(n.createdAt)}</Text>
+          {showReactions && reactionSummary ? (
+            <View style={styles.reactionPanel}>
+              <View style={styles.reactionButtons}>
+                <Pressable
+                  onPress={() => toggleReaction(n, 'up')}
+                  disabled={reacting}
+                  style={[styles.reactionButton, reactionSummary.myReaction === 'up' && styles.reactionButtonActive]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Thumbs up this event"
+                >
+                  <Ionicons name="thumbs-up-outline" size={14} color={reactionSummary.myReaction === 'up' ? colors.white : colors.ink} />
+                  <Text style={[styles.reactionButtonText, reactionSummary.myReaction === 'up' && styles.reactionButtonTextActive]}>
+                    {reactionSummary.upCount}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => toggleReaction(n, 'down')}
+                  disabled={reacting}
+                  style={[styles.reactionButton, reactionSummary.myReaction === 'down' && styles.reactionButtonActive]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Thumbs down this event"
+                >
+                  <Ionicons name="thumbs-down-outline" size={14} color={reactionSummary.myReaction === 'down' ? colors.white : colors.ink} />
+                  <Text style={[styles.reactionButtonText, reactionSummary.myReaction === 'down' && styles.reactionButtonTextActive]}>
+                    {reactionSummary.downCount}
+                  </Text>
+                </Pressable>
+              </View>
+              <Text style={styles.reactionCountText}>
+                {reactionSummary.upCount} thumbs up · {reactionSummary.downCount} thumbs down
+              </Text>
+            </View>
+          ) : null}
         </View>
-      )}
-    </AppScreen>
+        <View style={styles.rowMeta}>
+          {!n.read ? <View style={styles.unreadDot} /> : null}
+          <Ionicons name="chevron-forward" size={16} color={colors.ink} />
+        </View>
+      </Pressable>
+    );
+  };
+
+  return (
+    <AppScreen
+      header={topBar}
+      floatingHeaderOnScroll
+      onRefresh={async () => { setRefreshing(true); await refresh(); setRefreshing(false); }}
+      refreshing={refreshing}
+      contentContainerStyle={styles.listContent}
+      listData={loading ? [] : visibleNotifications}
+      renderItem={renderNotification}
+      keyExtractor={(item) => item.id}
+      ListHeaderComponent={listHeader}
+      ListEmptyComponent={listEmpty}
+    />
   );
 }
 
@@ -257,8 +269,9 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     markAllButtonDisabled: { opacity: 0.65 },
     markAllLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.accent },
     titleSpacer: { height: spacing.lg },
-    title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, ...protectTextFromFontClipping(fonts.heading, 28) },
+    title: { fontFamily: fonts.heading, fontSize: 28, color: colors.ink, marginBottom: spacing.sm, ...protectTextFromFontClipping(fonts.heading, 28) },
     list: { gap: spacing.sm },
+    listContent: { gap: spacing.sm },
     row: {
       flexDirection: 'row',
       alignItems: 'center',

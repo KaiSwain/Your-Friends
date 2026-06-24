@@ -60,12 +60,19 @@ export function extractFriendCode(value: string) {
   return normalizeFriendCode(trimmed);
 } // End extractFriendCode after returning the best available code candidate.
 
-// Build the canonical deep link used when sharing friend invites.
+// Public web base used for shareable invite links. This is a Universal Link
+// (https) so it works for people who DON'T have the app yet: it opens the app
+// when installed, otherwise it lands on yourfriendsapp.com which routes to the
+// App Store. The in-app deep-link handler still understands this URL via
+// extractFriendCode, and the legacy `yourfriends://` scheme keeps working too.
+export const INVITE_LINK_BASE_URL = 'https://yourfriendsapp.com/add-friend';
+
+// Build the canonical shareable link used when sharing friend invites.
 export function createFriendInviteLink(friendCode: string) {
   const normalized = normalizeFriendCode(friendCode);
-  if (!normalized) return 'yourfriends://add-friend';
-  return `yourfriends://add-friend?code=${encodeURIComponent(normalized)}`;
-} // End createFriendInviteLink after returning the deep link.
+  if (!normalized) return INVITE_LINK_BASE_URL;
+  return `${INVITE_LINK_BASE_URL}?code=${encodeURIComponent(normalized)}`;
+} // End createFriendInviteLink after returning the invite link.
 
 // Export a helper that generates an 8-character friend code from a stable seed value.
 export function createFriendCode(seed: string, existingCodes: string[]) {
@@ -76,15 +83,18 @@ export function createFriendCode(seed: string, existingCodes: string[]) {
 
   // Keep trying until we either find an unused code or hit the safety limit.
   while (attempt < 1000) {
-    // Combine the seed and the current attempt so retries produce different hashes.
-    const hash = hashString(`${seed}:${attempt}`);
     // Start with an empty string and build the friend code one character at a time.
     let friendCode = '';
 
     // Run exactly eight times because a friend code in this app is always 8 characters long.
     for (let index = 0; index < 8; index += 1) {
-      // Turn the hash and loop index into a valid position inside the alphabet string.
-      const charIndex = (hash + index * 17) % ALPHABET.length;
+      // Hash each position independently (seed + attempt + index) so every
+      // character draws from its own entropy. This yields the full 32^8 code
+      // space; deriving all 8 characters from a single hash would collapse the
+      // space to just ALPHABET.length (32) possible codes.
+      const hash = hashString(`${seed}:${attempt}:${index}`);
+      // Turn the per-position hash into a valid position inside the alphabet string.
+      const charIndex = hash % ALPHABET.length;
       // Append the selected character to the code we are building.
       friendCode += ALPHABET[charIndex];
     } // End the 8-step loop after all friend code characters have been added.
@@ -105,15 +115,22 @@ export function createFriendCode(seed: string, existingCodes: string[]) {
 
 // Keep this hashing helper private because only this file needs it.
 function hashString(value: string) {
-  // Start the running hash value at zero before processing the input string.
-  let hash = 0;
+  // Use FNV-1a as the base hash because it folds every byte into the result.
+  let hash = 0x811c9dc5; // FNV offset basis (2166136261).
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193); // Multiply by the FNV prime (16777619).
+  }
 
-  // Visit each character in the string so we can fold it into the running hash.
-  for (const character of value) {
-    // Multiply the current hash, add the character code, and force the result to stay unsigned.
-    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  } // End the character loop after every character has contributed to the hash.
+  // Apply MurmurHash3's finalizer so the low bits avalanche. The plain
+  // multiply-by-31 hash this replaced had almost no entropy in its low 5 bits,
+  // which made `hash % ALPHABET.length` collapse to a handful of distinct codes.
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x85ebca6b);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0xc2b2ae35);
+  hash ^= hash >>> 16;
 
-  // Return the finished numeric hash to the caller.
-  return hash;
+  // Return an unsigned 32-bit integer to the caller.
+  return hash >>> 0;
 } // End hashString after computing the final hash value.

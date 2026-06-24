@@ -18,7 +18,7 @@ export const memoryImagePickerOptions = {
 export const memoryMediaPickerOptions = {
   mediaTypes: ['images', 'videos'],
   quality: 0.9,
-  videoMaxDuration: 5,
+  videoMaxDuration: 30,
   exif: true,
 } satisfies ImagePicker.ImagePickerOptions;
 

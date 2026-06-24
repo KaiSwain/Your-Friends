@@ -159,7 +159,7 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
       method: 'POST',
       body: { productId, purchase },
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(await extractFunctionErrorMessage(error));
     const nextPremiumUntil = data?.premiumUntil ?? null;
     if (!nextPremiumUntil) throw new Error('The purchase could not be validated.');
     setPremiumUntil(nextPremiumUntil);
@@ -392,6 +392,29 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
   );
 
   return <PremiumContext.Provider value={value}>{children}</PremiumContext.Provider>;
+}
+
+// supabase-js throws a generic "Edge Function returned a non-2xx status code" for any
+// non-2xx response. The actual error our function sends lives in the attached Response
+// (error.context), so dig it out to surface a useful message for debugging/UI.
+async function extractFunctionErrorMessage(error: unknown): Promise<string> {
+  const fallback = error instanceof Error ? error.message : 'Could not validate the purchase.';
+  const context = (error as { context?: unknown })?.context;
+  if (context && typeof (context as Response).json === 'function') {
+    try {
+      const body = await (context as Response).clone().json();
+      const detail = body?.error ?? body?.message;
+      if (typeof detail === 'string' && detail.trim()) return detail;
+    } catch {
+      try {
+        const text = await (context as Response).clone().text();
+        if (text.trim()) return text.trim();
+      } catch {
+        // Fall through to the generic message below.
+      }
+    }
+  }
+  return fallback;
 }
 
 function getPurchaseProductId(purchase: Purchase) {

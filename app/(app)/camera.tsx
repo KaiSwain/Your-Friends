@@ -8,7 +8,7 @@ import { postCapturedUri } from '../../src/lib/cameraHandoff';
 import { backOnce, replaceOnce } from '../../src/lib/navigationGuard';
 
 const POLAROID_FRAME = '#F5F2EA';
-const LIVE_POLAROID_MAX_SECONDS = 5;
+const LIVE_POLAROID_MAX_SECONDS = 30;
 const LIVE_POLAROID_START_DELAY_MS = 300;
 const LIVE_POLAROID_MIN_DURATION_MS = 850;
 

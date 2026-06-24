@@ -69,6 +69,7 @@ Deno.serve(async (req) => {
 
   const transactionId = cleanString(purchase.transactionId || purchase.id || purchase.originalTransactionIdIOS, 160);
   if (!transactionId) return jsonResponse({ error: 'Missing Apple transaction ID.' }, 400);
+  console.log(`[apple-iap] Validating product=${requestedProductId} transactionId=${transactionId} for user=${userId}`);
 
   const lookup = await lookupAppleTransaction(transactionId, appleConfig.value);
   if (!lookup.ok) return jsonResponse({ error: lookup.error }, 402);
@@ -81,6 +82,7 @@ Deno.serve(async (req) => {
 
   const expirationMs = Number(transaction.expiresDate ?? 0);
   if (!Number.isFinite(expirationMs) || expirationMs <= Date.now()) {
+    console.error(`[apple-iap] Subscription not active. env=${lookup.value.environment} expiresDate=${transaction.expiresDate} now=${Date.now()}`);
     return jsonResponse({ error: 'Premium subscription is not active.' }, 402);
   }
   const premiumUntil = new Date(expirationMs).toISOString();
@@ -111,13 +113,21 @@ Deno.serve(async (req) => {
 });
 
 async function lookupAppleTransaction(transactionId: string, config: AppleConfig) {
-  const jwt = await createAppleServerJwt(config);
+  let jwt: string;
+  try {
+    jwt = await createAppleServerJwt(config);
+  } catch (error) {
+    console.error('[apple-iap] Failed to sign App Store Server JWT (check APPLE_IAP_PRIVATE_KEY / KEY_ID).', error);
+    return { ok: false as const, error: 'Server could not sign the Apple request. Check the In-App Purchase key.' };
+  }
+
   const production = await fetchAppleTransaction(appleProductionBaseUrl, transactionId, jwt);
   if (production.ok) return { ok: true as const, value: { ...production.value, environment: 'Production' as const } };
 
   const sandbox = await fetchAppleTransaction(appleSandboxBaseUrl, transactionId, jwt);
   if (sandbox.ok) return { ok: true as const, value: { ...sandbox.value, environment: 'Sandbox' as const } };
 
+  console.error(`[apple-iap] Lookup failed for transaction ${transactionId}. production="${production.error}" sandbox="${sandbox.error}"`);
   return { ok: false as const, error: sandbox.error ?? production.error ?? 'Apple could not validate this purchase.' };
 }
 
@@ -126,6 +136,8 @@ async function fetchAppleTransaction(baseUrl: string, transactionId: string, jwt
     headers: { Authorization: `Bearer ${jwt}` },
   });
   if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    console.error(`[apple-iap] ${baseUrl} returned ${response.status}: ${detail.slice(0, 500)}`);
     return { ok: false as const, error: `Apple validation failed (${response.status}).` };
   }
   const body = await response.json();

@@ -25,7 +25,7 @@ import { protectTextFromFontClipping } from '../../../../src/theme/fontProtectio
 import { radius, semanticColors, spacing } from '../../../../src/theme/tokens';
 import type { SongAttachment, VoiceAttachment, WallPost } from '../../../../src/types/domain';
 
-const REGULAR_VIDEO_MAX_DURATION_MS = 5000;
+const REGULAR_VIDEO_MAX_DURATION_MS = 30000;
 
 export default function MemoryPromptResponseScreen() {
   const router = useRouter();
@@ -169,7 +169,7 @@ export default function MemoryPromptResponseScreen() {
     const asset = result.canceled ? null : result.assets[0];
     if (!asset?.uri) return;
     if (asset.type === 'video' && asset.duration && asset.duration > REGULAR_VIDEO_MAX_DURATION_MS + 250) {
-      Alert.alert('Video too long', 'Regular video memories can be up to 5 seconds.');
+      Alert.alert('Video too long', 'Regular video memories can be up to 30 seconds.');
       return;
     }
     setPhotoResponseType('media');

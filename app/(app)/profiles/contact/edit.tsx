@@ -87,7 +87,7 @@ export default function EditContactProfileScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ contactId: string | string[]; capturedUri: string | string[]; capturedVideoUri: string | string[] }>();
   const { currentUser } = useAuth();
-  const { getContactById, getPeopleListForUser, updateContact } = useSocialGraph();
+  const { getContactById, getPeopleListForUser, getUserById, updateContact } = useSocialGraph();
   const { purchasedThemes, isPremium, hasTheme } = usePremium();
   const canUseCustomTheme = hasTheme('custom');
   const unlockedThemeSet = useMemo(() => new Set<string>(['default', 'yourFriends', ...purchasedThemes]), [purchasedThemes]);
@@ -102,9 +102,15 @@ export default function EditContactProfileScreen() {
 
   const contactId = Array.isArray(params.contactId) ? params.contactId[0] : params.contactId;
   const contact = contactId ? getContactById(contactId) : undefined;
+  // For a contact linked to a real friend, expose their account profile photo so
+  // the user can pull it onto this card.
+  const linkedUser = contact?.linkedUserId ? getUserById(contact.linkedUserId) : undefined;
 
   const [name, setName] = useState(contact?.displayName ?? '');
   const [localImageUri, setLocalImageUri] = useState<string | null>(null);
+  // When true, the chosen card photo is the friend's already-stored account
+  // avatar, so we reference it directly instead of re-uploading a local file.
+  const [usingAccountPhoto, setUsingAccountPhoto] = useState(false);
   const [localVideoUri, setLocalVideoUri] = useState<string | null>(null);
   const [removeAvatarVideo, setRemoveAvatarVideo] = useState(false);
   const [avatarVideoMuted, setAvatarVideoMuted] = useState(contact?.avatarVideoMuted ?? false);
@@ -140,6 +146,7 @@ export default function EditContactProfileScreen() {
   useEffect(() => {
     if (capturedUri) {
       setLocalImageUri(capturedUri);
+      setUsingAccountPhoto(false);
       if (capturedVideoUri) {
         setLocalVideoUri(capturedVideoUri);
         setRemoveAvatarVideo(false);
@@ -154,6 +161,7 @@ export default function EditContactProfileScreen() {
 
   useEffect(() => onCapturedUri((uri, videoUri) => {
     setLocalImageUri(uri);
+    setUsingAccountPhoto(false);
     if (videoUri) {
       setLocalVideoUri(videoUri);
       setRemoveAvatarVideo(false);
@@ -209,10 +217,22 @@ export default function EditContactProfileScreen() {
     const result = await ImagePicker.launchImageLibraryAsync(avatarImagePickerOptions);
     if (!result.canceled && result.assets[0]?.uri) {
       setLocalImageUri(result.assets[0].uri);
+      setUsingAccountPhoto(false);
       setLocalVideoUri(null);
       setRemoveAvatarVideo(Boolean(contact?.avatarVideoPath));
       setAvatarVideoMuted(false);
     }
+  }
+
+  // Pull the linked friend's account profile photo onto this card. The avatar is
+  // already a stored URL, so we keep it as a remote reference (no re-upload).
+  function useFriendAccountPhoto() {
+    if (!linkedUser?.avatarPath) return;
+    setLocalImageUri(linkedUser.avatarPath);
+    setUsingAccountPhoto(true);
+    setLocalVideoUri(null);
+    setRemoveAvatarVideo(Boolean(contact?.avatarVideoPath));
+    setAvatarVideoMuted(false);
   }
 
   async function pickProfileBackgroundPhoto() {
@@ -294,10 +314,14 @@ export default function EditContactProfileScreen() {
     if (!hasChanges) { backOnce(router); return; }
     setSaving(true);
     try {
-      const updates: { displayName?: string; avatarLocalUri?: string | null; avatarVideoLocalUri?: string | null; avatarVideoMuted?: boolean; tags?: string[]; note?: string | null; cardColor?: string | null; backText?: string | null; profileBg?: string | null; profileBgImageLocalUri?: string | null } = {};
+      const updates: { displayName?: string; avatarLocalUri?: string | null; avatarRemoteUrl?: string | null; avatarVideoLocalUri?: string | null; avatarVideoMuted?: boolean; tags?: string[]; note?: string | null; cardColor?: string | null; backText?: string | null; profileBg?: string | null; profileBgImageLocalUri?: string | null } = {};
       if (name.trim() && name.trim() !== contact!.displayName) updates.displayName = name.trim();
       if (localImageUri !== null) {
-        updates.avatarLocalUri = localImageUri;
+        if (usingAccountPhoto) {
+          updates.avatarRemoteUrl = localImageUri;
+        } else {
+          updates.avatarLocalUri = localImageUri;
+        }
       }
       if (localVideoUri) {
         updates.avatarVideoLocalUri = localVideoUri;
@@ -349,7 +373,14 @@ export default function EditContactProfileScreen() {
             <Text style={styles.changePhotoLabel}>Gallery Photo</Text>
           </Pressable>
         </View>
-        <Text style={styles.fieldHint}>Take this like a regular memory, or use a Premium gallery photo for this profile card.</Text>
+        {linkedUser?.avatarPath ? (
+          <View style={styles.photoActionRowFull}>
+            <Pressable onPress={useFriendAccountPhoto} style={[styles.changePhotoButton, styles.changePhotoButtonFull]}>
+              <Text style={styles.changePhotoLabel}>Use Account Photo</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        <Text style={styles.fieldHint}>Take this like a regular memory, or use a Premium gallery photo for this profile card.{linkedUser?.avatarPath ? ` Or pull in ${displayName}'s account photo.` : ''}</Text>
         {displayVideo ? (
           <View style={styles.videoAudioRow}>
             <View style={styles.videoAudioCopy}>
@@ -732,6 +763,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       color: colors.ink,
     },
     photoActionRow: { flexDirection: 'row', gap: spacing.md, justifyContent: 'center' },
+    photoActionRowFull: { marginTop: spacing.sm, alignItems: 'stretch' },
     changePhotoButton: {
       paddingVertical: spacing.sm,
       paddingHorizontal: spacing.lg,
@@ -739,6 +771,7 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       borderWidth: 1,
       borderColor: colors.line,
     },
+    changePhotoButtonFull: { alignItems: 'center' },
     changePhotoLabel: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.inkSoft },
     videoAudioRow: {
       flexDirection: 'row',

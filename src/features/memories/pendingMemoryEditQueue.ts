@@ -23,6 +23,7 @@ export interface PendingMemoryEditUpdates {
   song?: SongAttachment | null;
   videoMuted?: boolean;
   locationName?: string | null;
+  memoryDate?: string | null;
   hasVoiceChange: boolean;
   voice?: VoiceAttachment | null;
 }
@@ -95,6 +96,7 @@ export function applyPendingMemoryEditToPost(post: WallPost, record: PendingMemo
   if (updates.song !== undefined) updated.song = updates.song;
   if (updates.videoMuted !== undefined) updated.videoMuted = updates.videoMuted;
   if (updates.locationName !== undefined) updated.locationName = updates.locationName;
+  if (updates.memoryDate !== undefined) updated.memoryDate = updates.memoryDate;
   if (updates.hasVoiceChange) updated.voice = updates.voice ?? null;
   return updated;
 }
@@ -159,6 +161,7 @@ export async function syncPendingMemoryEdit(record: PendingMemoryEditRecord): Pr
   }
   if (record.updates.videoMuted !== undefined) updateData.video_muted = record.updates.videoMuted;
   if (record.updates.locationName !== undefined) updateData.location_name = record.updates.locationName;
+  if (record.updates.memoryDate !== undefined) updateData.memory_date = record.updates.memoryDate;
 
   if (record.updates.hasVoiceChange) {
     const voice = record.updates.voice;

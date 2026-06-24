@@ -28,6 +28,7 @@ import { WallPost } from '../types/domain';
 import { protectTextFromFontClipping } from '../theme/fontProtection';
 import type { FontSet } from '../theme/typography';
 import { semanticColors, spacing } from '../theme/tokens';
+import { formatStars, getMemoryEditBorderColor, getResponseTypeLabel, getStablePolaroidTilt, getStarIcon } from './wallPostCardHelpers';
 
 interface WallPostCardProps {
   authorName: string;
@@ -303,27 +304,6 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
       ) : (
         <View style={styles.promptVoiceOnlyRow}>{promptVoiceElement}</View>
       )}
-    </View>
-  ) : null;
-  const showPromptInPhotoFrame = !suppressAttachments && displayMode === 'grid' && !!promptDisplayText;
-  const polaroidPromptQuestionElement = !suppressAttachments && (promptDisplayText || promptVoiceElement) && !showPromptInPhotoFrame ? (
-    <View style={styles.polaroidPromptQuestion}>
-      <View style={styles.promptQuestionHeader}>
-        <Ionicons name={promptIconName} size={12} color={semanticColors.promptGold} />
-        <Text style={[styles.polaroidPromptQuestionLabel, { color: semanticColors.promptGold }]}>{promptQuestionLabel}</Text>
-      </View>
-      {promptDisplayText ? <Text style={[styles.polaroidPromptQuestionText, { color: ct }]}>{promptDisplayText}</Text> : null}
-    </View>
-  ) : null;
-  const photoFramePromptOverlay = showPromptInPhotoFrame ? (
-    <View pointerEvents="none" style={styles.photoFramePrompt}>
-      <View style={styles.photoFramePromptHeader}>
-        <Ionicons name={promptIconName} size={10} color={semanticColors.promptGold} />
-        <Text style={styles.photoFramePromptLabel}>Prompt</Text>
-      </View>
-      <Text style={styles.photoFramePromptText} numberOfLines={3}>
-        {promptDisplayText}
-      </Text>
     </View>
   ) : null;
   const referencedPhotoElement = post.referencedWallPostId && !cardPost.imageUri ? (
@@ -613,7 +593,6 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
                 <View style={[styles.tape, isPolaroidGhost && styles.tapeGhost]} />
                 <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, isPolaroidGhost && styles.cardGhost, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}> 
                   <View pointerEvents="none" style={styles.polaroidLiquidSheen} />
-                  {polaroidPromptQuestionElement}
                   <View style={[styles.photoFrame, isPolaroidGhost && styles.photoFrameGhost]} onLayout={onFrameLayout}>
                     {photoContent}
                   </View>
@@ -651,10 +630,8 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
                       <View style={[styles.tape, isPolaroidGhost && styles.tapeGhost]} />
                       <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, isPolaroidGhost && styles.cardGhost, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}>
                         <View pointerEvents="none" style={styles.polaroidLiquidSheen} />
-                        {polaroidPromptQuestionElement}
                         <View style={[styles.photoFrame, isPolaroidGhost && styles.photoFrameGhost]} onLayout={onFrameLayout}>
                           {photoContent}
-                          {photoFramePromptOverlay}
                         </View>
                         <View style={styles.bottomStrip}>
                           <Text style={[styles.date, { color: ct }]}>{formatted}</Text>
@@ -721,7 +698,15 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
     </View>
   );
 
-  const memoryContent = isTextOnly ? textOnlyMemory : polaroidMemory;
+  // For polaroid responses to a prompt, show the prompt above the whole
+  // polaroid (outside the frame and photo), consistent with other memory types.
+  const polaroidMemoryWithPrompt = promptQuestionElement ? (
+    <View style={styles.polaroidPromptStack}>
+      <View style={styles.polaroidPromptAbove}>{promptQuestionElement}</View>
+      {polaroidMemory}
+    </View>
+  ) : polaroidMemory;
+  const memoryContent = isTextOnly ? textOnlyMemory : polaroidMemoryWithPrompt;
   const memoryContentWithVoice = attachedVoiceElement && !hasReferencedPhotoResponse && !cardPost.imageUri ? (
     <View style={styles.attachedVoiceStack}>
       {memoryContent}
@@ -760,14 +745,6 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
   return memoryContentWithVoice;
 }
 
-function getMemoryEditBorderColor(post: WallPost, colors: ColorTokens) {
-  if (post.postType === 'voice' || post.voice) return semanticColors.voiceRed;
-  if (post.postType === 'movie' || post.movie) return semanticColors.movieGold;
-  if (post.postType === 'media') return colors.accentTertiary ?? '#3A8C8C';
-  if (post.postType === 'polaroid' || post.imageUri) return colors.accentAlt ?? colors.accent;
-  return semanticColors.replyPurple;
-}
-
 const CARD_PADDING_SIDE = 14;
 const CARD_PADDING_TOP = 12;
 const CARD_PADDING_BOTTOM = 38;
@@ -784,30 +761,6 @@ const POLAROID_FRAME = '#F5F2EA';
 const FRAME_INK = '#2A2218';
 const FRAME_INK_SOFT = '#6B6052';
 const FRAME_INK_MUTED = '#9A9080';
-
-function formatStars(rating: number | null | undefined) {
-  const clamped = Math.max(0, Math.min(5, Math.round((rating ?? 0) * 2) / 2));
-  return `${clamped}/5`;
-}
-
-function getStarIcon(rating: number, starValue: number) {
-  if (rating >= starValue) return 'star' as const;
-  if (rating >= starValue - 0.5) return 'star-half-outline' as const;
-  return 'star-outline' as const;
-}
-
-function getResponseTypeLabel(post: WallPost) {
-  const parts: string[] = [];
-  if (post.song) parts.push('song');
-  if (post.movie) parts.push('movie');
-  if (post.postType === 'media' && post.videoUri && !post.imageUri) parts.push('video');
-  else if (post.imageUri || post.referencedWallPostId) parts.push('photo');
-  if (post.body?.trim() && !post.song && !post.movie && !post.imageUri && !post.referencedWallPostId) parts.push('note');
-  if (post.voice) parts.push('voice');
-  if (parts.length === 0) return null;
-  if (parts.length === 1) return parts[0];
-  return `${parts.slice(0, -1).join(', ')} + ${parts[parts.length - 1]}`;
-}
 
 function ReferencedPolaroidPreview({
   post,
@@ -847,14 +800,6 @@ function ReferencedPolaroidPreview({
   );
 }
 
-function getStablePolaroidTilt(id: string) {
-  let hash = 0;
-  for (let index = 0; index < id.length; index += 1) {
-    hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
-  }
-  return (hash / 0xffffffff - 0.5) * 5;
-}
-
 function withAlpha(color: string, alpha: number) {
   const match = /^#([0-9a-f]{6})$/i.exec(color);
   if (!match) return color;
@@ -881,6 +826,13 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, mode: 'light' | 'dark')
       justifyContent: 'center',
     },
     pressed: { transform: [{ scale: 0.985 }] },
+    polaroidPromptStack: {
+      alignItems: 'center',
+    },
+    polaroidPromptAbove: {
+      width: 260,
+      paddingTop: spacing.sm,
+    },
     promptWrappedCard: {
       width: '100%',
       alignSelf: 'stretch',

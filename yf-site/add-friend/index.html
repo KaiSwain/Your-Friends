@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="apple-itunes-app" content="app-id=6764458556">
+    <title>You're invited · Your Friends App</title>
+    <meta name="description" content="A friend invited you to Your Friends App. Get the app to add them.">
+    <link rel="stylesheet" href="/styles.css">
+    <style>
+      .invite-wrap {
+        width: min(560px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 48px 0 80px;
+      }
+      .invite-card {
+        border: 1px solid var(--line);
+        border-radius: 32px;
+        background: rgba(255, 255, 255, 0.86);
+        box-shadow: var(--shadow);
+        padding: 40px 28px 32px;
+        text-align: center;
+      }
+      .invite-card h1 {
+        margin: 16px auto 10px;
+        font-size: clamp(2rem, 6vw, 2.8rem);
+      }
+      .invite-card .lead { margin: 0 auto 28px; }
+      .code-label {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .code {
+        font-size: clamp(1.8rem, 7vw, 2.6rem);
+        font-weight: 850;
+        letter-spacing: 0.16em;
+        color: var(--ink);
+        background: var(--accent);
+        border: 1px dashed var(--brand);
+        border-radius: 18px;
+        padding: 18px 12px;
+        margin: 0 0 10px;
+        cursor: pointer;
+        user-select: all;
+      }
+      .copy-hint { color: var(--muted); font-size: 0.95rem; margin: 0 0 26px; min-height: 22px; }
+      .invite-actions { display: grid; gap: 12px; }
+      .invite-actions .button { width: 100%; }
+      .redirect-note { color: var(--muted); font-size: 0.9rem; margin: 20px 0 0; min-height: 20px; }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Your Friends App home">
+        <span class="brand-mark">YF</span>
+        <span>Your Friends App</span>
+      </a>
+      <nav class="nav" aria-label="Main navigation">
+        <a href="/support/">Support</a>
+        <a href="/privacypolicy/">Privacy Policy</a>
+      </nav>
+    </header>
+
+    <main class="invite-wrap">
+      <section class="invite-card">
+        <span class="eyebrow">You've been invited</span>
+        <h1>Add your friend on Your Friends App</h1>
+        <p class="lead">A warm, simple place to save memories, notes, songs, and birthdays with the people who matter most.</p>
+
+        <div id="codeBlock">
+          <p class="code-label">Your friend code</p>
+          <div class="code" id="codeValue" role="button" tabindex="0" aria-label="Tap to copy friend code"></div>
+          <p class="copy-hint" id="copyHint">Tap the code to copy it — you'll enter it in the app.</p>
+        </div>
+
+        <div class="invite-actions">
+          <a class="button" id="storeBtn" href="/appstore">Get Your Friends App</a>
+          <a class="button secondary" id="openAppBtn" href="#">I already have the app</a>
+        </div>
+
+        <p class="redirect-note" id="redirectNote"></p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>&copy; 2026 Your Friends App</span>
+      <span><a href="mailto:support@yourfriendsapp.com">support@yourfriendsapp.com</a></span>
+    </footer>
+
+    <script>
+      (function () {
+        var APP_STORE_URL = "/appstore";
+        var AUTO_REDIRECT_MS = 6000;
+
+        function getCode() {
+          var params = new URLSearchParams(window.location.search);
+          var raw = params.get("code") || "";
+          return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+        }
+
+        var code = getCode();
+        var codeBlock = document.getElementById("codeBlock");
+        var codeValue = document.getElementById("codeValue");
+        var copyHint = document.getElementById("copyHint");
+        var openAppBtn = document.getElementById("openAppBtn");
+        var storeBtn = document.getElementById("storeBtn");
+        var redirectNote = document.getElementById("redirectNote");
+
+        if (code) {
+          codeValue.textContent = code;
+        } else {
+          codeBlock.classList.add("hidden");
+        }
+
+        function copyCode() {
+          if (!code) return;
+          var done = function () { copyHint.textContent = "Copied! Paste it in the app after installing."; };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(code).then(done, done);
+          } else {
+            var sel = window.getSelection();
+            var range = document.createRange();
+            range.selectNodeContents(codeValue);
+            sel.removeAllRanges();
+            sel.addRange(range);
+            try { document.execCommand("copy"); done(); } catch (e) {}
+          }
+        }
+        codeValue.addEventListener("click", copyCode);
+        codeValue.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); copyCode(); }
+        });
+
+        // If the app is installed, iOS opens it via Universal Links before this
+        // page ever loads. This button is the fallback for the rare case the
+        // link was pasted into the address bar (where Universal Links don't fire).
+        openAppBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          var scheme = "yourfriends://add-friend" + (code ? "?code=" + encodeURIComponent(code) : "");
+          window.location.href = scheme;
+        });
+
+        // Anyone who actually sees this page doesn't have the app, so send them
+        // to the App Store. Wait a few seconds so they can copy the code first,
+        // and cancel if they interact with the page.
+        var cancelled = false;
+        function cancel() { cancelled = true; redirectNote.textContent = ""; }
+        ["touchstart", "scroll", "keydown"].forEach(function (evt) {
+          window.addEventListener(evt, cancel, { once: true, passive: true });
+        });
+        [codeValue, openAppBtn, storeBtn].forEach(function (el) {
+          el.addEventListener("click", cancel, { once: true });
+        });
+
+        redirectNote.textContent = "Taking you to the App Store…";
+        setTimeout(function () {
+          if (!cancelled) window.location.href = APP_STORE_URL;
+        }, AUTO_REDIRECT_MS);
+      })();
+    </script>
+  </body>
+</html>

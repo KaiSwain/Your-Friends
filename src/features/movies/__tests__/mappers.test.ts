@@ -56,6 +56,7 @@ describe('rowToMovieReviewRequest', () => {
       },
       completedWallPostId: 'post-1',
       createdAt: '2026-05-01T00:00:00Z',
+      expiresAt: '2026-05-08T00:00:00.000Z',
       updatedAt: '2026-05-02T00:00:00Z',
       completedAt: '2026-05-02T00:00:00Z',
     });

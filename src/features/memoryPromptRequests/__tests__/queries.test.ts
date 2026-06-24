@@ -380,7 +380,7 @@ function promptRequestRow(overrides: Record<string, unknown> = {}) {
     response_body: null,
     completed_wall_post_id: null,
     created_at: '2026-05-24T10:00:00.000Z',
-    expires_at: '2026-06-01T10:00:00.000Z',
+    expires_at: '2999-01-01T00:00:00.000Z',
     updated_at: '2026-05-24T10:00:00.000Z',
     ...overrides,
   };

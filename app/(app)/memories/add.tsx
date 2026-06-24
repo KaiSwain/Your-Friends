@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
@@ -25,6 +25,9 @@ import { isCardColorUnlocked, getCardColorLockMessage } from '../../../src/featu
 import { useAddMemory } from '../../../src/hooks/useAddMemory';
 import { AI_CAPTION_TONES, AiCaptionContext, AiCaptionTone, generateAiCaptions } from '../../../src/lib/aiCaptions';
 import { normalizeLocationName } from '../../../src/lib/memoryLocation';
+import { extractAssetMemoryDateKey } from '../../../src/lib/memoryExifDate';
+import { resolveImportedAssetMetadata } from '../../../src/lib/memoryAssetMetadata';
+import { reverseGeocodeLocationLabel } from '../../../src/lib/memoryLocationSearch';
 import { memoryImagePickerOptions, memoryMediaPickerOptions } from '../../../src/lib/imagePickerPresets';
 import { backOnce, dismissToOnce, pushOnce, replaceOnce, shouldPopForBackTarget } from '../../../src/lib/navigationGuard';
 import { showAiCaptionPaywall, showGalleryPaywall, showMediaMemoryPaywall } from '../../../src/lib/premiumGates';
@@ -46,7 +49,7 @@ import { Contact, CreateWallPostInput, PeopleListItem, SongAttachment, VoiceAtta
 type MemoryKind = 'note' | 'media' | 'photo' | 'song';
 type PhotoSource = 'camera' | 'gallery' | null;
 
-const REGULAR_VIDEO_MAX_DURATION_MS = 5000;
+const REGULAR_VIDEO_MAX_DURATION_MS = 30000;
 
 export default function AddMemoryScreen() {
   const router = useRouter();
@@ -334,6 +337,43 @@ export default function AddMemoryScreen() {
     };
   }
 
+  // Date a camera-roll import to when the photo was actually taken (from EXIF),
+  // revealing the date control pre-filled so the user can confirm or tweak it.
+  // Falls back to today when there's no usable metadata or it's a fresh capture.
+  function applyImportedMemoryDate(asset: ImagePicker.ImagePickerAsset | null) {
+    const detected = asset ? extractAssetMemoryDateKey(asset) : null;
+    if (detected) {
+      setMemoryDateInput(detected);
+      setEnableMemoryDate(true);
+    } else {
+      setMemoryDateInput(getDateKey(new Date()));
+    }
+  }
+
+  // Auto-fill the date and location of a camera-roll import from the photo's
+  // library metadata (with an EXIF fallback). iOS strips EXIF GPS from picked
+  // images, so the date/location come from expo-media-library by assetId. This
+  // is async and best-effort: it quietly refines the pre-filled date and reveals
+  // the location control when a place is found.
+  function applyImportedAssetMetadata(asset: ImagePicker.ImagePickerAsset | null) {
+    if (!asset) return;
+    void resolveImportedAssetMetadata(asset)
+      .then(async ({ dateKey, coords }) => {
+        if (dateKey) {
+          setMemoryDateInput(dateKey);
+          setEnableMemoryDate(true);
+        }
+        if (coords) {
+          const label = await reverseGeocodeLocationLabel(coords.latitude, coords.longitude);
+          if (label) {
+            setLocationNameInput(label);
+            setEnableLocation(true);
+          }
+        }
+      })
+      .catch(() => {});
+  }
+
   async function pickGalleryPhoto() {
     if (!isPremium) {
       showGalleryPaywall(() => pushOnce(router, '/(app)/store'));
@@ -342,11 +382,13 @@ export default function AddMemoryScreen() {
 
     const result = await ImagePicker.launchImageLibraryAsync(memoryImagePickerOptions);
     if (!result.canceled && result.assets[0]?.uri) {
-      setImageUri(result.assets[0].uri);
+      const asset = result.assets[0];
+      setImageUri(asset.uri);
       setVideoUri(null);
       setVideoMuted(false);
       setPhotoSource('gallery');
-      setMemoryDateInput(getDateKey(new Date()));
+      applyImportedMemoryDate(asset);
+      applyImportedAssetMetadata(asset);
       setMemoryKind('photo');
       setShowingBack(false);
     }
@@ -356,6 +398,21 @@ export default function AddMemoryScreen() {
     if (!isPremium) {
       showMediaMemoryPaywall(() => pushOnce(router, '/(app)/store'));
       return;
+    }
+
+    if (source === 'camera') {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          'Camera access needed',
+          'Allow camera access so you can take a photo or video for this memory. You can turn it on in Settings.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => { void Linking.openSettings(); } },
+          ],
+        );
+        return;
+      }
     }
 
     let result: ImagePicker.ImagePickerResult;
@@ -373,7 +430,7 @@ export default function AddMemoryScreen() {
     if (asset.type === 'video') {
       const durationMs = asset.duration ?? null;
       if (durationMs && durationMs > REGULAR_VIDEO_MAX_DURATION_MS + 250) {
-        Alert.alert('Video too long', 'Regular video memories can be up to 5 seconds.');
+        Alert.alert('Video too long', 'Regular video memories can be up to 30 seconds.');
         return;
       }
       setImageUri(null);
@@ -387,7 +444,8 @@ export default function AddMemoryScreen() {
     setSelectedSong(null);
     setSongPreviewRequestKey(null);
     setPhotoSource(source);
-    setMemoryDateInput(getDateKey(new Date()));
+    applyImportedMemoryDate(source === 'gallery' ? asset : null);
+    applyImportedAssetMetadata(source === 'gallery' ? asset : null);
     setMemoryKind('media');
     setShowingBack(false);
     setFilter(null);

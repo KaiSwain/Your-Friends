@@ -1,0 +1,14 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appIDs": ["926MY8DT2K.com.yourfriends.app"],
+        "components": [
+          { "/": "/add-friend", "comment": "Friend invite link" },
+          { "/": "/add-friend/*", "comment": "Friend invite link with subpaths" }
+        ]
+      }
+    ]
+  }
+}

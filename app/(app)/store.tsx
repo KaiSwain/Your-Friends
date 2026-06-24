@@ -144,9 +144,10 @@ export default function StoreScreen() {
 
   function confirmSubscribe(planId: PremiumPlanId = PREMIUM_PRODUCT_IDS.yearly) {
     const plan = premiumPlans.find((candidate) => candidate.id === planId);
+    const priceLabel = `${plan?.displayPrice ?? PREMIUM_SUBSCRIPTION_PRICE}${plan ? ` per ${plan.period}` : ''}`;
     Alert.alert(
       'Subscribe to Premium',
-      `Premium unlocks the calendar, prompts, gallery photos, every theme, AI captions, shake-to-develop, premium borders, card colors, ad-free use, and future releases. ${plan?.displayPrice ?? PREMIUM_SUBSCRIPTION_PRICE}${plan ? ` / ${plan.period}` : ''}. Cancel anytime.`,
+      `Premium unlocks the calendar, prompts, gallery photos, every theme, AI captions, shake-to-develop, premium borders, card colors, ad-free use, and future releases.\n\n${priceLabel}. This is an auto-renewable subscription — it renews automatically each period and your Apple ID is charged unless you cancel at least 24 hours before the period ends. Manage or cancel anytime in your App Store account settings.`,
       [
         { text: 'Not now', style: 'cancel' },
         { text: 'Subscribe', onPress: () => purchase(planId).catch((error) => Alert.alert('Purchase failed', error instanceof Error ? error.message : 'Try again in a moment.')) },
@@ -188,6 +189,8 @@ export default function StoreScreen() {
     : isPremium
       ? 'Premium active \u00b7 every theme unlocked'
       : 'Premium unlocks everything';
+  const yearlyPlan = premiumPlans.find((plan) => plan.id === PREMIUM_PRODUCT_IDS.yearly);
+  const yearlyPriceLabel = yearlyPlan ? `${yearlyPlan.displayPrice} / ${yearlyPlan.period}` : PREMIUM_SUBSCRIPTION_PRICE;
   const previewTheme = themes[previewThemeName];
   const previewColors = previewTheme[previewMode];
   const previewFonts = fontSets[previewThemeName] ?? fontSets.default;
@@ -270,7 +273,7 @@ export default function StoreScreen() {
         <Text style={styles.bodyText}>
           Premium unlocks every theme, every card color, prompts, gift notes, media memories, birthdays, events, reminders, gallery photos, AI captions, and shake-to-develop.
         </Text>
-        <Text style={styles.priceLine}>{PREMIUM_SUBSCRIPTION_PRICE}</Text>
+        <Text style={styles.priceLine}>{yearlyPriceLabel}</Text>
         {isPremium ? (
           <ActionButton label="Cancel subscription" onPress={confirmCancel} variant="ghost" />
         ) : (

@@ -127,8 +127,26 @@ export function MemoryLocationPicker({ value, onChange }: MemoryLocationPickerPr
     setSearchSuggestions([]);
   }
 
+  function handleUseCustom() {
+    const custom = searchText.trim();
+    if (!custom) return;
+    onChange(custom);
+    setSearchText('');
+    setSearchSuggestions([]);
+    Keyboard.dismiss();
+  }
+
   const showNearbyPanel = !isSearching;
   const showSearchPanel = isSearching && (searchLoading || searchSuggestions.length > 0);
+  // Offer a custom entry whenever the typed text isn't already an exact suggestion,
+  // so a place that never shows up can still be tagged.
+  const trimmedQuery = searchText.trim();
+  const hasExactMatch = searchSuggestions.some(
+    (suggestion) => suggestion.label.trim().toLowerCase() === trimmedQuery.toLowerCase(),
+  );
+  const showCustomEntry = trimmedQuery.length >= 1
+    && trimmedQuery.toLowerCase() !== value.trim().toLowerCase()
+    && !hasExactMatch;
 
   return (
     <View style={styles.section}>
@@ -184,14 +202,28 @@ export function MemoryLocationPicker({ value, onChange }: MemoryLocationPickerPr
         />
       ) : null}
 
+      {showCustomEntry ? (
+        <Pressable
+          onPress={handleUseCustom}
+          style={styles.customRow}
+          accessibilityRole="button"
+          accessibilityLabel={`Use ${trimmedQuery} as the location`}
+        >
+          <Ionicons name="add-circle-outline" size={18} color={colors.accent} />
+          <Text style={styles.customRowText} numberOfLines={2}>Use “{trimmedQuery}”</Text>
+        </Pressable>
+      ) : null}
+
       <TextInput
         value={searchText}
         onChangeText={setSearchText}
-        placeholder="Search for another place"
+        placeholder="Search or type your own place"
         placeholderTextColor={colors.inkMuted}
         autoCapitalize="words"
         autoCorrect={false}
         maxLength={80}
+        returnKeyType="done"
+        onSubmitEditing={handleUseCustom}
         style={styles.input}
       />
     </View>
@@ -247,7 +279,7 @@ function SuggestionRow({
                 <View style={[styles.suggestionIcon, selected && styles.suggestionIconActive]}>
                   <Ionicons name={kindIcons[suggestion.kind]} size={15} color={selected ? accentColor : inactiveIconColor} />
                 </View>
-                <Text style={[styles.suggestionLabel, selected && styles.suggestionLabelActive]} numberOfLines={1}>
+                <Text style={[styles.suggestionLabel, selected && styles.suggestionLabelActive]}>
                   {suggestion.label}
                 </Text>
                 {selected ? <Ionicons name="checkmark-circle" size={16} color={accentColor} /> : null}
@@ -319,6 +351,23 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       fontSize: 14,
       color: colors.ink,
     },
+    customRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.accent,
+      backgroundColor: colors.paper,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    customRowText: {
+      flex: 1,
+      fontFamily: fonts.bodyBold,
+      fontSize: 14,
+      color: colors.accent,
+    },
     suggestionSection: {
       gap: spacing.xs,
     },
@@ -346,7 +395,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
     },
     suggestionChip: {
       minWidth: 112,
-      maxWidth: 148,
       minHeight: 44,
       borderRadius: radius.pill,
       borderWidth: 1,
@@ -375,7 +423,6 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet) =>
       backgroundColor: colors.paper,
     },
     suggestionLabel: {
-      flex: 1,
       fontFamily: fonts.bodyMedium,
       fontSize: 12,
       color: colors.ink,

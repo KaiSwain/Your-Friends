@@ -55,8 +55,22 @@ import {
 import { usePrioritizedWallImageLoading } from '../../../../src/hooks/usePrioritizedWallImageLoading';
 import { useSyntheticNotificationReads } from '../../../../src/hooks/useSyntheticNotificationReads';
 import type { ContactPrivateNoteBlock, WallPost } from '../../../../src/types/domain';
+import {
+  MEMORY_FILTER_OPTIONS,
+  type MemoryFilter,
+  addStringsToSet,
+  filterWallPosts,
+  formatNoteDate,
+  getNextNoteSortOrder,
+  getNotePreview,
+  getReplyGridExtraHeight,
+  mergeStringSets,
+  normalizePrivateNoteLink,
+  splitPrivateNoteInlineLinks,
+  uniqueStrings,
+} from './contactProfileHelpers';
 
-const REGULAR_VIDEO_MAX_DURATION_MS = 5000;
+const REGULAR_VIDEO_MAX_DURATION_MS = 30000;
 
 export default function ContactProfileScreen() {
   const router = useRouter();
@@ -890,7 +904,7 @@ export default function ContactProfileScreen() {
     const asset = result.canceled ? null : result.assets[0];
     if (!asset?.uri) return;
     if (asset.type === 'video' && asset.duration && asset.duration > REGULAR_VIDEO_MAX_DURATION_MS + 250) {
-      Alert.alert('Video too long', 'Regular video memories can be up to 5 seconds.');
+      Alert.alert('Video too long', 'Regular video memories can be up to 30 seconds.');
       return;
     }
     pushOnce(router, {
@@ -922,7 +936,7 @@ export default function ContactProfileScreen() {
     const asset = result.canceled ? null : result.assets[0];
     if (!asset?.uri) return;
     if (asset.type === 'video' && asset.duration && asset.duration > REGULAR_VIDEO_MAX_DURATION_MS + 250) {
-      Alert.alert('Video too long', 'Regular video memories can be up to 5 seconds.');
+      Alert.alert('Video too long', 'Regular video memories can be up to 30 seconds.');
       return;
     }
     pushOnce(router, {
@@ -2015,55 +2029,6 @@ export default function ContactProfileScreen() {
   );
 }
 
-function getNotePreview(blocks: ContactPrivateNoteBlock[]) {
-  const text = blocks.find((block) => block.type === 'text' && block.content?.trim())?.content?.trim();
-  if (text) return text;
-  const linkBlocks = blocks.filter((block) => block.type === 'link' && (block.url?.trim() || block.content?.trim()));
-  if (linkBlocks.length === 1) return linkBlocks[0].url?.trim() || linkBlocks[0].content?.trim() || '1 link';
-  if (linkBlocks.length > 1) return `${linkBlocks.length} links`;
-  const photoCount = blocks.filter((block) => block.type === 'image').length;
-  if (photoCount > 0) return photoCount === 1 ? '1 photo' : `${photoCount} photos`;
-  return '';
-}
-
-type MemoryFilter = 'all' | 'photos' | 'notes' | 'songs' | 'movies' | 'prompts';
-
-const MEMORY_FILTER_OPTIONS: { key: MemoryFilter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'photos', label: 'Photos' },
-  { key: 'notes', label: 'Notes' },
-  { key: 'songs', label: 'Songs' },
-  { key: 'movies', label: 'Movies' },
-  { key: 'prompts', label: 'Prompts' },
-];
-
-function filterWallPosts(posts: WallPost[], filter: MemoryFilter) {
-  if (filter === 'all') return posts;
-  if (filter === 'photos') return posts.filter((post) => post.postType === 'polaroid' || post.postType === 'media');
-  if (filter === 'notes') return posts.filter((post) => post.postType === 'note');
-  if (filter === 'songs') return posts.filter((post) => post.postType === 'song' || Boolean(post.song));
-  if (filter === 'movies') return posts.filter((post) => post.postType === 'movie');
-  return posts.filter((post) => Boolean(post.memoryPromptRequestId || post.promptText || post.promptType));
-}
-
-function getReplyGridExtraHeight(replies: { voice?: unknown }[]) {
-  const visibleReplies = replies.slice(-3);
-  return 34 + visibleReplies.reduce((height, reply) => height + (reply.voice ? 42 : 28), 0) + (replies.length > visibleReplies.length ? 24 : 0);
-}
-
-function mergeStringSets(left: ReadonlySet<string>, right: ReadonlySet<string> | readonly string[]) {
-  return new Set([...left, ...right]);
-}
-
-function addStringsToSet(current: Set<string>, values: readonly string[]) {
-  if (values.every((value) => current.has(value))) return current;
-  return new Set([...current, ...values]);
-}
-
-function uniqueStrings(values: readonly string[]) {
-  return Array.from(new Set(values));
-}
-
 function withAlpha(color: string, alpha: number) {
   const match = /^#([0-9a-f]{6})$/i.exec(color);
   if (!match) return color;
@@ -2072,53 +2037,6 @@ function withAlpha(color: string, alpha: number) {
   const green = parseInt(value.slice(2, 4), 16);
   const blue = parseInt(value.slice(4, 6), 16);
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-}
-
-function normalizePrivateNoteLink(value: string | null | undefined) {
-  const trimmed = value?.trim() ?? '';
-  if (!trimmed) return '';
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-}
-
-type PrivateNoteInlinePart = { type: 'text' | 'link'; text: string };
-
-const PRIVATE_NOTE_INLINE_LINK_REGEX = /((?:https?:\/\/|www\.)[^\s<>()]+|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>()]*)?)/gi;
-const PRIVATE_NOTE_TRAILING_LINK_PUNCTUATION = /[.,!?;:)\]]$/;
-
-function splitPrivateNoteInlineLinks(value: string): PrivateNoteInlinePart[] {
-  const parts: PrivateNoteInlinePart[] = [];
-  let lastIndex = 0;
-
-  for (const match of value.matchAll(PRIVATE_NOTE_INLINE_LINK_REGEX)) {
-    const rawMatch = match[0];
-    const matchIndex = match.index ?? 0;
-    let linkText = rawMatch;
-    let trailingText = '';
-
-    while (linkText && PRIVATE_NOTE_TRAILING_LINK_PUNCTUATION.test(linkText)) {
-      trailingText = linkText.slice(-1) + trailingText;
-      linkText = linkText.slice(0, -1);
-    }
-
-    if (!linkText) continue;
-    if (matchIndex > lastIndex) parts.push({ type: 'text', text: value.slice(lastIndex, matchIndex) });
-    parts.push({ type: 'link', text: linkText });
-    if (trailingText) parts.push({ type: 'text', text: trailingText });
-    lastIndex = matchIndex + rawMatch.length;
-  }
-
-  if (lastIndex < value.length) parts.push({ type: 'text', text: value.slice(lastIndex) });
-  return parts.length > 0 ? parts : [{ type: 'text', text: value }];
-}
-
-function getNextNoteSortOrder(blocks: ContactPrivateNoteBlock[]) {
-  return blocks.reduce((max, block) => Math.max(max, block.sortOrder), -1) + 1;
-}
-
-function formatNoteDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Updated just now';
-  return `Updated ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
 }
 
 const HERO_PHOTO = 200;
@@ -2167,6 +2085,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgr
     },
     backButton: {
       alignSelf: 'flex-start',
+      flexShrink: 0,
       minHeight: 40,
       borderRadius: 999,
       borderWidth: 0,
@@ -2176,11 +2095,13 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgr
       justifyContent: 'center',
     },
     backLabel: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.ink },
-    topBar: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    topBar: { width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
     topBarRight: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.xs,
+      flexShrink: 1,
+      minWidth: 0,
       borderRadius: radius.pill,
       backgroundColor: withAlpha(colors.paper, 0.16),
       padding: 3,
@@ -2189,6 +2110,8 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgr
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.xs,
+      flexShrink: 1,
+      minWidth: 0,
       maxWidth: 148,
       borderRadius: radius.pill,
       borderWidth: 0,
@@ -2212,6 +2135,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgr
       position: 'relative',
       width: 36,
       height: 36,
+      flexShrink: 0,
       borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
@@ -2233,6 +2157,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgr
     pinButton: {
       width: 36,
       height: 36,
+      flexShrink: 0,
       borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
@@ -2262,6 +2187,7 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgr
     deleteProfileLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.white },
     editButton: {
       minHeight: 36,
+      flexShrink: 0,
       justifyContent: 'center',
       paddingVertical: spacing.xs,
       paddingHorizontal: spacing.md,
@@ -2269,8 +2195,8 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgr
       borderWidth: 0,
       backgroundColor: 'transparent',
     },
-    editButtonActive: { backgroundColor: tint },
-    editButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 14, color: tint },
+    editButtonActive: { backgroundColor: colors.accent },
+    editButtonLabel: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.accent },
     editButtonLabelActive: { color: colors.white },
     noteTopSaveButton: {
       paddingVertical: spacing.xs,

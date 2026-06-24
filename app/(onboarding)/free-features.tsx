@@ -52,6 +52,12 @@ const FREE_FEATURES: FreeFeature[] = [
     accent: semanticColors.spotifyGreen,
   },
   {
+    icon: 'lock-closed-outline',
+    title: 'Private notes',
+    body: 'Jot private notes on any friend that only you can see, saved right on your device and synced when you are back online.',
+    accent: '#5E83A8',
+  },
+  {
     icon: 'film-outline',
     title: 'Movie ratings',
     body: 'Send movie requests and collect friend ratings for free whenever you want their take on what you watched.',

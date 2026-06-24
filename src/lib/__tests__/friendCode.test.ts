@@ -27,6 +27,14 @@ describe('extractFriendCode', () => {
     expect(extractFriendCode('yourfriends://add-friend?code=AB3XK7PN')).toBe('AB3XK7PN');
   });
 
+  it('extracts a code from an https universal invite link', () => {
+    expect(extractFriendCode('https://yourfriendsapp.com/add-friend?code=AB3XK7PN')).toBe('AB3XK7PN');
+  });
+
+  it('returns empty string for the bare https add-friend link (no code)', () => {
+    expect(extractFriendCode('https://yourfriendsapp.com/add-friend')).toBe('');
+  });
+
   it('returns empty string when no value is provided', () => {
     expect(extractFriendCode('')).toBe('');
   });
@@ -46,11 +54,11 @@ describe('extractFriendCode', () => {
 
 describe('createFriendInviteLink', () => {
   it('creates a deep link with the normalized code in the query string', () => {
-    expect(createFriendInviteLink('ab3x-k7pn')).toBe('yourfriends://add-friend?code=AB3XK7PN');
+    expect(createFriendInviteLink('ab3x-k7pn')).toBe('https://yourfriendsapp.com/add-friend?code=AB3XK7PN');
   });
 
   it('falls back to the add-friend route when no code is provided', () => {
-    expect(createFriendInviteLink('')).toBe('yourfriends://add-friend');
+    expect(createFriendInviteLink('')).toBe('https://yourfriendsapp.com/add-friend');
   });
 });
 
@@ -82,5 +90,26 @@ describe('createFriendCode', () => {
     const a = createFriendCode('seed-a', []);
     const b = createFriendCode('seed-b', []);
     expect(a).not.toBe(b);
+  });
+
+  it('spans a large code space across many seeds (regression: not just 32 codes)', () => {
+    // Regression guard: a previous implementation derived all 8 characters from
+    // a single hash, collapsing the space to ALPHABET.length (32) codes, which
+    // made sign-ups fail once ~32 users existed.
+    const codes = new Set<string>();
+    for (let i = 0; i < 500; i += 1) {
+      codes.add(createFriendCode(`user-${i}@example.com:id-${i}:0`, []));
+    }
+    expect(codes.size).toBeGreaterThan(450);
+  });
+
+  it('can still generate a fresh code when many codes are already taken', () => {
+    const taken: string[] = [];
+    for (let i = 0; i < 100; i += 1) {
+      taken.push(createFriendCode(`existing-${i}`, taken));
+    }
+    const next = createFriendCode('brand-new-user', taken);
+    expect(next).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/);
+    expect(taken).not.toContain(next);
   });
 });

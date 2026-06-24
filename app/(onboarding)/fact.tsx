@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -6,6 +6,7 @@ import { ActionButton } from '../../src/components/ActionButton';
 import { FormField } from '../../src/components/FormField';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { OnboardingFrame } from '../../src/features/onboarding/OnboardingFrame';
+import { useOnboarding } from '../../src/features/onboarding/OnboardingContext';
 import { useTheme } from '../../src/features/theme/ThemeContext';
 import type { ColorTokens } from '../../src/features/theme/themes';
 import { pushOnce } from '../../src/lib/navigationGuard';
@@ -23,11 +24,15 @@ const SUGGESTIONS = [
 export default function OnboardingFactScreen() {
   const router = useRouter();
   const { currentUser, updateProfile } = useAuth();
+  const { tourReplay } = useOnboarding();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
 
   const [fact, setFact] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Re-watching the tour from Help is informational only — don't ask for a fact.
+  if (tourReplay) return <Redirect href="/(onboarding)/features" />;
 
   async function handleContinue() {
     if (busy) return;

@@ -23,14 +23,22 @@ import { OnboardingProvider } from '../src/features/onboarding/OnboardingContext
 import { PremiumProvider } from '../src/features/premium/PremiumContext';
 import { PremiumThemeGuard } from '../src/features/premium/PremiumThemeGuard';
 import { ThemeProvider, useTheme } from '../src/features/theme/ThemeContext';
+import { captureException, initErrorReporting } from '../src/lib/errorReporting';
 import { initializeMobileAds } from '../src/lib/initializeMobileAds';
 import { asyncStoragePersister, queryClient } from '../src/lib/queryClient';
+import { OfflineBanner } from '../src/components/OfflineBanner';
 import { parseAppDeepLink } from '../src/lib/appDeepLinks';
 import { replaceOnce } from '../src/lib/navigationGuard';
 import { colors as fallbackColors } from '../src/theme/tokens';
 
+// Start crash reporting as early as possible (no-op until a DSN is configured).
+initErrorReporting();
+
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
   const router = useRouter();
+  useEffect(() => {
+    captureException(error, { boundary: 'root' });
+  }, [error]);
   return (
     <View style={errorStyles.container}>
       <Ionicons name="alert-circle-outline" size={48} color="#FAFAFA" style={{ marginBottom: 16 }} />
@@ -84,7 +92,10 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.gestureRoot}>
-      <PersistQueryClientProvider client={queryClient} persistOptions={{ persister: asyncStoragePersister }}>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{ persister: asyncStoragePersister, maxAge: 7 * 24 * 60 * 60 * 1000 }}
+      >
         <ThemeProvider>
           <MusicPreferenceProvider>
             <AuthProvider>
@@ -124,6 +135,7 @@ function ThemedStack() {
         <Stack.Screen name="(onboarding)" />
         <Stack.Screen name="(app)" />
       </Stack>
+      <OfflineBanner />
     </>
   );
 }

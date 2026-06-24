@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Keyboard, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent, Platform, RefreshControl, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { ComponentType, ReactElement, ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, FlatList, Keyboard, KeyboardAvoidingView, type ListRenderItem, NativeScrollEvent, NativeSyntheticEvent, Platform, RefreshControl, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets, type Edge } from 'react-native-safe-area-context';
 
 import { CachedRemoteImage } from './CachedRemoteImage';
@@ -13,8 +13,8 @@ import { spacing } from '../theme/tokens';
 const FLOATING_TAB_BAR_CLEARANCE = 64 + spacing.xxl + spacing.sm;
 const FLOATING_TAB_BAR_FOOTER_CLEARANCE = 64 + spacing.sm;
 
-interface AppScreenProps {
-  children: ReactNode;
+interface AppScreenProps<ItemT = unknown> {
+  children?: ReactNode;
   contentContainerStyle?: StyleProp<ViewStyle>;
   footer?: ReactNode;
   footerAvoidsFloatingTabBar?: boolean;
@@ -29,11 +29,22 @@ interface AppScreenProps {
   floatingHeaderOnScroll?: boolean;
   safeAreaEdges?: Edge[];
   scrollViewRef?: RefObject<ScrollView | null>;
+  // Opt-in virtualized list mode. When `listData` and `renderItem` are provided
+  // the screen renders a FlatList (virtualized) instead of a ScrollView, while
+  // keeping all of the same scroll chrome, refresh, and padding behavior. When
+  // these are omitted the screen behaves exactly as before.
+  listData?: ReadonlyArray<ItemT>;
+  renderItem?: ListRenderItem<ItemT>;
+  keyExtractor?: (item: ItemT, index: number) => string;
+  ListHeaderComponent?: ReactElement | ComponentType | null;
+  ListEmptyComponent?: ReactElement | ComponentType | null;
+  ItemSeparatorComponent?: ComponentType | null;
+  listRef?: RefObject<FlatList<ItemT> | null>;
 }
 
 const EDGE_TO_EDGE_SAFE_AREA_EDGES: Edge[] = ['left', 'right'];
 
-export function AppScreen({ children, contentContainerStyle, footer, footerAvoidsFloatingTabBar = false, gradientColors, header, scroll = true, scrollEnabled = true, onRefresh, refreshing = false, stickyHeaderIndices, onScroll, floatingHeaderOnScroll = false, safeAreaEdges = EDGE_TO_EDGE_SAFE_AREA_EDGES, scrollViewRef }: AppScreenProps) {
+export function AppScreen<ItemT,>({ children, contentContainerStyle, footer, footerAvoidsFloatingTabBar = false, gradientColors, header, scroll = true, scrollEnabled = true, onRefresh, refreshing = false, stickyHeaderIndices, onScroll, floatingHeaderOnScroll = false, safeAreaEdges = EDGE_TO_EDGE_SAFE_AREA_EDGES, scrollViewRef, listData, renderItem, keyExtractor, ListHeaderComponent, ListEmptyComponent, ItemSeparatorComponent, listRef }: AppScreenProps<ItemT>) {
   const { backgroundBlur, colors, resolvedMode } = useTheme();
   const { currentUser } = useAuth();
   const { setScrollChromeHidden } = useScrollChrome();
@@ -166,7 +177,46 @@ export function AppScreen({ children, contentContainerStyle, footer, footerAvoid
   const contentPaddingBottom = bottomInset + FLOATING_TAB_BAR_CLEARANCE + screenPaddingBottom + keyboardFallbackPadding;
   const footerPaddingBottom = bottomInset + spacing.lg + (footerAvoidsFloatingTabBar ? FLOATING_TAB_BAR_FOOTER_CLEARANCE : 0);
 
-  const body = scroll ? (
+  const sharedContentContainerStyle = [
+    styles.scrollContent,
+    contentContainerStyle,
+    { paddingBottom: contentPaddingBottom },
+    contentPaddingTop ? { paddingTop: contentPaddingTop } : undefined,
+    floatingHeaderPaddingTop ? { paddingTop: floatingHeaderPaddingTop } : undefined,
+  ];
+
+  const isListMode = !!listData && !!renderItem;
+
+  const body = isListMode ? (
+    <FlatList<ItemT>
+      ref={listRef}
+      style={styles.body}
+      data={listData as ItemT[]}
+      renderItem={renderItem}
+      keyExtractor={keyExtractor}
+      showsVerticalScrollIndicator={false}
+      scrollEnabled={scrollEnabled}
+      stickyHeaderIndices={stickyHeaderIndices}
+      ListHeaderComponent={ListHeaderComponent ?? undefined}
+      ListEmptyComponent={ListEmptyComponent ?? undefined}
+      ItemSeparatorComponent={ItemSeparatorComponent ?? undefined}
+      onScroll={handleScroll}
+      onScrollBeginDrag={handleScrollBeginDrag}
+      onScrollEndDrag={handleScrollEndDrag}
+      onMomentumScrollBegin={handleMomentumScrollBegin}
+      onMomentumScrollEnd={handleMomentumScrollEnd}
+      scrollEventThrottle={16}
+      contentContainerStyle={sharedContentContainerStyle}
+      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+      keyboardShouldPersistTaps="handled"
+      automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+      refreshControl={
+        onRefresh ? (
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.ink} />
+        ) : undefined
+      }
+    />
+  ) : scroll ? (
     <ScrollView
       ref={scrollViewRef}
       style={styles.body}

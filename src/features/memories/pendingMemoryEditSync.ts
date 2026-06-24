@@ -25,6 +25,10 @@ export async function retryPendingMemoryEdit(queryClient: QueryClient, pendingEd
   await syncPendingMemoryEditToCache(queryClient, record);
 }
 
+// Mirrors the guard in pendingMemorySync: prevents the same edit from syncing
+// twice when launch/foreground/reconnect triggers overlap.
+const inFlightEditSyncIds = new Set<string>();
+
 export async function syncAllPendingMemoryEdits(queryClient: QueryClient) {
   const records = await loadPendingMemoryEdits();
   applyPendingMemoryEditsToCache(queryClient, records);
@@ -32,6 +36,8 @@ export async function syncAllPendingMemoryEdits(queryClient: QueryClient) {
 }
 
 export async function syncPendingMemoryEditToCache(queryClient: QueryClient, record: PendingMemoryEditRecord) {
+  if (inFlightEditSyncIds.has(record.id)) return;
+  inFlightEditSyncIds.add(record.id);
   markPendingMemoryEditInCache(queryClient, { ...record, status: 'saving', error: null });
   try {
     const syncedPost = await syncPendingMemoryEdit(record);
@@ -52,6 +58,8 @@ export async function syncPendingMemoryEditToCache(queryClient: QueryClient, rec
     const status = isConnectionError(message) ? 'waiting' : 'failed';
     const updated = await updatePendingMemoryEditStatus(record.id, status, message);
     markPendingMemoryEditInCache(queryClient, updated ?? { ...record, status, error: message });
+  } finally {
+    inFlightEditSyncIds.delete(record.id);
   }
 }
 
