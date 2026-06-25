@@ -27,6 +27,7 @@ import { captureException, initErrorReporting } from '../src/lib/errorReporting'
 import { initializeMobileAds } from '../src/lib/initializeMobileAds';
 import { asyncStoragePersister, queryClient } from '../src/lib/queryClient';
 import { OfflineBanner } from '../src/components/OfflineBanner';
+import { UpdateGate } from '../src/components/UpdateGate';
 import { parseAppDeepLink } from '../src/lib/appDeepLinks';
 import { replaceOnce } from '../src/lib/navigationGuard';
 import { colors as fallbackColors } from '../src/theme/tokens';
@@ -136,6 +137,7 @@ function ThemedStack() {
         <Stack.Screen name="(app)" />
       </Stack>
       <OfflineBanner />
+      <UpdateGate />
     </>
   );
 }

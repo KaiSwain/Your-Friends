@@ -11,6 +11,7 @@ import { useAuth } from '../../../src/features/auth/AuthContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
 import { memoryImagePickerOptions } from '../../../src/lib/imagePickerPresets';
+import { supabase } from '../../../src/lib/supabase';
 import { backOnce } from '../../../src/lib/navigationGuard';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
 import { radius, spacing } from '../../../src/theme/tokens';
@@ -25,6 +26,9 @@ export default function OfficialBroadcastScreen() {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [resultText, setResultText] = useState('');
+  const [updateMessage, setUpdateMessage] = useState('');
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateResult, setUpdateResult] = useState('');
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
 
@@ -77,6 +81,38 @@ export default function OfficialBroadcastScreen() {
     }
   }
 
+  function confirmUpdatePush() {
+    if (updateBusy) return;
+    Alert.alert(
+      'Notify everyone about an update?',
+      'This sends a push notification to every user with notifications enabled, telling them a new version is available. Send this only after the new version is live on the App Store.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Send notification', onPress: () => void handleUpdatePush() },
+      ],
+    );
+  }
+
+  async function handleUpdatePush() {
+    setUpdateBusy(true);
+    setUpdateResult('');
+    try {
+      const { data, error } = await supabase.functions.invoke('broadcast-app-update', {
+        body: updateMessage.trim() ? { body: updateMessage.trim() } : {},
+      });
+      if (error) throw new Error(error.message);
+      const recipientCount = typeof data?.recipientCount === 'number' ? data.recipientCount : 0;
+      const sentCount = typeof data?.sentCount === 'number' ? data.sentCount : 0;
+      setUpdateMessage('');
+      setUpdateResult(`Sent update notification to ${sentCount} of ${recipientCount} devices.`);
+      Alert.alert('Update notification sent', `Pushed to ${sentCount} of ${recipientCount} devices.`);
+    } catch (error) {
+      Alert.alert('Could not send update notification', error instanceof Error ? error.message : 'Try again in a moment.');
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
   return (
     <AppScreen header={header} floatingHeaderOnScroll footer={isAdmin ? <ActionButton label={busy ? 'Sending...' : 'Send to every user'} onPress={confirmBroadcast} disabled={busy || (!body.trim() && !imageUri)} /> : undefined}>
       <Text style={styles.title}>Official Broadcast</Text>
@@ -122,6 +158,22 @@ export default function OfficialBroadcastScreen() {
           </SectionCard>
 
           {resultText ? <Text style={styles.successText}>{resultText}</Text> : null}
+
+          <SectionCard eyebrow="App update" title="Notify everyone to update">
+            <Text style={styles.helpText}>Sends a push notification to every user with notifications on, letting them know a new version is available. Send this once the new build is live on the App Store.</Text>
+            <TextInput
+              multiline
+              value={updateMessage}
+              onChangeText={setUpdateMessage}
+              placeholder="Optional custom message (leave blank for the default update text)"
+              placeholderTextColor={colors.ink}
+              style={styles.updateInput}
+            />
+            <Pressable onPress={confirmUpdatePush} disabled={updateBusy} style={[styles.secondaryButton, updateBusy && styles.disabled]} accessibilityRole="button">
+              <Text style={styles.secondaryButtonText}>{updateBusy ? 'Sending...' : 'Send update notification'}</Text>
+            </Pressable>
+            {updateResult ? <Text style={styles.successText}>{updateResult}</Text> : null}
+          </SectionCard>
         </>
       )}
     </AppScreen>
@@ -135,6 +187,7 @@ const makeStyles = (colors: ReturnType<typeof useTheme>['colors'], fonts: Return
   subtitle: { fontFamily: fonts.body, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
   bodyText: { fontFamily: fonts.body, fontSize: 14, lineHeight: 20, color: colors.inkSoft },
   input: { minHeight: 150, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: spacing.md, textAlignVertical: 'top', fontFamily: fonts.body, fontSize: 15, color: colors.ink },
+  updateInput: { minHeight: 80, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: spacing.md, textAlignVertical: 'top', fontFamily: fonts.body, fontSize: 15, color: colors.ink },
   helpText: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.inkSoft },
   previewImage: { width: '100%', aspectRatio: 1, borderRadius: radius.lg, backgroundColor: colors.paperMuted },
   emptyImage: { minHeight: 150, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paperMuted, alignItems: 'center', justifyContent: 'center', gap: spacing.xs },

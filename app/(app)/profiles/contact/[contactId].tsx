@@ -12,11 +12,11 @@ import { AppScreen } from '../../../../src/components/AppScreen';
 import {
   type DayGroup,
 } from '../../../../src/components/MonthScrollableMemoryWall';
-import { MemoryWallViewToggle, MemoryWallViews, type MemoryWallViewMode } from '../../../../src/components/MemoryWallViews';
+import { MemoryWallViewToggle, MemoryWallViews, memoryWallViewOptionsNoPrompts, type MemoryWallViewMode } from '../../../../src/components/MemoryWallViews';
 import { MemoryPromptRequestList } from '../../../../src/components/MemoryPromptRequestList';
 import { MemoryReplyThreadPreview } from '../../../../src/components/MemoryReplyThreadPreview';
 import { LockedGiftNoteCard } from '../../../../src/components/LockedGiftNoteCard';
-import { MemoryProfileCard, ProfileBackgroundBackdrop, WallModeToggle } from '../../../../src/components/profile';
+import { MemoryProfileCard, ProfileBackgroundBackdrop } from '../../../../src/components/profile';
 import { PolaroidIcon } from '../../../../src/components/PolaroidIcon';
 import { SectionCard } from '../../../../src/components/SectionCard';
 import { ProfileSkeleton } from '../../../../src/components/Skeleton';
@@ -126,6 +126,8 @@ export default function ContactProfileScreen() {
   const linkScannedRef = useRef(false);
   const [existingFriendLinkOpen, setExistingFriendLinkOpen] = useState(false);
   const [activePane, setActivePane] = useState<'profile' | 'notes'>('profile');
+  const [aboutExpanded, setAboutExpanded] = useState(false);
+  const [promptsExpanded, setPromptsExpanded] = useState(false);
   const [memoryWallViewMode, setMemoryWallViewMode] = useState<MemoryWallViewMode>('timeline');
   const [memoryFilter, setMemoryFilter] = useState<MemoryFilter>('all');
   const [viewedGlowPostIds, setViewedGlowPostIds] = useState<Set<string>>(() => new Set());
@@ -236,7 +238,7 @@ export default function ContactProfileScreen() {
 
   // Compute wall posts unconditionally so the hook count stays stable across
   // renders (including during sign-out when `currentUser` becomes null).
-  const [wallMode, setWallMode] = useState<'mine' | 'shared'>('shared');
+  const wallMode: 'mine' | 'shared' = 'shared';
   const scrollViewRef = useRef<ScrollView | null>(null);
   const contactPostsAll = contact ? getWallPostsForSubject(contact.id, 'contact') : [];
   const linkedPostsAll = contact?.linkedUserId ? getWallPostsForSubject(contact.linkedUserId, 'user') : [];
@@ -299,6 +301,10 @@ export default function ContactProfileScreen() {
   const newMoviePromptIds = moviePromptRequests
     .filter((request) => request.recipientUserId === currentUser?.id && highlightedMoviePromptIds.has(request.id))
     .map((request) => request.id);
+  const promptsToAnswerCount = currentUser?.id
+    ? memoryPromptRequests.filter((request) => request.recipientUserId === currentUser.id).length
+      + moviePromptRequests.filter((request) => request.recipientUserId === currentUser.id).length
+    : 0;
   const newSharedMemoryCount = wallMode === 'shared'
     ? sharedWallPosts.filter((post) => highlightedWallPostIds.has(post.id)).length
     : 0;
@@ -519,7 +525,7 @@ export default function ContactProfileScreen() {
     const visibleUnreadPostIds = wallPosts
       .filter((post) => unreadWallPostIds.has(post.id))
       .map((post) => post.id);
-    const shouldClearPromptNotifications = activePane === 'profile' && memoryWallViewMode === 'prompts';
+    const shouldClearPromptNotifications = activePane === 'profile' && isLinked;
     const visibleUnreadMemoryPromptIds = shouldClearPromptNotifications
       ? memoryPromptRequests
         .filter((request) => request.recipientUserId === currentUser.id && unreadMemoryPromptIds.has(request.id))
@@ -554,7 +560,7 @@ export default function ContactProfileScreen() {
       markProfileNotificationIdsRead(notificationIds, markNotificationRead, markSyntheticRead);
     }, 900);
     return () => clearTimeout(timeout);
-  }, [activePane, contact, currentUser?.id, markNotificationRead, markSyntheticRead, memoryPromptRequests, memoryWallViewMode, moviePromptRequests, notifications, unreadMemoryPromptIds, unreadMoviePromptIds, unreadWallPostIds, wallPosts]);
+  }, [activePane, contact, currentUser?.id, isLinked, markNotificationRead, markSyntheticRead, memoryPromptRequests, moviePromptRequests, notifications, unreadMemoryPromptIds, unreadMoviePromptIds, unreadWallPostIds, wallPosts]);
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
 
@@ -1593,165 +1599,177 @@ export default function ContactProfileScreen() {
     ),
   );
 
+  const aboutOpen = aboutExpanded || editing;
   screenContent.push(
-    <View key="personality-traits" style={[styles.section, editing && styles.editableFactsSection]}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Personality Traits</Text>
-      </View>
-      {contact.personalityTraits.length > 0 ? (
-        <View style={styles.factList}>
-          {contact.personalityTraits.map((trait) => (
-            <View key={trait} style={styles.factChip}>
-              <Text style={styles.factChipText}>{trait}</Text>
-              {editing && (
-                <Pressable onPress={() => handleDeletePersonalityTrait(trait)}>
-                  <Ionicons name="close" size={14} color={effectiveColors.error} />
-                </Pressable>
-              )}
+    <View key="about" style={[styles.section, editing && styles.editableFactsSection]}>
+      <Pressable
+        onPress={() => setAboutExpanded((prev) => !prev)}
+        disabled={editing}
+        style={styles.sectionHeader}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: aboutOpen }}
+        accessibilityLabel={aboutOpen ? 'Hide About' : 'Show About'}
+      >
+        <Text style={styles.sectionTitle}>About</Text>
+        {!editing ? (
+          <Ionicons name={aboutOpen ? 'chevron-up' : 'chevron-down'} size={20} color={effectiveColors.ink} />
+        ) : null}
+      </Pressable>
+      {aboutOpen ? (
+        <>
+          <View style={styles.aboutSubgroup}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.aboutSubtitle}>Personality Traits</Text>
             </View>
-          ))}
-        </View>
-      ) : (
-        <Text style={styles.emptyHint}>No personality traits added yet.</Text>
-      )}
-      {editing && (
-        <View style={styles.factEditorBox}>
-          <View style={styles.editFactHintRow}>
-            <Ionicons name="sparkles-outline" size={14} color={tint} />
-            <Text style={styles.editFactHintText}>Add personality traits here. Tap the x on a chip to remove one.</Text>
+            {contact.personalityTraits.length > 0 ? (
+              <View style={styles.factList}>
+                {contact.personalityTraits.map((trait) => (
+                  <View key={trait} style={styles.factChip}>
+                    <Text style={styles.factChipText}>{trait}</Text>
+                    {editing && (
+                      <Pressable onPress={() => handleDeletePersonalityTrait(trait)}>
+                        <Ionicons name="close" size={14} color={effectiveColors.error} />
+                      </Pressable>
+                    )}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.emptyHint}>No personality traits added yet.</Text>
+            )}
+            {editing && (
+              <View style={styles.factEditorBox}>
+                <View style={styles.addFactRow}>
+                  <TextInput
+                    style={styles.addFactInput}
+                    value={newPersonalityTrait}
+                    onChangeText={setNewPersonalityTrait}
+                    placeholder="Add a trait..."
+                    placeholderTextColor={effectiveColors.ink}
+                  />
+                  <Pressable onPress={handleAddPersonalityTrait} disabled={personalityTraitBusy} style={styles.addFactButton}>
+                    <Text style={styles.addFactButtonLabel}>{personalityTraitBusy ? '...' : '+'}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
           </View>
-          <View style={styles.addFactRow}>
-            <TextInput
-              style={styles.addFactInput}
-              value={newPersonalityTrait}
-              onChangeText={setNewPersonalityTrait}
-              placeholder="Add a trait..."
-              placeholderTextColor={effectiveColors.ink}
-            />
-            <Pressable onPress={handleAddPersonalityTrait} disabled={personalityTraitBusy} style={styles.addFactButton}>
-              <Text style={styles.addFactButtonLabel}>{personalityTraitBusy ? '...' : '+'}</Text>
-            </Pressable>
+
+          <View style={styles.aboutSubgroup}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.aboutSubtitle}>Facts</Text>
+            </View>
+            {contact.facts.length > 0 ? (
+              <View style={styles.factList}>
+                {contact.facts.map((fact) => (
+                  <View key={fact} style={styles.factChip}>
+                    <Text style={styles.factChipText}>{fact}</Text>
+                    {editing && (
+                      <Pressable onPress={() => handleDeleteFact(fact)}>
+                        <Ionicons name="close" size={14} color={effectiveColors.error} />
+                      </Pressable>
+                    )}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.emptyHint}>No facts added yet.</Text>
+            )}
+            {editing && (
+              <View style={styles.factEditorBox}>
+                <View style={styles.addFactRow}>
+                  <TextInput
+                    style={styles.addFactInput}
+                    value={newFact}
+                    onChangeText={setNewFact}
+                    placeholder="Add a fact…"
+                    placeholderTextColor={effectiveColors.ink}
+                  />
+                  <Pressable onPress={handleAddFact} disabled={factBusy} style={styles.addFactButton}>
+                    <Text style={styles.addFactButtonLabel}>{factBusy ? '…' : '+'}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
           </View>
-        </View>
-      )}
+        </>
+      ) : null}
     </View>,
   );
 
-  screenContent.push(
-    <View key="facts" style={[styles.section, editing && styles.editableFactsSection]}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Facts</Text>
-      </View>
-      {contact.facts.length > 0 ? (
-        <View style={styles.factList}>
-          {contact.facts.map((fact) => (
-            <View key={fact} style={styles.factChip}>
-              <Text style={styles.factChipText}>{fact}</Text>
-              {editing && (
-                <Pressable onPress={() => handleDeleteFact(fact)}>
-                  <Ionicons name="close" size={14} color={effectiveColors.error} />
-                </Pressable>
-              )}
-            </View>
-          ))}
-        </View>
-      ) : (
-        <Text style={styles.emptyHint}>No facts added yet.</Text>
-      )}
-      {editing && (
-        <View style={styles.factEditorBox}>
-          <View style={styles.editFactHintRow}>
-            <Ionicons name="sparkles-outline" size={14} color={tint} />
-            <Text style={styles.editFactHintText}>Add facts here. Tap the x on a chip to remove one.</Text>
+  if (isLinked) {
+    const promptsOpen = promptsExpanded || promptsToAnswerCount > 0;
+    screenContent.push(
+      <View key="prompts" style={styles.section}>
+        <Pressable
+          onPress={() => setPromptsExpanded((prev) => !prev)}
+          style={styles.sectionHeader}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: promptsOpen }}
+          accessibilityLabel={promptsToAnswerCount > 0 ? `Prompts, ${promptsToAnswerCount} to answer` : promptsOpen ? 'Hide Prompts' : 'Show Prompts'}
+        >
+          <View style={styles.promptsHeaderLeft}>
+            <Text style={styles.sectionTitle}>Prompts</Text>
+            {promptsToAnswerCount > 0 ? (
+              <View style={styles.promptsAnswerBadge}>
+                <Text style={styles.promptsAnswerBadgeText}>{promptsToAnswerCount} to answer</Text>
+              </View>
+            ) : null}
           </View>
-          <View style={styles.addFactRow}>
-            <TextInput
-              style={styles.addFactInput}
-              value={newFact}
-              onChangeText={setNewFact}
-              placeholder="Add a fact…"
-              placeholderTextColor={effectiveColors.ink}
-            />
-            <Pressable onPress={handleAddFact} disabled={factBusy} style={styles.addFactButton}>
-              <Text style={styles.addFactButtonLabel}>{factBusy ? '…' : '+'}</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
-    </View>,
-  );
+          <Ionicons name={promptsOpen ? 'chevron-up' : 'chevron-down'} size={20} color={effectiveColors.ink} />
+        </Pressable>
+        {promptsOpen ? (
+          <MemoryPromptRequestList
+            currentUserId={currentUser.id}
+            friendName={contact.displayName}
+            memoryPrompts={memoryPromptRequests}
+            moviePrompts={moviePromptRequests}
+            newMemoryPromptIds={newMemoryPromptIds}
+            newMoviePromptIds={newMoviePromptIds}
+            onAnswerMemoryPrompt={openMemoryPromptResponse}
+            onCancelMemoryPrompt={(requestId) => cancelMemoryPromptRequest(requestId, currentUser.id)}
+            onCreateMemoryPrompt={openMemoryPromptRequestShortcut}
+            onAnswerMoviePrompt={openMovieReviewResponse}
+            onCancelMoviePrompt={(requestId) => cancelMovieReviewRequest(requestId, currentUser.id)}
+            onCreateMoviePrompt={openMovieRequestShortcut}
+            themeColors={effectiveColors}
+            tint={tint}
+          />
+        ) : null}
+      </View>,
+    );
+  }
 
   screenContent.push(
     <View key="memory-wall-heading" style={[styles.section, styles.memoryWallControlCard]}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.memoryWallTitle}>Memory Wall</Text>
+        <Text style={styles.memoryWallTitle}>Shared Memory Wall</Text>
       </View>
-      {isLinked ? (
-        <>
-          <WallModeToggle
-            colors={effectiveColors}
-            fonts={effectiveFonts}
-            onChange={setWallMode}
-            options={[
-              { key: 'shared', label: 'Shared wall' },
-              { key: 'mine', label: 'Your wall' },
-            ]}
-            tint={tint}
-            value={wallMode}
-          />
-          <MemoryWallViewToggle
-            colors={effectiveColors}
-            fonts={effectiveFonts}
-            indicators={wallViewIndicators}
-            onChange={setMemoryWallViewMode}
-            tint={tint}
-            value={memoryWallViewMode}
-          />
-          <View style={styles.memoryFilterRow}>
-            {MEMORY_FILTER_OPTIONS.map((option) => {
-              const active = memoryFilter === option.key;
-              return (
-                <Pressable
-                  key={option.key}
-                  onPress={() => setMemoryFilter(option.key)}
-                  style={[styles.memoryFilterChip, active && styles.memoryFilterChipActive]}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                >
-                  <Text style={[styles.memoryFilterText, active && styles.memoryFilterTextActive]}>{option.label}</Text>
-                </Pressable>
-              );
-            })}
-            </View>
-        </>
-      ) : (
-        <>
-          <MemoryWallViewToggle
-            colors={effectiveColors}
-            fonts={effectiveFonts}
-            indicators={wallViewIndicators}
-            onChange={setMemoryWallViewMode}
-            tint={tint}
-            value={memoryWallViewMode}
-          />
-          <View style={styles.memoryFilterRow}>
-            {MEMORY_FILTER_OPTIONS.map((option) => {
-              const active = memoryFilter === option.key;
-              return (
-                <Pressable
-                  key={option.key}
-                  onPress={() => setMemoryFilter(option.key)}
-                  style={[styles.memoryFilterChip, active && styles.memoryFilterChipActive]}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                >
-                  <Text style={[styles.memoryFilterText, active && styles.memoryFilterTextActive]}>{option.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </>
-      )}
+      <MemoryWallViewToggle
+        colors={effectiveColors}
+        fonts={effectiveFonts}
+        indicators={wallViewIndicators}
+        onChange={setMemoryWallViewMode}
+        options={memoryWallViewOptionsNoPrompts}
+        tint={tint}
+        value={memoryWallViewMode}
+      />
+      <View style={styles.memoryFilterRow}>
+        {MEMORY_FILTER_OPTIONS.map((option) => {
+          const active = memoryFilter === option.key;
+          return (
+            <Pressable
+              key={option.key}
+              onPress={() => setMemoryFilter(option.key)}
+              style={[styles.memoryFilterChip, active && styles.memoryFilterChipActive]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.memoryFilterText, active && styles.memoryFilterTextActive]}>{option.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>,
   );
 
@@ -1794,24 +1812,6 @@ export default function ContactProfileScreen() {
         emptyHint={wallMode === 'shared' && isLinked
           ? `No shared memories between you and ${contact.displayName} yet.`
           : 'No memories yet. Be the first to write one.'}
-        promptContent={isLinked ? (
-          <MemoryPromptRequestList
-            currentUserId={currentUser.id}
-            friendName={contact.displayName}
-            memoryPrompts={memoryPromptRequests}
-            moviePrompts={moviePromptRequests}
-            newMemoryPromptIds={newMemoryPromptIds}
-            newMoviePromptIds={newMoviePromptIds}
-            onAnswerMemoryPrompt={openMemoryPromptResponse}
-            onCancelMemoryPrompt={(requestId) => cancelMemoryPromptRequest(requestId, currentUser.id)}
-            onCreateMemoryPrompt={openMemoryPromptRequestShortcut}
-            onAnswerMoviePrompt={openMovieReviewResponse}
-            onCancelMoviePrompt={(requestId) => cancelMovieReviewRequest(requestId, currentUser.id)}
-            onCreateMoviePrompt={openMovieRequestShortcut}
-            themeColors={effectiveColors}
-            tint={tint}
-          />
-        ) : undefined}
         getGridExtraHeight={(post) => getReplyGridExtraHeight(getRepliesForWallPost(post.id))}
         themeColors={effectiveColors}
         viewMode={memoryWallViewMode}
@@ -2228,7 +2228,28 @@ const makeStyles = (colors: ColorTokens, tint: string, fonts: FontSet, hasBackgr
     sectionTitle: {
       fontFamily: fonts.heading,
       fontSize: 22,
+      lineHeight: 30,
       color: backgroundTextColor,
+      paddingRight: 10,
+      overflow: 'visible' as const,
+      ...backgroundTextShadow,
+      ...protectTextFromFontClipping(fonts.heading, 22),
+    },
+    promptsHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 1, minWidth: 0 },
+    promptsAnswerBadge: {
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 3,
+      backgroundColor: colors.accent,
+    },
+    promptsAnswerBadgeText: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.white },
+    aboutSubgroup: { gap: spacing.sm },
+    aboutSubtitle: {
+      fontFamily: fonts.heading,
+      fontSize: 22,
+      lineHeight: 30,
+      color: backgroundTextColor,
+      paddingRight: 10,
       overflow: 'visible' as const,
       ...backgroundTextShadow,
       ...protectTextFromFontClipping(fonts.heading, 22),

@@ -124,7 +124,7 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
   const scrollX = useRef(new Animated.Value(0)).current;
 
   const compact = width < 390;
-  const cardWidth = Math.min(width * 0.5, 230);
+  const cardWidth = Math.min(width * 0.65, 299);
   const gap = spacing.md;
   const snapInterval = cardWidth + gap;
   // Each item occupies snapInterval wide. To centre item N the scroll offset is
@@ -133,14 +133,14 @@ export function PolaroidCarousel({ activeIndex, items, onIndexChange, onPressIte
   const sideInset = (width - snapInterval) / 2;
   const photoSize = cardWidth - CARD_PAD_SIDE * 2;
   const noteSlotHeight = CAROUSEL_NOTE_LINES * CAROUSEL_NOTE_LINE_HEIGHT;
-  const bottomStripMinHeight = compact ? 92 : 98;
+  const bottomStripMinHeight = compact ? 120 : 127;
   const cardMinHeight = photoSize + CARD_PAD_TOP + bottomStripMinHeight;
   const aboveCardSpace = spacing.md + PIN_OVERHANG_SPACE;
   // Reserve only enough room for the status row / caption without pushing the profile meta too far down.
   const belowCardSpace = itemBadgeReservedSpace(items);
   const listHeight = aboveCardSpace + cardMinHeight + belowCardSpace;
-  const initialsSize = compact ? 44 : 54;
-  const nameSize = compact ? 20 : 24;
+  const initialsSize = compact ? 57 : 70;
+  const nameSize = compact ? 26 : 31;
 
   const count = items.length;
   // Looping only makes sense with more than one card. When disabled (e.g. during

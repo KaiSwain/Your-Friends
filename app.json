@@ -3,7 +3,7 @@
     "name": "YourFriends",
     "slug": "YourFriends",
     "scheme": "yourfriends",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/Op 1.png",
     "userInterfaceStyle": "dark",

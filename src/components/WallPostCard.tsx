@@ -38,6 +38,10 @@ interface WallPostCardProps {
   themeColors?: ColorTokens;
   imageLoadEnabled?: boolean;
   displayMode?: 'timeline' | 'grid';
+  // Multiplier for the polaroid frame + photo size in non-grid views. Defaults
+  // to POLAROID_DEFAULT_SCALE so polaroids are uniformly enlarged everywhere;
+  // pass 1 for embedded thumbnails with a fixed container. Ignored in grid mode.
+  polaroidScale?: number;
   editing?: boolean;
   preview?: boolean;
   shareable?: boolean;
@@ -57,7 +61,7 @@ interface WallPostCardProps {
   onSaveBackText?: (postId: string, text: string) => void;
 }
 
-export function WallPostCard({ authorName, post, cardColor, developStartAt, themeColors, imageLoadEnabled = true, displayMode = 'timeline', editing: editMode, preview, shareable, livePolaroidScope, livePolaroidForcePlayback, autoPlaySongPreviewKey, referencedPost, referencedPostAuthorName, promptAuthorName, suppressAttachments, suppressAttachedVoice, onPress, onLongPress, onFlip, onDeveloped, onImageReady, onSaveBackText }: WallPostCardProps) {
+export function WallPostCard({ authorName, post, cardColor, developStartAt, themeColors, imageLoadEnabled = true, displayMode = 'timeline', polaroidScale = POLAROID_DEFAULT_SCALE, editing: editMode, preview, shareable, livePolaroidScope, livePolaroidForcePlayback, autoPlaySongPreviewKey, referencedPost, referencedPostAuthorName, promptAuthorName, suppressAttachments, suppressAttachedVoice, onPress, onLongPress, onFlip, onDeveloped, onImageReady, onSaveBackText }: WallPostCardProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { colors: appColors, fonts, resolvedMode } = useTheme();
@@ -175,7 +179,12 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
     ? `${String(date.getFullYear()).slice(-2)}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
     : null;
 
-  const imageHeight = POLAROID_PHOTO_HEIGHT;
+  // Grid view scales the whole card via a transform that assumes the base
+  // POLAROID_REAL_WIDTH, so only enlarge polaroids in non-grid (wall) views.
+  const effectivePolaroidScale = displayMode === 'grid' ? 1 : (polaroidScale > 0 ? polaroidScale : 1);
+  const polaroidFrameWidth = Math.round(POLAROID_FRAME_WIDTH * effectivePolaroidScale);
+  const polaroidWidthStyle = effectivePolaroidScale !== 1 ? { width: polaroidFrameWidth } : null;
+  const imageHeight = Math.round(POLAROID_PHOTO_HEIGHT * effectivePolaroidScale);
   const mediaAspectHeight = aspectRatio && frameWidth > 0 ? frameWidth / aspectRatio : null;
   const mediaFrameHeight = displayMode === 'grid' ? 180 : mediaAspectHeight;
   const mediaFallbackHeight = displayMode === 'grid' ? 180 : 292;
@@ -269,7 +278,11 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
       ? 'chatbubble-ellipses-outline'
       : cardPost.promptType === 'voice'
         ? 'mic-outline'
-        : 'sparkles-outline';
+        : cardPost.promptType === 'movie'
+          ? 'film-outline'
+          : cardPost.promptType === 'location'
+            ? 'location-outline'
+            : 'sparkles-outline';
   const promptText = cardPost.promptText?.trim() || null;
   const promptDisplayText = promptText && !(cardPost.promptVoice && /^voice prompt$/i.test(promptText)) ? promptText : null;
   const promptQuestionLabel = promptAuthorName ? `${promptAuthorName} asked` : 'Asked';
@@ -506,14 +519,16 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
                 )}
               </View>
               <View style={styles.movieBody}>
-                <Text style={styles.movieEyebrow}>Movie review</Text>
+                <Text style={styles.movieEyebrow}>{movie.reviewRating != null ? 'Movie review' : 'Movie pick'}</Text>
                 <Text style={[styles.movieTitle, displayMode === 'grid' && styles.movieTitleGrid]} numberOfLines={displayMode === 'grid' ? 2 : 3}>{movie.title}{movie.year ? ` (${movie.year})` : ''}</Text>
-                <View style={[styles.movieRatingRow, displayMode === 'grid' && styles.movieRatingRowGrid]}>
-                  {[1, 2, 3, 4, 5].map((value) => (
-                    <Ionicons key={value} name={getStarIcon(movie.reviewRating ?? 0, value)} size={displayMode === 'grid' ? 15 : 20} color={semanticColors.movieGold} />
-                  ))}
-                  <Text style={[styles.movieRatingText, displayMode === 'grid' && styles.movieRatingTextGrid]}>{formatStars(movie.reviewRating)}</Text>
-                </View>
+                {movie.reviewRating != null ? (
+                  <View style={[styles.movieRatingRow, displayMode === 'grid' && styles.movieRatingRowGrid]}>
+                    {[1, 2, 3, 4, 5].map((value) => (
+                      <Ionicons key={value} name={getStarIcon(movie.reviewRating ?? 0, value)} size={displayMode === 'grid' ? 15 : 20} color={semanticColors.movieGold} />
+                    ))}
+                    <Text style={[styles.movieRatingText, displayMode === 'grid' && styles.movieRatingTextGrid]}>{formatStars(movie.reviewRating)}</Text>
+                  </View>
+                ) : null}
                 {cardPost.body ? <Text style={[styles.movieReviewText, displayMode === 'grid' && styles.movieReviewTextGrid]} numberOfLines={displayMode === 'grid' ? 4 : undefined}>{cardPost.body}</Text> : null}
                 <Text style={styles.movieAuthor} numberOfLines={1}>— {authorName}</Text>
               </View>
@@ -591,7 +606,7 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
             <View style={styles.cardWithStatus}>
               <View onLayout={onFrontLayout} style={styles.ambientShadow}>
                 <View style={[styles.tape, isPolaroidGhost && styles.tapeGhost]} />
-                <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, isPolaroidGhost && styles.cardGhost, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}> 
+                <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, polaroidWidthStyle, isPolaroidGhost && styles.cardGhost, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}> 
                   <View pointerEvents="none" style={styles.polaroidLiquidSheen} />
                   <View style={[styles.photoFrame, isPolaroidGhost && styles.photoFrameGhost]} onLayout={onFrameLayout}>
                     {photoContent}
@@ -628,7 +643,7 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
                   <View pointerEvents={showBack ? 'none' : 'auto'} style={[styles.flipFace, showBack && styles.hiddenFace]}>
                     <View style={styles.ambientShadow}>
                       <View style={[styles.tape, isPolaroidGhost && styles.tapeGhost]} />
-                      <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, isPolaroidGhost && styles.cardGhost, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}>
+                      <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, polaroidWidthStyle, isPolaroidGhost && styles.cardGhost, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }]}>
                         <View pointerEvents="none" style={styles.polaroidLiquidSheen} />
                         <View style={[styles.photoFrame, isPolaroidGhost && styles.photoFrameGhost]} onLayout={onFrameLayout}>
                           {photoContent}
@@ -647,7 +662,7 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
                   <View pointerEvents={showBack ? 'auto' : 'none'} style={[styles.flipFaceOverlay, !showBack && styles.hiddenFace]}>
                     <View style={styles.ambientShadow}>
                       <View style={styles.tape} />
-                      <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, styles.backCard, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }, frontHeight > 0 && { height: frontHeight }]}>
+                      <View renderToHardwareTextureAndroid shouldRasterizeIOS style={[styles.card, polaroidWidthStyle, styles.backCard, editMode && { borderColor: editBorderColor }, { backgroundColor: bg, transform: [{ rotate: `${tilt}deg` }] }, frontHeight > 0 && { height: frontHeight }]}>
                         <View pointerEvents="none" style={styles.polaroidLiquidSheen} />
                         <View style={styles.backContent}>
                           {editingBack ? (
@@ -702,7 +717,7 @@ export function WallPostCard({ authorName, post, cardColor, developStartAt, them
   // polaroid (outside the frame and photo), consistent with other memory types.
   const polaroidMemoryWithPrompt = promptQuestionElement ? (
     <View style={styles.polaroidPromptStack}>
-      <View style={styles.polaroidPromptAbove}>{promptQuestionElement}</View>
+      <View style={[styles.polaroidPromptAbove, polaroidWidthStyle]}>{promptQuestionElement}</View>
       {polaroidMemory}
     </View>
   ) : polaroidMemory;
@@ -749,6 +764,13 @@ const CARD_PADDING_SIDE = 14;
 const CARD_PADDING_TOP = 12;
 const CARD_PADDING_BOTTOM = 38;
 const POLAROID_PHOTO_HEIGHT = 260;
+// Base polaroid frame width. Must match POLAROID_REAL_WIDTH in MemoryWallViews
+// so the grid masonry scaling stays correct.
+const POLAROID_FRAME_WIDTH = 260;
+// Polaroids render 30% larger than the base size everywhere in the app (timeline
+// walls, home screen, previews, etc.). Grid view ignores this and uses the base
+// size so the masonry math stays correct.
+const POLAROID_DEFAULT_SCALE = 1.3;
 const FRONT_TEXT_LINE_HEIGHT = 22;
 const FRONT_TEXT_LINES = 2;
 const FRONT_TEXT_SLOT_HEIGHT = FRONT_TEXT_LINE_HEIGHT * FRONT_TEXT_LINES;
@@ -787,6 +809,7 @@ function ReferencedPolaroidPreview({
               themeColors={colors}
               preview
               suppressAttachments
+              polaroidScale={1}
             />
           </View>
         ) : (

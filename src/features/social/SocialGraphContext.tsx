@@ -1949,6 +1949,7 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
   }
 
   async function createMovieReviewRequestForUser(requesterUserId: string, input: CreateMovieReviewRequestInput) {
+    if (!isPremium) throw new Error('Sending prompts is a Premium feature.');
     const request = await createMovieReviewRequest(requesterUserId, input);
     queryClient.setQueryData<MovieReviewRequest[]>(movieQueryKeys.requests, (old) => [request, ...(old ?? [])]);
     return request;
@@ -2060,9 +2061,11 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
         ? 'song'
         : pendingRequest.promptType === 'voice'
           ? 'voice'
-          : pendingRequest.promptType === 'photo'
-            ? input.responsePostType ?? 'media'
-            : 'note',
+          : pendingRequest.promptType === 'movie'
+            ? 'movie'
+            : pendingRequest.promptType === 'photo'
+              ? input.responsePostType ?? 'media'
+              : 'note',
       body: input.body?.trim() ?? '',
       imageUri: input.imageUri ?? null,
       imageThumbUri: input.imageUri ?? null,
@@ -2074,14 +2077,14 @@ export function SocialGraphProvider({ children }: { children: ReactNode }) {
       dateStamp: false,
       song: pendingRequest.promptType === 'song' ? input.song ?? null : null,
       voice: input.voice ?? null,
-      movie: null,
+      movie: pendingRequest.promptType === 'movie' ? input.movie ?? null : null,
       memoryPromptRequestId: pendingRequest.id,
       referencedWallPostId: pendingRequest.promptType === 'photo_reference' ? input.referencedWallPostId ?? null : null,
       promptText: pendingRequest.promptText,
       promptType: pendingRequest.promptType,
       promptVoice: pendingRequest.promptVoice ?? null,
       memoryDate: now.slice(0, 10),
-      locationName: null,
+      locationName: pendingRequest.promptType === 'location' ? input.locationName ?? null : null,
       createdAt: now,
       syncStatus: 'saving',
       syncError: null,

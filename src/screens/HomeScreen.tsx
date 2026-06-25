@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useFocusEffect, useRouter } from 'expo-router';
-import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -10,6 +9,7 @@ import { AppScreen } from '../../src/components/AppScreen';
 import { BirthdayMomentCard } from '../../src/components/BirthdayMomentCard';
 import { CachedRemoteImage, prefetchCachedImages } from '../../src/components/CachedRemoteImage';
 import { FadeInView } from '../../src/components/FadeInView';
+import { LockedGiftNoteCard } from '../../src/components/LockedGiftNoteCard';
 import { setLivePolaroidScopeEnabled, stopAllLivePolaroids } from '../../src/components/LivePolaroidLayer';
 import { PolaroidIcon } from '../../src/components/PolaroidIcon';
 import { PolaroidCarousel } from '../../src/components/PolaroidCarousel';
@@ -48,7 +48,7 @@ import { useSyntheticNotificationReads } from '../../src/hooks/useSyntheticNotif
 import { protectTextFromFontClipping } from '../../src/theme/fontProtection';
 import type { FontSet } from '../../src/theme/typography';
 import { radius, spacing } from '../../src/theme/tokens';
-import type { CalendarEvent, MemoryPromptRequest, MovieReviewRequest, Notification, PeopleListItem, WallPost } from '../../src/types/domain';
+import type { AppUser, CalendarEvent, GiftNote, MemoryPromptRequest, MovieReviewRequest, Notification, PeopleListItem, WallPost } from '../../src/types/domain';
 
 const HOME_LIVE_POLAROID_SCOPE = 'home';
 const REGULAR_VIDEO_MAX_DURATION_MS = 30000;
@@ -69,6 +69,7 @@ export default function FriendsListScreen() {
     wallPosts,
     memoryPromptRequests,
     movieReviewRequests,
+    giftNotes,
     getPeopleListForUser,
     getUserById,
     unreadCount,
@@ -80,19 +81,15 @@ export default function FriendsListScreen() {
   const { events } = useCalendar();
   const { isPremium, isUserPremium } = usePremium();
   const [refreshing, setRefreshing] = useState(false);
-  const { colors, fonts, resolvedMode } = useTheme();
+  const { colors, fonts } = useTheme();
   const { isScrollChromeHidden } = useScrollChrome();
-  const blurTint = resolvedMode === 'dark' ? 'dark' : 'light';
   const hasCustomBackground = Boolean(currentUser?.profileBgImagePath);
   const styles = useMemo(() => makeStyles(colors, fonts, hasCustomBackground), [colors, fonts, hasCustomBackground]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [showFloatingTopControls, setShowFloatingTopControls] = useState(true);
-  const [showFloatingAddFriend, setShowFloatingAddFriend] = useState(true);
   const floatingTopAnim = useRef(new Animated.Value(1)).current;
-  const floatingBottomAnim = useRef(new Animated.Value(1)).current;
   const floatingTopVisibleRef = useRef(true);
-  const floatingBottomVisibleRef = useRef(true);
 
   useFocusEffect(useCallback(() => {
     setLivePolaroidScopeEnabled(HOME_LIVE_POLAROID_SCOPE, true);
@@ -398,6 +395,19 @@ export default function FriendsListScreen() {
     ].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }, [currentUser?.id, memoryPromptRequests, movieReviewRequests, now]);
 
+  const homeGiftNotes = useMemo<{ note: GiftNote; otherUser: AppUser | null }[]>(() => {
+    if (!currentUser?.id) return [];
+    return giftNotes
+      .filter((note) => note.status === 'locked'
+        && (note.authorUserId === currentUser.id || note.recipientUserId === currentUser.id))
+      .map((note) => {
+        const otherUserId = note.authorUserId === currentUser.id ? note.recipientUserId : note.authorUserId;
+        return { note, otherUser: getUserById(otherUserId) ?? null };
+      })
+      .sort((left, right) =>
+        `${left.note.unlockDate} ${left.note.unlockTime}`.localeCompare(`${right.note.unlockDate} ${right.note.unlockTime}`));
+  }, [currentUser?.id, giftNotes, getUserById]);
+
   useEffect(() => {
     if (receivedPrompts.length === 0) return undefined;
     const id = setInterval(() => setNow(Date.now()), 60000);
@@ -473,6 +483,11 @@ export default function FriendsListScreen() {
         ? `/(app)/movies/review/${prompt.request.id}`
         : `/(app)/prompts/respond/${prompt.request.id}`,
     );
+  }, [router]);
+
+  const openGiftNote = useCallback((otherUserId: string | null) => {
+    if (!otherUserId) return;
+    pushOnce(router, `/(app)/wall/${otherUserId}`);
   }, [router]);
 
   const openMemoryComposerShortcut = useCallback((kind: 'note' | 'song') => {
@@ -697,22 +712,9 @@ export default function FriendsListScreen() {
     }).start();
   }, [floatingTopAnim]);
 
-  const setFloatingBottomVisible = useCallback((visible: boolean) => {
-    if (floatingBottomVisibleRef.current === visible) return;
-    floatingBottomVisibleRef.current = visible;
-    setShowFloatingAddFriend(visible);
-    Animated.timing(floatingBottomAnim, {
-      toValue: visible ? 1 : 0,
-      duration: 180,
-      useNativeDriver: true,
-    }).start();
-  }, [floatingBottomAnim]);
-
   useEffect(() => {
-    const visible = !isScrollChromeHidden;
-    setFloatingTopVisible(visible);
-    setFloatingBottomVisible(visible);
-  }, [isScrollChromeHidden, setFloatingBottomVisible, setFloatingTopVisible]);
+    setFloatingTopVisible(!isScrollChromeHidden);
+  }, [isScrollChromeHidden, setFloatingTopVisible]);
 
   const floatingTopStyle = useMemo(
     () => ({
@@ -720,14 +722,6 @@ export default function FriendsListScreen() {
       transform: [{ translateY: floatingTopAnim.interpolate({ inputRange: [0, 1], outputRange: [-18, 0] }) }],
     }),
     [floatingTopAnim],
-  );
-
-  const floatingBottomStyle = useMemo(
-    () => ({
-      opacity: floatingBottomAnim,
-      transform: [{ translateY: floatingBottomAnim.interpolate({ inputRange: [0, 1], outputRange: [28, 0] }) }],
-    }),
-    [floatingBottomAnim],
   );
 
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
@@ -838,9 +832,21 @@ export default function FriendsListScreen() {
         {/* ── Developing (Darkroom) ── */}
         <FadeInView delay={100}>
           <View style={styles.feedSection}>
-            <View style={styles.feedHeader}>
-              <ThemedIcon name="hourglass" size={16} color={colors.accent} />
-              <Text style={styles.feedTitle}>Developing…</Text>
+            <View style={styles.feedHeaderRow}>
+              <View style={styles.feedHeader}>
+                <ThemedIcon name="hourglass" size={16} color={colors.accent} />
+                <Text style={styles.feedTitle}>Developing…</Text>
+              </View>
+              <Pressable
+                onPress={openPolaroidShortcut}
+                disabled={!activePerson}
+                style={[styles.addMemoryButton, !activePerson && styles.floatingActionDisabled]}
+                accessibilityRole="button"
+                accessibilityLabel={activePerson ? `Add Memory Card about ${activePerson.title}` : 'Add Memory Card'}
+              >
+                <PolaroidIcon size={16} color={colors.white} />
+                <Text style={styles.addMemoryButtonText}>Add Memory Card</Text>
+              </Pressable>
             </View>
             {developingPosts.length > 0 ? (
               <>
@@ -875,9 +881,21 @@ export default function FriendsListScreen() {
         {/* ── Received Prompts ── */}
         <FadeInView delay={150}>
           <View style={styles.feedSection}>
-            <View style={styles.feedHeader}>
-              <Ionicons name="sparkles-outline" size={16} color={colors.accent} />
-              <Text style={styles.feedTitle}>Prompts</Text>
+            <View style={styles.feedHeaderRow}>
+              <View style={styles.feedHeader}>
+                <Ionicons name="sparkles-outline" size={16} color={colors.accent} />
+                <Text style={styles.feedTitle}>Prompts</Text>
+              </View>
+              <Pressable
+                onPress={openPromptTypeSheet}
+                disabled={!activePerson || (activePerson.entityType === 'contact' && !activePerson.linkedUserId)}
+                style={[styles.addMemoryButton, (!activePerson || (activePerson.entityType === 'contact' && !activePerson.linkedUserId)) && styles.floatingActionDisabled]}
+                accessibilityRole="button"
+                accessibilityLabel={activePerson ? `Ask ${activePerson.title} for a prompt or rating` : 'Ask for a prompt or rating'}
+              >
+                <Ionicons name="sparkles-outline" size={16} color={colors.white} />
+                <Text style={styles.addMemoryButtonText}>Send Prompt</Text>
+              </Pressable>
             </View>
             {receivedPrompts.length > 0 ? (
               <>
@@ -925,12 +943,81 @@ export default function FriendsListScreen() {
           </View>
         </FadeInView>
 
+        {/* ── Gift Notes ── */}
+        <FadeInView delay={175}>
+          <View style={styles.feedSection}>
+            <View style={styles.feedHeaderRow}>
+              <View style={styles.feedHeader}>
+                <Ionicons name="gift-outline" size={16} color={colors.accent} />
+                <Text style={styles.feedTitle}>Gift notes</Text>
+              </View>
+              <Pressable
+                onPress={openGiftNoteShortcut}
+                disabled={!activePerson || (activePerson.entityType === 'contact' && !activePerson.linkedUserId)}
+                style={[styles.addMemoryButton, (!activePerson || (activePerson.entityType === 'contact' && !activePerson.linkedUserId)) && styles.floatingActionDisabled]}
+                accessibilityRole="button"
+                accessibilityLabel={activePerson ? `Add gift note for ${activePerson.title}` : 'Add gift note'}
+              >
+                <Ionicons name="gift-outline" size={16} color={colors.white} />
+                <Text style={styles.addMemoryButtonText}>Add Gift Note</Text>
+              </Pressable>
+            </View>
+            {homeGiftNotes.length > 0 ? (
+              <>
+                <Text style={styles.feedSubtitle}>
+                  {homeGiftNotes.length} {homeGiftNotes.length === 1 ? 'gift note is' : 'gift notes are'} counting down to unlock
+                </Text>
+                {homeGiftNotes.map(({ note, otherUser }) => (
+                  <Pressable
+                    key={note.id}
+                    onPress={() => openGiftNote(otherUser?.id ?? null)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open gift note with ${otherUser?.displayName ?? 'your friend'}`}
+                  >
+                    <LockedGiftNoteCard
+                      giftNote={note}
+                      person={otherUser}
+                      viewerUserId={currentUser?.id ?? ''}
+                    />
+                  </Pressable>
+                ))}
+              </>
+            ) : (
+              <Text style={styles.feedSubtitle}>No gift notes waiting to unlock right now</Text>
+            )}
+          </View>
+        </FadeInView>
+
         {/* ── Throwbacks ── */}
         <FadeInView delay={200}>
           <View style={styles.feedSection}>
-            <View style={styles.feedHeader}>
-              <ThemedIcon name="clock" size={16} color={colors.accent} />
-              <Text style={styles.feedTitle}>On This Day</Text>
+            <View style={styles.feedHeaderRow}>
+              <View style={styles.feedHeader}>
+                <ThemedIcon name="clock" size={16} color={colors.accent} />
+                <Text style={styles.feedTitle}>On This Day</Text>
+              </View>
+              <View style={styles.feedHeaderActions}>
+                <Pressable
+                  onPress={openNoteShortcut}
+                  disabled={!activePerson}
+                  style={[styles.addMemoryButtonCompact, !activePerson && styles.floatingActionDisabled]}
+                  accessibilityRole="button"
+                  accessibilityLabel={activePerson ? `Add note about ${activePerson.title}` : 'Add note'}
+                >
+                  <Ionicons name="create-outline" size={16} color={colors.white} />
+                  <Text style={styles.addMemoryButtonText}>Add Note</Text>
+                </Pressable>
+                <Pressable
+                  onPress={openMediaShortcut}
+                  disabled={!activePerson}
+                  style={[styles.addMemoryButtonCompact, !activePerson && styles.floatingActionDisabled]}
+                  accessibilityRole="button"
+                  accessibilityLabel={activePerson ? `Add photo or video about ${activePerson.title}` : 'Add photo or video'}
+                >
+                  <Ionicons name="camera-outline" size={16} color={colors.white} />
+                  <Text style={styles.addMemoryButtonText}>Add Media</Text>
+                </Pressable>
+              </View>
             </View>
             {throwbackBuckets.length > 0 ? (
               throwbackBuckets.map((bucket) => (
@@ -1046,72 +1133,6 @@ export default function FriendsListScreen() {
                 <Text style={styles.badgeText}>{notificationBadgeCount > 9 ? '9+' : notificationBadgeCount}</Text>
               </View>
             )}
-          </Pressable>
-        </View>
-      </Animated.View>
-
-      <Animated.View
-        pointerEvents={showFloatingAddFriend ? 'auto' : 'none'}
-        style={[
-          styles.floatingBottomRow,
-          // The tab bar is an absolute overlay, so keep memory actions above it.
-          { bottom: Math.max(insets.bottom * 0.5, spacing.xs) + 64 + spacing.xs },
-          floatingBottomStyle,
-        ]}
-      >
-        <View style={styles.floatingMemoryDock} pointerEvents="box-none">
-          <BlurView intensity={58} tint={blurTint} style={[StyleSheet.absoluteFill, styles.floatingMemoryDockBlur]} pointerEvents="none" />
-          <View pointerEvents="none" style={styles.floatingMemoryDockGlassTint} />
-          <View pointerEvents="none" style={styles.floatingMemoryDockHighlight} />
-          <View pointerEvents="none" style={styles.floatingMemoryDockGlow} />
-          <Pressable
-            onPress={openNoteShortcut}
-            disabled={!activePerson}
-            style={[styles.floatingMemoryButton, !activePerson && styles.floatingActionDisabled]}
-            accessibilityRole="button"
-            accessibilityLabel={activePerson ? `Add note about ${activePerson.title}` : 'Add note'}
-          >
-            <Ionicons name="create-outline" size={24} color={colors.ink} />
-          </Pressable>
-
-          <Pressable
-            onPress={openPromptTypeSheet}
-            disabled={!activePerson || (activePerson.entityType === 'contact' && !activePerson.linkedUserId)}
-            style={[styles.floatingMemoryButton, (!activePerson || (activePerson.entityType === 'contact' && !activePerson.linkedUserId)) && styles.floatingActionDisabled]}
-            accessibilityRole="button"
-            accessibilityLabel={activePerson ? `Ask ${activePerson.title} for a prompt or rating` : 'Ask for a prompt or rating'}
-          >
-            <Ionicons name="sparkles-outline" size={24} color={colors.ink} />
-          </Pressable>
-
-          <Pressable
-            onPress={openPolaroidShortcut}
-            disabled={!activePerson}
-            style={[styles.floatingMemoryButton, styles.floatingMemoryButtonPrimary, !activePerson && styles.floatingActionDisabled]}
-            accessibilityRole="button"
-            accessibilityLabel={activePerson ? `Add Memory Card about ${activePerson.title}` : 'Add Memory Card'}
-          >
-            <PolaroidIcon size={23} color={colors.white} />
-          </Pressable>
-
-          <Pressable
-            onPress={openGiftNoteShortcut}
-            disabled={!activePerson || (activePerson.entityType === 'contact' && !activePerson.linkedUserId)}
-            style={[styles.floatingMemoryButton, (!activePerson || (activePerson.entityType === 'contact' && !activePerson.linkedUserId)) && styles.floatingActionDisabled]}
-            accessibilityRole="button"
-            accessibilityLabel={activePerson ? `Add gift note for ${activePerson.title}` : 'Add gift note'}
-          >
-            <Ionicons name="gift-outline" size={22} color={colors.ink} />
-          </Pressable>
-
-          <Pressable
-            onPress={openMediaShortcut}
-            disabled={!activePerson}
-            style={[styles.floatingMemoryButton, !activePerson && styles.floatingActionDisabled]}
-            accessibilityRole="button"
-            accessibilityLabel={activePerson ? `Add photo or video about ${activePerson.title}` : 'Add photo or video'}
-          >
-            <Ionicons name="camera-outline" size={25} color={colors.ink} />
           </Pressable>
         </View>
       </Animated.View>
@@ -1443,90 +1464,34 @@ const makeStyles = (colors: ColorTokens, fonts: FontSet, hasCustomBackground = f
       shadowRadius: 16,
       elevation: 8,
     },
-    floatingBottomRow: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      alignItems: 'center',
-    },
-    floatingMemoryRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.md,
-    },
-    floatingMemoryDock: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.sm,
-      borderRadius: radius.pill,
-      borderWidth: 1,
-      borderColor: withAlpha(colors.white, 0.28),
-      backgroundColor: withAlpha(colors.paper, 0.34),
-      paddingHorizontal: spacing.sm,
-      paddingVertical: spacing.xs,
-      overflow: 'hidden',
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 14 },
-      shadowOpacity: 0.2,
-      shadowRadius: 28,
-      elevation: 12,
-    },
-    floatingMemoryDockBlur: {
-      borderRadius: radius.pill,
-    },
-    floatingMemoryDockGlassTint: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: withAlpha(colors.paper, 0.16),
-    },
-    floatingMemoryDockHighlight: {
-      position: 'absolute',
-      top: 1,
-      left: 18,
-      right: 18,
-      height: StyleSheet.hairlineWidth,
-      backgroundColor: withAlpha(colors.white, 0.72),
-    },
-    floatingMemoryDockGlow: {
-      position: 'absolute',
-      top: -28,
-      left: '34%',
-      width: 108,
-      height: 108,
-      borderRadius: 54,
-      backgroundColor: withAlpha(colors.accentAlt ?? colors.accent, 0.2),
-    },
-    floatingMemoryButton: {
-      width: 50,
-      height: 50,
-      borderRadius: 25,
-      borderWidth: 1,
-      borderColor: withAlpha(colors.white, 0.3),
-      backgroundColor: withAlpha(colors.paper, 0.5),
-      alignItems: 'center',
-      justifyContent: 'center',
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 5 },
-      shadowOpacity: 0.1,
-      shadowRadius: 10,
-      elevation: 4,
-    },
-    floatingMemoryButtonPrimary: {
-      backgroundColor: colors.accent,
-      borderColor: colors.accent,
-      width: 58,
-      height: 58,
-      borderRadius: 29,
-      shadowOpacity: 0.22,
-      shadowRadius: 16,
-      elevation: 8,
-    },
     floatingActionDisabled: {
       opacity: 0.45,
     },
     feedSection: { gap: spacing.sm },
-    feedHeader: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.xs },
+    feedHeaderRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const, gap: spacing.sm },
+    feedHeader: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.xs, flexShrink: 1, minWidth: 0 },
+    addMemoryButton: {
+      flexShrink: 0,
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: spacing.xs,
+      backgroundColor: colors.accent,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+    },
+    feedHeaderActions: { flexShrink: 0, flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.xs },
+    addMemoryButtonCompact: {
+      flexShrink: 0,
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 4,
+      backgroundColor: colors.accent,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    addMemoryButtonText: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.white },
     feedTitle: { fontFamily: fonts.heading, fontSize: 20, color: colors.ink, ...backgroundTextShadow, ...protectTextFromFontClipping(fonts.heading, 20) },
     feedSubtitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.ink, ...backgroundTextShadow },
     promptCard: {

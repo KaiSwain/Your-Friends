@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
@@ -14,13 +14,15 @@ import { backOnce, pushOnce, replaceOnce, shouldPopForBackTarget } from '../../.
 import { showPromptPaywall } from '../../../src/lib/premiumGates';
 import { CURATED_PROMPT_IDEAS, PROMPT_IDEA_CATEGORIES, generatePromptIdeas, type PromptIdea, type PromptIdeaCategory } from '../../../src/lib/promptIdeas';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
-import { radius, spacing } from '../../../src/theme/tokens';
+import { radius, semanticColors, spacing } from '../../../src/theme/tokens';
 import type { MemoryPromptType, PeopleListItem, SavedMemoryPrompt, VoiceAttachment } from '../../../src/types/domain';
 
 const ANSWER_TYPE_OPTIONS: { type: MemoryPromptType; label: string; defaultPrompt: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { type: 'song', label: 'Song', defaultPrompt: 'What song reminds you of us?', icon: 'musical-notes-outline' },
   { type: 'text', label: 'Note', defaultPrompt: 'What memory should we never forget?', icon: 'chatbubble-ellipses-outline' },
   { type: 'photo', label: 'Photo', defaultPrompt: 'Send me a photo that feels like us.', icon: 'camera-outline' },
+  { type: 'movie', label: 'Movie', defaultPrompt: 'What movie should I watch next?', icon: 'film-outline' },
+  { type: 'location', label: 'Location', defaultPrompt: 'Where should we go together?', icon: 'location-outline' },
 ];
 const DEFAULT_PROMPT_TEXTS = ANSWER_TYPE_OPTIONS.map((option) => option.defaultPrompt);
 
@@ -48,6 +50,7 @@ export default function MemoryPromptRequestScreen() {
   const [promptText, setPromptText] = useState(ANSWER_TYPE_OPTIONS[0].defaultPrompt);
   const [promptVoice, setPromptVoice] = useState<VoiceAttachment | null>(null);
   const [selectedIdeaCategory, setSelectedIdeaCategory] = useState<PromptIdeaCategory>('funny');
+  const [showPromptIdeas, setShowPromptIdeas] = useState(false);
   const [aiIdeas, setAiIdeas] = useState<PromptIdea[]>([]);
   const [ideasBusy, setIdeasBusy] = useState(false);
   const [savingPrompt, setSavingPrompt] = useState(false);
@@ -240,7 +243,7 @@ export default function MemoryPromptRequestScreen() {
   }
 
   return (
-    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={!isPremium ? 'Unlock Premium to send prompts' : busy ? 'Sending...' : selectedRecipientIds.length > 1 ? `Send to ${selectedRecipientIds.length} friends` : 'Send prompt'} onPress={handleSend} disabled={busy || (isPremium && selectedRecipientIds.length === 0)} />}>
+    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton accentColor={!isPremium ? semanticColors.promptGold : undefined} label={!isPremium ? 'Unlock Premium to send prompts' : busy ? 'Sending...' : selectedRecipientIds.length > 1 ? `Send to ${selectedRecipientIds.length} friends` : 'Send prompt'} onPress={handleSend} disabled={busy || (isPremium && selectedRecipientIds.length === 0)} />}>
       <Text style={styles.title}>Send a Memory Prompt</Text>
       <Text style={styles.subtitle}>Write any prompt, then choose how your friend should answer it.</Text>
       {!isPremium ? (
@@ -273,7 +276,82 @@ export default function MemoryPromptRequestScreen() {
       </View>
 
       <View style={styles.section}>
+        <View style={styles.sectionHeadingRow}>
+          <View style={styles.sectionHeadingText}>
+            <Text style={styles.sectionLabel}>Prompt ideas</Text>
+            <Text style={styles.sectionHelper}>Turn on for curated, AI, and saved prompts to fill the composer.</Text>
+          </View>
+          <Switch
+            value={showPromptIdeas}
+            onValueChange={setShowPromptIdeas}
+            trackColor={{ true: colors.accent, false: colors.line }}
+            thumbColor={colors.white}
+            ios_backgroundColor={colors.line}
+            accessibilityLabel="Show prompt ideas"
+          />
+        </View>
+
+        {showPromptIdeas ? (
+          <>
+            <View style={styles.savedHeaderRow}>
+              <Text style={styles.savedTitle}>Browse ideas</Text>
+              <Pressable onPress={handleGenerateIdeas} disabled={ideasBusy} style={styles.generateButton} accessibilityRole="button">
+                <Ionicons name="sparkles-outline" size={14} color={colors.accent} />
+                <Text style={styles.generateButtonText}>{ideasBusy ? 'Thinking...' : 'AI ideas'}</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.ideaCategoryScroll}>
+              {PROMPT_IDEA_CATEGORIES.map((category) => {
+                const active = selectedIdeaCategory === category.id;
+                return (
+                  <Pressable key={category.id} onPress={() => setSelectedIdeaCategory(category.id)} style={[styles.ideaCategoryChip, active && styles.ideaCategoryChipActive]} accessibilityRole="button" accessibilityState={{ selected: active }}>
+                    <Text style={[styles.ideaCategoryText, active && styles.ideaCategoryTextActive]}>{category.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.promptIdeaScroll}>
+              {categoryIdeas.map((idea) => (
+                <PromptIdeaCard key={`${idea.category}:${idea.text}`} colors={colors} fonts={fonts} idea={idea} onPress={() => applyPromptIdea(idea)} onSave={() => void saveIdea(idea, 'curated')} />
+              ))}
+            </ScrollView>
+
+            {aiIdeas.length > 0 ? (
+              <View style={styles.ideaSubsection}>
+                <Text style={styles.savedTitle}>AI suggestions</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.promptIdeaScroll}>
+                  {aiIdeas.map((idea) => (
+                    <PromptIdeaCard key={`ai:${idea.text}`} colors={colors} fonts={fonts} idea={idea} onPress={() => applyPromptIdea(idea)} onSave={() => void saveIdea(idea, 'ai')} />
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
+
+            <View style={styles.savedHeaderRow}>
+              <Text style={styles.savedTitle}>Saved</Text>
+              <Pressable onPress={handleSaveCurrentPrompt} disabled={savingPrompt || Boolean(savedPromptMatch)} style={styles.saveCurrentButton} accessibilityRole="button">
+                <Ionicons name={savedPromptMatch ? 'bookmark' : 'bookmark-outline'} size={14} color={savedPromptMatch ? colors.inkSoft : colors.accent} />
+                <Text style={[styles.saveCurrentText, savedPromptMatch && styles.saveCurrentTextDisabled]}>{savedPromptMatch ? 'Saved' : savingPrompt ? 'Saving...' : 'Save this prompt'}</Text>
+              </Pressable>
+            </View>
+            {savedMemoryPrompts.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.promptIdeaScroll}>
+                {savedMemoryPrompts.map((savedPrompt) => (
+                  <SavedPromptCard key={savedPrompt.id} colors={colors} fonts={fonts} prompt={savedPrompt} onPress={() => applyPromptIdea(savedPrompt)} onDelete={() => void handleDeleteSavedPrompt(savedPrompt.id)} />
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.emptySavedText}>Saved prompts will show up here for quick reuse.</Text>
+            )}
+          </>
+        ) : null}
+      </View>
+
+      <View style={styles.section}>
         <Text style={styles.sectionLabel}>Answer format</Text>
+        <Text style={styles.sectionHelper}>How should your friend reply?</Text>
         <View style={styles.typeGrid}>
           {ANSWER_TYPE_OPTIONS.map((option) => {
             const active = promptType === option.type;
@@ -285,64 +363,6 @@ export default function MemoryPromptRequestScreen() {
             );
           })}
         </View>
-      </View>
-
-      <View style={styles.section}>
-        <View style={styles.sectionHeadingRow}>
-          <View>
-            <Text style={styles.sectionLabel}>Prompt ideas</Text>
-            <Text style={styles.sectionHelper}>Tap one to fill the composer, or save your own favorite.</Text>
-          </View>
-          <Pressable onPress={handleGenerateIdeas} disabled={ideasBusy} style={styles.generateButton} accessibilityRole="button">
-            <Ionicons name="sparkles-outline" size={14} color={colors.accent} />
-            <Text style={styles.generateButtonText}>{ideasBusy ? 'Thinking...' : 'AI ideas'}</Text>
-          </Pressable>
-        </View>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.ideaCategoryScroll}>
-          {PROMPT_IDEA_CATEGORIES.map((category) => {
-            const active = selectedIdeaCategory === category.id;
-            return (
-              <Pressable key={category.id} onPress={() => setSelectedIdeaCategory(category.id)} style={[styles.ideaCategoryChip, active && styles.ideaCategoryChipActive]} accessibilityRole="button" accessibilityState={{ selected: active }}>
-                <Text style={[styles.ideaCategoryText, active && styles.ideaCategoryTextActive]}>{category.label}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.promptIdeaScroll}>
-          {categoryIdeas.map((idea) => (
-            <PromptIdeaCard key={`${idea.category}:${idea.text}`} colors={colors} fonts={fonts} idea={idea} onPress={() => applyPromptIdea(idea)} onSave={() => void saveIdea(idea, 'curated')} />
-          ))}
-        </ScrollView>
-
-        {aiIdeas.length > 0 ? (
-          <View style={styles.ideaSubsection}>
-            <Text style={styles.savedTitle}>AI suggestions</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.promptIdeaScroll}>
-              {aiIdeas.map((idea) => (
-                <PromptIdeaCard key={`ai:${idea.text}`} colors={colors} fonts={fonts} idea={idea} onPress={() => applyPromptIdea(idea)} onSave={() => void saveIdea(idea, 'ai')} />
-              ))}
-            </ScrollView>
-          </View>
-        ) : null}
-
-        <View style={styles.savedHeaderRow}>
-          <Text style={styles.savedTitle}>Saved</Text>
-          <Pressable onPress={handleSaveCurrentPrompt} disabled={savingPrompt || Boolean(savedPromptMatch)} style={styles.saveCurrentButton} accessibilityRole="button">
-            <Ionicons name={savedPromptMatch ? 'bookmark' : 'bookmark-outline'} size={14} color={savedPromptMatch ? colors.inkSoft : colors.accent} />
-            <Text style={[styles.saveCurrentText, savedPromptMatch && styles.saveCurrentTextDisabled]}>{savedPromptMatch ? 'Saved' : savingPrompt ? 'Saving...' : 'Save this prompt'}</Text>
-          </Pressable>
-        </View>
-        {savedMemoryPrompts.length > 0 ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.promptIdeaScroll}>
-            {savedMemoryPrompts.map((savedPrompt) => (
-              <SavedPromptCard key={savedPrompt.id} colors={colors} fonts={fonts} prompt={savedPrompt} onPress={() => applyPromptIdea(savedPrompt)} onDelete={() => void handleDeleteSavedPrompt(savedPrompt.id)} />
-            ))}
-          </ScrollView>
-        ) : (
-          <Text style={styles.emptySavedText}>Saved prompts will show up here for quick reuse.</Text>
-        )}
       </View>
 
       <View style={styles.section}>
@@ -453,9 +473,10 @@ const makeStyles = (colors: ReturnType<typeof useTheme>['colors'], fonts: Return
   premiumNotice: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.accent, backgroundColor: colors.paper, padding: spacing.md },
   premiumNoticeText: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 18, color: colors.ink },
   section: { gap: spacing.sm },
-  sectionHeadingRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.sm },
+  sectionHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
+  sectionHeadingText: { flex: 1 },
   sectionLabel: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.inkSoft, textTransform: 'uppercase', letterSpacing: 0.8 },
-  sectionHelper: { marginTop: 2, maxWidth: 220, fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkSoft },
+  sectionHelper: { marginTop: 2, maxWidth: 260, fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.inkSoft },
   targetScroll: { gap: spacing.sm, paddingRight: spacing.md },
   targetChip: { width: 104, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, padding: spacing.sm, alignItems: 'center', gap: spacing.xs },
   targetChipActive: { borderColor: colors.accent, backgroundColor: colors.paper },
@@ -465,8 +486,8 @@ const makeStyles = (colors: ReturnType<typeof useTheme>['colors'], fonts: Return
   targetInitials: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.white },
   targetChipText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkSoft },
   targetChipTextActive: { color: colors.accent },
-  typeGrid: { flexDirection: 'row', gap: spacing.sm },
-  typeCard: { flex: 1, minHeight: 76, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, alignItems: 'center', justifyContent: 'center', gap: spacing.xs, padding: spacing.sm },
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  typeCard: { flexGrow: 1, flexBasis: '30%', minWidth: 92, minHeight: 76, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, alignItems: 'center', justifyContent: 'center', gap: spacing.xs, padding: spacing.sm },
   typeCardActive: { borderColor: colors.accent, backgroundColor: colors.accent },
   typeLabel: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.inkSoft },
   typeLabelActive: { color: colors.white },

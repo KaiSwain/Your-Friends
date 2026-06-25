@@ -11,6 +11,7 @@ import type {
   WallPost,
 } from '../../types/domain';
 import { rowToWallPost } from '../social/mappers';
+import { movieToDbColumns } from '../movies/mappers';
 import { hasTextOrVoice } from '../../lib/voiceAttachmentDb';
 import { getPromptExpiresAt, isPromptExpired } from '../../lib/promptExpiration';
 import { rowToMemoryPromptRequest, rowToSavedMemoryPrompt, songToPromptResponseDbColumns, songToWallPostDbColumns, voiceToPromptQuestionDbColumns, voiceToPromptResponseDbColumns, voiceToWallPostDbColumns } from './mappers';
@@ -138,12 +139,14 @@ export async function completeMemoryPromptRequest(reviewerUserId: string, input:
   const responseBody = cleanOptionalText(input.body, 1200);
   const responseSong = input.song ?? null;
   const responseVoice = input.voice ?? null;
+  const responseMovie = input.movie ?? null;
+  const responseLocationName = cleanOptionalText(input.locationName, 120);
   const responsePostType = input.responsePostType ?? null;
   const responseImageUri = input.imageUri ?? null;
   const responseVideoUri = input.videoUri ?? null;
   const referencedWallPostId = input.referencedWallPostId ?? null;
 
-  validateCompletion(request.promptType, responseBody, responseSong, responseVoice, referencedWallPostId, responsePostType, responseImageUri, responseVideoUri);
+  validateCompletion(request.promptType, responseBody, responseSong, responseVoice, referencedWallPostId, responsePostType, responseImageUri, responseVideoUri, responseMovie, responseLocationName);
 
   const uploadedResponseImage = request.promptType === 'photo' && responseImageUri
     ? await uploadMemoryImageVariants(responseImageUri, { prefix: reviewerUserId })
@@ -155,9 +158,11 @@ export async function completeMemoryPromptRequest(reviewerUserId: string, input:
     ? 'song'
     : request.promptType === 'voice'
       ? 'voice'
-      : request.promptType === 'photo'
-        ? responsePostType ?? 'media'
-        : 'note';
+      : request.promptType === 'movie'
+        ? 'movie'
+        : request.promptType === 'photo'
+          ? responsePostType ?? 'media'
+          : 'note';
 
   const { data: wallPostRow, error: wallPostError } = await supabase
     .from('wall_posts')
@@ -173,8 +178,10 @@ export async function completeMemoryPromptRequest(reviewerUserId: string, input:
       video_path: uploadedResponseVideoUri,
       video_muted: input.videoMuted ?? false,
       memory_date: new Date().toISOString().slice(0, 10),
+      location_name: request.promptType === 'location' ? responseLocationName : null,
       ...songToWallPostDbColumns(request.promptType === 'song' ? responseSong : null),
       ...voiceToWallPostDbColumns(responseVoice),
+      ...(request.promptType === 'movie' && responseMovie ? movieToDbColumns(responseMovie) : {}),
       memory_prompt_request_id: request.id,
       referenced_wall_post_id: request.promptType === 'photo_reference' ? referencedWallPostId : null,
       prompt_text: request.promptText,
@@ -232,10 +239,12 @@ async function getDisplayName(userId: string) {
   return data?.display_name || 'Someone';
 }
 
-function validateCompletion(promptType: MemoryPromptType, body: string | null, song: CompleteMemoryPromptRequestInput['song'], voice: CompleteMemoryPromptRequestInput['voice'], referencedWallPostId: string | null, responsePostType: CompleteMemoryPromptRequestInput['responsePostType'], imageUri: string | null, videoUri: string | null) {
+function validateCompletion(promptType: MemoryPromptType, body: string | null, song: CompleteMemoryPromptRequestInput['song'], voice: CompleteMemoryPromptRequestInput['voice'], referencedWallPostId: string | null, responsePostType: CompleteMemoryPromptRequestInput['responsePostType'], imageUri: string | null, videoUri: string | null, movie: CompleteMemoryPromptRequestInput['movie'], locationName: string | null) {
   if (promptType === 'song' && !song) throw new Error('Choose a song before sending.');
   if (promptType === 'voice' && !voice) throw new Error('Record a voice memory before sending.');
   if (promptType === 'text' && !hasTextOrVoice(body, voice)) throw new Error('Write or record a response before sending.');
+  if (promptType === 'movie' && !movie) throw new Error('Choose a movie before sending.');
+  if (promptType === 'location' && !locationName) throw new Error('Choose a location before sending.');
   if (promptType === 'photo') {
     if (responsePostType !== 'polaroid' && responsePostType !== 'media') throw new Error('Choose Memory Card or media before sending.');
     if (!imageUri && !videoUri) throw new Error('Choose a photo or video before sending.');

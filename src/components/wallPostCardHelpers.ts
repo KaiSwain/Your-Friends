@@ -29,6 +29,7 @@ export function getResponseTypeLabel(post: WallPost) {
   else if (post.imageUri || post.referencedWallPostId) parts.push('photo');
   if (post.body?.trim() && !post.song && !post.movie && !post.imageUri && !post.referencedWallPostId) parts.push('note');
   if (post.voice) parts.push('voice');
+  if (parts.length === 0 && post.promptType === 'location' && post.locationName?.trim()) parts.push('a location');
   if (parts.length === 0) return null;
   if (parts.length === 1) return parts[0];
   return `${parts.slice(0, -1).join(', ')} + ${parts[parts.length - 1]}`;

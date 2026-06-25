@@ -58,6 +58,11 @@ const PREMIUM_FEATURES: { icon: keyof typeof Ionicons.glyphMap; title: string; b
     body: 'Ask friends for songs, photo memories, voice memories, or notes when you do not know what to post.',
   },
   {
+    icon: 'film-outline',
+    title: 'Send movie prompts',
+    body: 'Send a movie and collect your friends’ ratings, then watch each review become a shared memory card.',
+  },
+  {
     icon: 'mic-outline',
     title: 'Voice memories',
     body: 'Record short audio memories and answer voice prompts with something more personal than text.',

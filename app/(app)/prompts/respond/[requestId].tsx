@@ -6,6 +6,9 @@ import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '../../../../src/components/ActionButton';
 import { AppScreen } from '../../../../src/components/AppScreen';
+import { MemoryLocationPicker } from '../../../../src/components/MemoryLocationPicker';
+import { MovieSearchPicker } from '../../../../src/components/MovieSearchPicker';
+import { SongMemoryCard } from '../../../../src/components/SongMemoryCard';
 import { SongSearchPicker } from '../../../../src/components/SongSearchPicker';
 import { TextOrVoiceComposer } from '../../../../src/components/TextOrVoiceComposer';
 import { DEFAULT_VOICE_RECORDING_MAX_MS, VoiceRecorder } from '../../../../src/components/VoiceRecorder';
@@ -23,7 +26,7 @@ import { showPhotoSourceSheet } from '../../../../src/lib/photoSourceSheet';
 import { getPromptExpirationLabel, isPromptExpired } from '../../../../src/lib/promptExpiration';
 import { protectTextFromFontClipping } from '../../../../src/theme/fontProtection';
 import { radius, semanticColors, spacing } from '../../../../src/theme/tokens';
-import type { SongAttachment, VoiceAttachment, WallPost } from '../../../../src/types/domain';
+import type { MovieAttachment, SongAttachment, VoiceAttachment, WallPost } from '../../../../src/types/domain';
 
 const REGULAR_VIDEO_MAX_DURATION_MS = 30000;
 
@@ -41,6 +44,9 @@ export default function MemoryPromptResponseScreen() {
   const expired = request ? isPromptExpired(request) : false;
   const [body, setBody] = useState('');
   const [selectedSong, setSelectedSong] = useState<SongAttachment | null>(null);
+  const [songPreviewKey, setSongPreviewKey] = useState<string | null>(null);
+  const [selectedMovie, setSelectedMovie] = useState<MovieAttachment | null>(null);
+  const [locationName, setLocationName] = useState('');
   const [selectedVoice, setSelectedVoice] = useState<VoiceAttachment | null>(null);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [photoResponseType, setPhotoResponseType] = useState<'polaroid' | 'media' | null>(null);
@@ -101,6 +107,14 @@ export default function MemoryPromptResponseScreen() {
       setError('Choose a Memory Card or media response first.');
       return;
     }
+    if (request.promptType === 'movie' && !selectedMovie) {
+      setError('Choose a movie first.');
+      return;
+    }
+    if (request.promptType === 'location' && !locationName.trim()) {
+      setError('Choose a location first.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -109,6 +123,8 @@ export default function MemoryPromptResponseScreen() {
         body,
         song: selectedSong,
         voice: selectedVoice,
+        movie: selectedMovie,
+        locationName: locationName.trim() || null,
         responsePostType: photoResponseType,
         imageUri: photoResponseImageUri,
         videoUri: photoResponseVideoUri,
@@ -272,7 +288,29 @@ export default function MemoryPromptResponseScreen() {
 
       {request.promptType === 'song' ? (
         <View style={styles.section}>
-          <SongSearchPicker selectedSong={selectedSong} onSelect={setSelectedSong} onRemove={() => setSelectedSong(null)} />
+          <SongSearchPicker
+            selectedSong={selectedSong}
+            onSelect={(song) => {
+              setSelectedSong(song);
+              setSongPreviewKey(`${song.provider}:${song.providerTrackId}:${Date.now()}`);
+              setError('');
+            }}
+            onRemove={() => {
+              setSelectedSong(null);
+              setSongPreviewKey(null);
+            }}
+          />
+          {selectedSong ? (
+            <SongMemoryCard
+              song={selectedSong}
+              postId="prompt-response-song-preview"
+              authorName={currentUser.displayName}
+              createdAt={new Date().toISOString()}
+              themeColors={colors}
+              preview
+              autoPlayKey={songPreviewKey}
+            />
+          ) : null}
         </View>
       ) : null}
 
@@ -351,9 +389,23 @@ export default function MemoryPromptResponseScreen() {
         </View>
       ) : null}
 
+      {request.promptType === 'movie' ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Pick a movie</Text>
+          <MovieSearchPicker selectedMovie={selectedMovie} onSelect={(movie) => { setSelectedMovie(movie); setError(''); }} onRemove={() => setSelectedMovie(null)} />
+        </View>
+      ) : null}
+
+      {request.promptType === 'location' ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Choose a location</Text>
+          <MemoryLocationPicker value={locationName} onChange={(value) => { setLocationName(value); setError(''); }} />
+        </View>
+      ) : null}
+
       <View style={styles.section}>
         <TextOrVoiceComposer
-          label={request.promptType === 'text' ? 'Your answer' : request.promptType === 'voice' || request.promptType === 'photo' ? 'Optional caption' : 'Optional note'}
+          label={request.promptType === 'text' ? 'Your answer' : request.promptType === 'voice' || request.promptType === 'photo' || request.promptType === 'movie' || request.promptType === 'location' ? 'Optional caption' : 'Optional note'}
           text={body}
           onTextChange={setBody}
           voice={request.promptType === 'voice' ? null : selectedVoice}
@@ -361,7 +413,7 @@ export default function MemoryPromptResponseScreen() {
             setSelectedVoice(voice);
             setError('');
           }}
-          placeholder={request.promptType === 'song' ? 'Why this song?' : request.promptType === 'photo' ? 'Add a caption for your photo...' : request.promptType === 'photo_reference' ? 'Why this photo memory?' : request.promptType === 'voice' ? 'Add a caption for your voice memory...' : 'Write your memory...'}
+          placeholder={request.promptType === 'song' ? 'Why this song?' : request.promptType === 'photo' ? 'Add a caption for your photo...' : request.promptType === 'photo_reference' ? 'Why this photo memory?' : request.promptType === 'voice' ? 'Add a caption for your voice memory...' : request.promptType === 'movie' ? 'Why this movie?' : request.promptType === 'location' ? 'Why this place?' : 'Write your memory...'}
           previewAuthorName={currentUser.displayName}
           allowVoice={request.promptType !== 'voice'}
           voiceLabel="Voice note"
@@ -394,6 +446,8 @@ function iconForPromptType(promptType: string) {
   if (promptType === 'photo_reference') return 'images-outline' as const;
   if (promptType === 'text') return 'chatbubble-ellipses-outline' as const;
   if (promptType === 'voice') return 'mic-outline' as const;
+  if (promptType === 'movie') return 'film-outline' as const;
+  if (promptType === 'location') return 'location-outline' as const;
   return 'musical-notes-outline' as const;
 }
 
@@ -402,6 +456,8 @@ function labelForPromptType(promptType: string) {
   if (promptType === 'photo_reference') return 'Photo prompt';
   if (promptType === 'text') return 'Text prompt';
   if (promptType === 'voice') return 'Voice answer requested';
+  if (promptType === 'movie') return 'Movie prompt';
+  if (promptType === 'location') return 'Location prompt';
   return 'Song prompt';
 }
 

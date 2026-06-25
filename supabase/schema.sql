@@ -717,7 +717,7 @@ create table public.wall_posts ( -- Create the wall_posts table in the public sc
   memory_prompt_request_id uuid, -- Optionally link back to the generic prompt that produced this memory.
   referenced_wall_post_id uuid references public.wall_posts(id) on delete set null, -- Optionally reference an existing Memory Card selected for a prompt.
   prompt_text text, -- Optionally store the prompt text that produced this memory.
-  prompt_type text check (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice')), -- Optionally store the prompt category that produced this memory.
+  prompt_type text check (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice', 'movie', 'location')), -- Optionally store the prompt category that produced this memory.
   prompt_audio_path text, -- Optionally store the recorded prompt question audio URL.
   prompt_audio_duration_ms integer, -- Optionally store the recorded prompt question duration.
   created_at timestamptz not null default now(), -- Store when the wall post row was created.
@@ -1125,7 +1125,7 @@ create table public.memory_prompt_requests (
   id uuid primary key default uuid_generate_v4(),
   requester_user_id uuid not null references public.profiles(id) on delete cascade,
   recipient_user_id uuid not null references public.profiles(id) on delete cascade,
-  prompt_type text not null check (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice')),
+  prompt_type text not null check (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice', 'movie', 'location')),
   prompt_text text not null,
   prompt_audio_path text,
   prompt_audio_duration_ms integer,
@@ -1182,7 +1182,7 @@ create policy "Recipients can complete pending memory prompt requests"
 create table public.saved_memory_prompts (
   id uuid primary key default uuid_generate_v4(),
   owner_user_id uuid not null references public.profiles(id) on delete cascade,
-  prompt_type text not null check (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice')),
+  prompt_type text not null check (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice', 'movie', 'location')),
   prompt_text text not null,
   category text,
   source text not null default 'user' check (source in ('user', 'curated', 'ai')),
@@ -1563,9 +1563,11 @@ ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS prompt_type text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS prompt_audio_path text;
 ALTER TABLE public.wall_posts ADD COLUMN IF NOT EXISTS prompt_audio_duration_ms integer;
 ALTER TABLE public.wall_posts DROP CONSTRAINT IF EXISTS wall_posts_prompt_type_check;
-ALTER TABLE public.wall_posts ADD CONSTRAINT wall_posts_prompt_type_check CHECK (prompt_type is null or prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice'));
+ALTER TABLE public.wall_posts ADD CONSTRAINT wall_posts_prompt_type_check CHECK (prompt_type is null or prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice', 'movie', 'location'));
 ALTER TABLE public.memory_prompt_requests DROP CONSTRAINT IF EXISTS memory_prompt_requests_prompt_type_check;
-ALTER TABLE public.memory_prompt_requests ADD CONSTRAINT memory_prompt_requests_prompt_type_check CHECK (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice'));
+ALTER TABLE public.memory_prompt_requests ADD CONSTRAINT memory_prompt_requests_prompt_type_check CHECK (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice', 'movie', 'location'));
+ALTER TABLE public.saved_memory_prompts DROP CONSTRAINT IF EXISTS saved_memory_prompts_prompt_type_check;
+ALTER TABLE public.saved_memory_prompts ADD CONSTRAINT saved_memory_prompts_prompt_type_check CHECK (prompt_type in ('song', 'text', 'photo', 'photo_reference', 'voice', 'movie', 'location'));
 ALTER TABLE public.memory_replies ADD COLUMN IF NOT EXISTS audio_path text;
 ALTER TABLE public.memory_replies ADD COLUMN IF NOT EXISTS audio_duration_ms integer;
 ALTER TABLE public.memory_prompt_requests ADD COLUMN IF NOT EXISTS prompt_audio_path text;

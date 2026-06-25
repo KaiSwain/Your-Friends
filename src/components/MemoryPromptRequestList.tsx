@@ -72,7 +72,7 @@ export function MemoryPromptRequestList({
   if (!hasPrompts) {
     return (
       <View style={styles.empty}>
-        <PromptGuideBubble title={promptBubbleTitle} copy={promptBubbleCopy} styles={styles} tint={tertiaryTint} />
+        {hasIncomingPrompt ? <PromptGuideBubble title={promptBubbleTitle} copy={promptBubbleCopy} styles={styles} tint={tertiaryTint} /> : null}
         <View style={styles.primaryCtaStack}>
           {onCreateMoviePrompt ? (
             <Pressable onPress={onCreateMoviePrompt} style={styles.movieHeroButton} accessibilityRole="button">
@@ -97,7 +97,7 @@ export function MemoryPromptRequestList({
 
   return (
     <View style={styles.list}>
-      <PromptGuideBubble title={promptBubbleTitle} copy={promptBubbleCopy} styles={styles} tint={tertiaryTint} />
+      {hasIncomingPrompt ? <PromptGuideBubble title={promptBubbleTitle} copy={promptBubbleCopy} styles={styles} tint={tertiaryTint} /> : null}
       <View style={styles.primaryCtaStack}>
         {onCreateMoviePrompt ? (
           <Pressable onPress={onCreateMoviePrompt} style={styles.movieHeroButton} accessibilityRole="button">

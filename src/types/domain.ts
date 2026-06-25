@@ -398,7 +398,7 @@ export interface OfficialBroadcastResult {
 }
 
 export type MovieReviewRequestStatus = 'pending' | 'completed' | 'cancelled';
-export type MemoryPromptType = 'song' | 'text' | 'photo' | 'photo_reference' | 'voice';
+export type MemoryPromptType = 'song' | 'text' | 'photo' | 'photo_reference' | 'voice' | 'movie' | 'location';
 export type MemoryPromptRequestStatus = 'pending' | 'completed' | 'cancelled';
 
 export interface MovieReviewRequest {
@@ -484,6 +484,8 @@ export interface CompleteMemoryPromptRequestInput {
   body?: string | null;
   song?: SongAttachment | null;
   voice?: VoiceAttachment | null;
+  movie?: MovieAttachment | null;
+  locationName?: string | null;
   responsePostType?: 'polaroid' | 'media' | null;
   imageUri?: string | null;
   videoUri?: string | null;

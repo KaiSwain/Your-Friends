@@ -48,22 +48,22 @@ export function MemoryProfileCard({
   backHint = 'tap to flip back',
   backPlaceholder = 'Nothing written on the back',
   backText,
-  bottomMinHeight = 104,
+  bottomMinHeight = 135,
   cardColor,
   colors: overrideColors,
   disabled,
   flourishColor,
   glow = false,
   imageUri,
-  initialsSize = 52,
+  initialsSize = 68,
   name,
-  nameSize = 26,
+  nameSize = 34,
   note,
   noteLineHeight = 18,
   noteLines = 2,
   onFlip,
   onPress,
-  photoSize = 200,
+  photoSize = 260,
   style,
   videoMuted,
   videoUri,
@@ -377,5 +377,5 @@ const makeStyles = (
 };
 
 export function MemoryProfileCardPreview(props: MemoryProfileCardProps & { liveBadge?: ReactNode }) {
-  return <MemoryProfileCard photoSize={140} bottomMinHeight={92} initialsSize={38} nameSize={20} {...props} />;
+  return <MemoryProfileCard photoSize={182} bottomMinHeight={120} initialsSize={49} nameSize={26} {...props} />;
 }

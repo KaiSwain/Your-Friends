@@ -3,10 +3,18 @@
 --
 -- Security model:
 --   * touch_last_seen() lets a signed-in user stamp their own last_seen_at.
---   * admin_app_stats() returns aggregate-only JSON and raises unless the
---     caller's profile has is_team_admin = true. No raw user content leaves
---     the database, and RLS stays intact because callers only ever invoke
---     these SECURITY DEFINER functions (never the service-role key).
+--   * admin_app_stats() returns aggregate-only JSON and raises unless the caller
+--     provides the shared admin passcode OR has is_team_admin = true. The static
+--     web dashboard uses the passcode (no Supabase Auth login required).
+--   * admin_search_users()/admin_grant_premium()/admin_revoke_premium() power
+--     the dashboard's "Manage users" panel and are gated by the same passcode.
+--   No raw user content leaves the database except the lookup fields the admin
+--   explicitly searches for, and RLS stays intact because callers only ever
+--   invoke these SECURITY DEFINER functions (never the service-role key).
+--
+--   NOTE: the passcode ('855509034239') lives only in these server-side
+--   functions, never in the website source. To change it, update every
+--   occurrence in this file and re-run it in the Supabase SQL editor.
 
 -- 1. Activity tracking ------------------------------------------------------
 alter table public.profiles add column if not exists last_seen_at timestamptz;
@@ -132,7 +140,10 @@ revoke all on function public.admin_growth_series(text, text, integer, text) fro
 revoke all on function public.admin_period_counts(text, text) from public;
 
 -- 3. Aggregate stats (team-admin only) --------------------------------------
-create or replace function public.admin_app_stats()
+-- Drop the old no-arg version so the passcode-enabled signature replaces it
+-- cleanly (a defaulted argument would otherwise create an ambiguous overload).
+drop function if exists public.admin_app_stats();
+create or replace function public.admin_app_stats(p_passcode text default null)
 returns jsonb
 language plpgsql
 security definer
@@ -142,9 +153,14 @@ declare
   result jsonb;
   total_users integer;
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.profiles p
-    where p.id = auth.uid() and p.is_team_admin = true
+  -- Access is allowed either via the shared admin passcode (used by the static
+  -- web dashboard, which has no Supabase Auth login) or a team-admin session.
+  if not (
+    p_passcode is not distinct from '855509034239'
+    or (auth.uid() is not null and exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid() and p.is_team_admin = true
+    ))
   ) then
     raise exception 'Not authorized';
   end if;
@@ -389,4 +405,136 @@ begin
 end;
 $$;
 
-grant execute on function public.admin_app_stats() to authenticated;
+grant execute on function public.admin_app_stats(text) to anon, authenticated;
+
+-- 4. Admin tooling: passcode-gated user lookup + premium grants -------------
+-- These power the web admin dashboard's "Manage users" panel. Access is gated by
+-- the same shared passcode as admin_app_stats so the static admin page needs no
+-- Supabase Auth login. The passcode is only ever checked here on the server; it
+-- never appears in the site's source. SECURITY DEFINER lets these bypass RLS so
+-- an admin can read any profile and comp premium to another user.
+
+-- Look up users by display name or email (case-insensitive, partial match).
+create or replace function public.admin_search_users(p_passcode text, p_query text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  result jsonb;
+  q text;
+begin
+  if p_passcode is distinct from '855509034239' then
+    raise exception 'Not authorized';
+  end if;
+  if length(coalesce(trim(p_query), '')) < 2 then
+    return '[]'::jsonb;
+  end if;
+
+  q := '%' || trim(p_query) || '%';
+
+  select coalesce(jsonb_agg(j order by dn), '[]'::jsonb) into result
+  from (
+    select
+      p.display_name as dn,
+      jsonb_build_object(
+        'id', p.id,
+        'email', p.email,
+        'display_name', p.display_name,
+        'friend_code', p.friend_code,
+        'created_at', p.created_at,
+        'last_seen_at', p.last_seen_at,
+        'premium_until', p.premium_until,
+        'premium_paid_until', p.premium_paid_until,
+        'premium_free_until', p.premium_free_until,
+        'premium_active', greatest(
+          coalesce(p.premium_until, '-infinity'::timestamptz),
+          coalesce(p.premium_paid_until, '-infinity'::timestamptz),
+          coalesce(p.premium_free_until, '-infinity'::timestamptz)
+        ) > now()
+      ) as j
+    from public.profiles p
+    where p.email ilike q or p.display_name ilike q
+    order by p.display_name
+    limit 25
+  ) s;
+
+  return result;
+end;
+$$;
+
+-- Grant "unlimited" comped premium by setting the far-future premium_until.
+-- This matches how manual/comped grants are counted in the dashboard stats.
+create or replace function public.admin_grant_premium(p_passcode text, p_user_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated public.profiles;
+begin
+  if p_passcode is distinct from '855509034239' then
+    raise exception 'Not authorized';
+  end if;
+
+  update public.profiles
+  set premium_until = '2099-12-31T23:59:59+00:00'
+  where id = p_user_id
+  returning * into updated;
+
+  if not found then
+    raise exception 'User not found';
+  end if;
+
+  return jsonb_build_object(
+    'id', updated.id,
+    'display_name', updated.display_name,
+    'email', updated.email,
+    'premium_until', updated.premium_until,
+    'premium_active', true
+  );
+end;
+$$;
+
+-- Remove a comped grant (clears premium_until only). Real paid or free-granted
+-- access via premium_paid_until / premium_free_until is left untouched.
+create or replace function public.admin_revoke_premium(p_passcode text, p_user_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated public.profiles;
+begin
+  if p_passcode is distinct from '855509034239' then
+    raise exception 'Not authorized';
+  end if;
+
+  update public.profiles
+  set premium_until = null
+  where id = p_user_id
+  returning * into updated;
+
+  if not found then
+    raise exception 'User not found';
+  end if;
+
+  return jsonb_build_object(
+    'id', updated.id,
+    'display_name', updated.display_name,
+    'email', updated.email,
+    'premium_until', updated.premium_until,
+    'premium_active', greatest(
+      coalesce(updated.premium_paid_until, '-infinity'::timestamptz),
+      coalesce(updated.premium_free_until, '-infinity'::timestamptz)
+    ) > now()
+  );
+end;
+$$;
+
+grant execute on function public.admin_search_users(text, text) to anon, authenticated;
+grant execute on function public.admin_grant_premium(text, uuid) to anon, authenticated;
+grant execute on function public.admin_revoke_premium(text, uuid) to anon, authenticated;

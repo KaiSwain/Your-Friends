@@ -100,26 +100,16 @@
     </style>
   </head>
   <body>
-    <!-- Login / setup view -->
+    <!-- Login view -->
     <div id="loginView" class="center">
       <div class="card-login">
         <div class="brand" style="margin-bottom:18px"><span class="mark">YF</span> Admin</div>
-
-        <div id="setupBlock" class="hidden">
-          <h1>One-time setup</h1>
-          <p class="muted">Paste your Supabase publishable (anon) key. It's safe in the browser — access is protected by row-level security and admin checks. Stored locally on this device only.</p>
-          <div class="field"><input id="pkInput" type="text" placeholder="sb_publishable_..." autocomplete="off"></div>
-          <div class="field"><button id="savePkBtn" style="width:100%">Save key</button></div>
-        </div>
-
-        <form id="loginForm" class="hidden">
-          <h1>Sign in</h1>
-          <p class="muted">Team admin access only.</p>
-          <div class="field"><input id="email" type="email" placeholder="Email" autocomplete="username"></div>
-          <div class="field"><input id="password" type="password" placeholder="Password" autocomplete="current-password"></div>
-          <div class="field"><button id="loginBtn" type="submit" style="width:100%">Sign in</button></div>
+        <form id="loginForm">
+          <h1>Enter passcode</h1>
+          <p class="muted">Admin access only.</p>
+          <div class="field"><input id="passcode" type="password" inputmode="numeric" placeholder="Passcode" autocomplete="off"></div>
+          <div class="field"><button id="loginBtn" type="submit" style="width:100%">Unlock</button></div>
           <div id="loginErr" class="err"></div>
-          <p class="muted" style="margin-top:8px"><a href="#" id="resetPkLink">Use a different Supabase key</a></p>
         </form>
       </div>
     </div>
@@ -135,6 +125,19 @@
         </div>
       </header>
       <div id="dashErr" class="err"></div>
+
+      <section class="block">
+        <h2>Manage users</h2>
+        <div class="panel">
+          <form id="userSearchForm" class="toolbar" style="margin-bottom:0">
+            <input id="userQuery" type="text" placeholder="Search by display name or email…" autocomplete="off" style="flex:1; min-width:220px">
+            <button type="submit">Search</button>
+          </form>
+          <div id="userErr" class="err"></div>
+          <div id="userResults"></div>
+        </div>
+      </section>
+
       <div id="dashBody"></div>
     </div>
 
@@ -142,80 +145,59 @@
       import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
       const SUPABASE_URL = 'https://lxprnlhffkdsecfrvodv.supabase.co';
-      const PK_STORAGE_KEY = 'yf_admin_supabase_pk';
+      // Publishable (anon) key — safe to expose; access is protected by the
+      // server-side admin passcode + row-level security.
+      const SUPABASE_PK = 'sb_publishable_O78V-PLnv0crLbK3LfR75w_8JZaz4qq';
+      const PIN_STORAGE_KEY = 'yf_admin_pin';
 
       const el = (id) => document.getElementById(id);
       const loginView = el('loginView');
       const dashView = el('dashView');
-      const setupBlock = el('setupBlock');
       const loginForm = el('loginForm');
 
-      let supabase = null;
+      const supabase = createClient(SUPABASE_URL, SUPABASE_PK, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
 
-      function getPublishableKey() {
-        return (localStorage.getItem(PK_STORAGE_KEY) || '').trim();
-      }
+      let PIN = '';
 
-      function initClient() {
-        const key = getPublishableKey();
-        if (!key) return false;
-        supabase = createClient(SUPABASE_URL, key, {
-          auth: { persistSession: true, autoRefreshToken: true },
-        });
-        return true;
-      }
-
-      function showSetup() {
-        loginView.classList.remove('hidden');
-        dashView.classList.add('hidden');
-        setupBlock.classList.remove('hidden');
-        loginForm.classList.add('hidden');
-      }
       function showLogin() {
         loginView.classList.remove('hidden');
         dashView.classList.add('hidden');
-        setupBlock.classList.add('hidden');
-        loginForm.classList.remove('hidden');
       }
       function showDash() {
         loginView.classList.add('hidden');
         dashView.classList.remove('hidden');
       }
 
-      // ---- Setup (publishable key) ----
-      el('savePkBtn').addEventListener('click', () => {
-        const v = el('pkInput').value.trim();
-        if (!v) return;
-        localStorage.setItem(PK_STORAGE_KEY, v);
-        if (initClient()) start();
-      });
-      el('resetPkLink').addEventListener('click', (e) => {
-        e.preventDefault();
-        localStorage.removeItem(PK_STORAGE_KEY);
-        showSetup();
-      });
-
-      // ---- Login ----
+      // ---- Login (passcode) ----
       loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         el('loginErr').textContent = '';
         el('loginBtn').disabled = true;
+        const entered = el('passcode').value.trim();
         try {
-          const { error } = await supabase.auth.signInWithPassword({
-            email: el('email').value.trim().toLowerCase(),
-            password: el('password').value,
-          });
-          if (error) { el('loginErr').textContent = error.message; return; }
+          PIN = entered;
+          const { error } = await supabase.rpc('admin_app_stats', { p_passcode: PIN });
+          if (error) {
+            PIN = '';
+            el('loginErr').textContent = /not authorized/i.test(error.message) ? 'Incorrect passcode.' : error.message;
+            return;
+          }
+          localStorage.setItem(PIN_STORAGE_KEY, PIN);
+          el('passcode').value = '';
           await loadDashboard();
         } catch (err) {
-          el('loginErr').textContent = err.message || 'Sign in failed.';
+          PIN = '';
+          el('loginErr').textContent = err.message || 'Unlock failed.';
         } finally {
           el('loginBtn').disabled = false;
         }
       });
 
-      el('signOutBtn').addEventListener('click', async () => {
-        await supabase.auth.signOut();
+      el('signOutBtn').addEventListener('click', () => {
+        PIN = '';
+        localStorage.removeItem(PIN_STORAGE_KEY);
         showLogin();
       });
       el('refreshBtn').addEventListener('click', loadDashboard);
@@ -225,13 +207,15 @@
         el('dashErr').textContent = '';
         showDash();
         el('dashBody').innerHTML = '<p class="muted">Loading stats…</p>';
-        const { data, error } = await supabase.rpc('admin_app_stats');
+        const { data, error } = await supabase.rpc('admin_app_stats', { p_passcode: PIN });
         if (error) {
+          el('dashBody').innerHTML = '';
           if (/not authorized/i.test(error.message)) {
-            el('dashBody').innerHTML = '';
-            el('dashErr').textContent = 'This account is not a team admin. Ask for is_team_admin = true on your profile.';
+            PIN = '';
+            localStorage.removeItem(PIN_STORAGE_KEY);
+            showLogin();
+            el('loginErr').textContent = 'Session expired — enter the passcode again.';
           } else {
-            el('dashBody').innerHTML = '';
             el('dashErr').textContent = error.message;
           }
           return;
@@ -460,11 +444,73 @@
         renderGrowth();
       }
 
+      // ---- Manage users (search + grant/revoke premium) ----
+      let USER_RESULTS = [];
+
+      function premiumLabel(u) {
+        if (!u.premium_active) return '<span class="pill warn">Free</span>';
+        const until = u.premium_until ? new Date(u.premium_until) : null;
+        if (until && until.getFullYear() >= 2099) return '<span class="pill good">Unlimited</span>';
+        if (u.premium_paid_until && new Date(u.premium_paid_until) > new Date()) return '<span class="pill good">Paid</span>';
+        if (u.premium_free_until && new Date(u.premium_free_until) > new Date()) return '<span class="pill good">Free grant</span>';
+        return '<span class="pill good">Premium</span>';
+      }
+
+      function renderUsers() {
+        const box = el('userResults');
+        if (!USER_RESULTS.length) { box.innerHTML = '<p class="muted">No users found.</p>'; return; }
+        const rows = USER_RESULTS.map((u, i) => {
+          const unlimited = u.premium_active && u.premium_until && new Date(u.premium_until).getFullYear() >= 2099;
+          const action = unlimited
+            ? `<button class="ghost" data-revoke="${i}">Revoke</button>`
+            : `<button data-grant="${i}">Grant unlimited</button>`;
+          return `<tr>
+            <td>${esc(u.display_name)}<div class="muted">${esc(u.email)}</div></td>
+            <td>${premiumLabel(u)}</td>
+            <td class="num">${action}</td>
+          </tr>`;
+        }).join('');
+        box.innerHTML = `<table style="margin-top:12px"><thead><tr><th>User</th><th>Premium</th><th class="num">Action</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      el('userSearchForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        el('userErr').textContent = '';
+        const q = el('userQuery').value.trim();
+        if (q.length < 2) { el('userErr').textContent = 'Type at least 2 characters.'; return; }
+        el('userResults').innerHTML = '<p class="muted">Searching…</p>';
+        const { data, error } = await supabase.rpc('admin_search_users', { p_passcode: PIN, p_query: q });
+        if (error) { el('userResults').innerHTML = ''; el('userErr').textContent = error.message; return; }
+        USER_RESULTS = data || [];
+        renderUsers();
+      });
+
+      el('userResults').addEventListener('click', async (e) => {
+        const grantBtn = e.target.closest('[data-grant]');
+        const revokeBtn = e.target.closest('[data-revoke]');
+        if (!grantBtn && !revokeBtn) return;
+        const idx = Number((grantBtn || revokeBtn).dataset.grant ?? (grantBtn || revokeBtn).dataset.revoke);
+        const u = USER_RESULTS[idx];
+        if (!u) return;
+        const granting = Boolean(grantBtn);
+        if (!confirm(`${granting ? 'Grant unlimited premium to' : 'Revoke comped premium from'} ${u.display_name} (${u.email})?`)) return;
+        (grantBtn || revokeBtn).disabled = true;
+        el('userErr').textContent = '';
+        const fn = granting ? 'admin_grant_premium' : 'admin_revoke_premium';
+        const { data, error } = await supabase.rpc(fn, { p_passcode: PIN, p_user_id: u.id });
+        if (error) { el('userErr').textContent = error.message; (grantBtn || revokeBtn).disabled = false; return; }
+        USER_RESULTS[idx] = {
+          ...u,
+          premium_until: data.premium_until,
+          premium_active: data.premium_active,
+        };
+        renderUsers();
+      });
+
       // ---- Boot ----
       async function start() {
-        if (!initClient()) { showSetup(); return; }
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
+        PIN = (localStorage.getItem(PIN_STORAGE_KEY) || '').trim();
+        if (PIN) {
           await loadDashboard();
         } else {
           showLogin();

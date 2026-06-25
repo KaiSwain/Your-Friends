@@ -92,7 +92,7 @@ function rowToResponseSong(row: any): SongAttachment | null {
 }
 
 function normalizeMemoryPromptType(value: unknown): MemoryPromptType {
-  if (value === 'song' || value === 'text' || value === 'photo' || value === 'photo_reference' || value === 'voice') return value;
+  if (value === 'song' || value === 'text' || value === 'photo' || value === 'photo_reference' || value === 'voice' || value === 'movie' || value === 'location') return value;
   return 'song';
 }
 

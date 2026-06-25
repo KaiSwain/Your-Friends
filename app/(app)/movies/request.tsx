@@ -7,19 +7,22 @@ import { ActionButton } from '../../../src/components/ActionButton';
 import { AppScreen } from '../../../src/components/AppScreen';
 import { TextOrVoiceComposer } from '../../../src/components/TextOrVoiceComposer';
 import { useAuth } from '../../../src/features/auth/AuthContext';
+import { usePremium } from '../../../src/features/premium/PremiumContext';
 import { useSocialGraph } from '../../../src/features/social/SocialGraphContext';
 import { useTheme } from '../../../src/features/theme/ThemeContext';
-import { backOnce, replaceOnce, shouldPopForBackTarget } from '../../../src/lib/navigationGuard';
+import { backOnce, pushOnce, replaceOnce, shouldPopForBackTarget } from '../../../src/lib/navigationGuard';
+import { showPromptPaywall } from '../../../src/lib/premiumGates';
 import { uploadMemoryAudio } from '../../../src/lib/memoryMediaUpload';
 import { fetchPopularMovies, normalizeMovieSearchQuery, searchMovies } from '../../../src/lib/movieSearch';
 import { protectTextFromFontClipping } from '../../../src/theme/fontProtection';
-import { radius, spacing } from '../../../src/theme/tokens';
+import { radius, semanticColors, spacing } from '../../../src/theme/tokens';
 import type { MovieAttachment, PeopleListItem, VoiceAttachment } from '../../../src/types/domain';
 
 export default function MovieRequestScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ subjectId?: string | string[]; subjectType?: string | string[]; backTo?: string | string[] }>();
   const { currentUser } = useAuth();
+  const { isPremium } = usePremium();
   const { createMovieReviewRequest, getPeopleListForUser } = useSocialGraph();
   const { colors, fonts } = useTheme();
   const styles = useMemo(() => makeStyles(colors, fonts), [colors, fonts]);
@@ -212,6 +215,10 @@ export default function MovieRequestScreen() {
 
   async function handleSend() {
     if (!currentUser) return;
+    if (!isPremium) {
+      showPromptPaywall(() => pushOnce(router, '/(app)/store'));
+      return;
+    }
     if (selectedRecipientIds.length === 0) {
       setError('Choose at least one friend with a real account.');
       return;
@@ -257,9 +264,15 @@ export default function MovieRequestScreen() {
   if (!currentUser) return <Redirect href="/(auth)/sign-in" />;
 
   return (
-    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton label={busy ? 'Sending...' : selectedRecipientIds.length > 1 ? `Send to ${selectedRecipientIds.length} friends` : 'Send movie request'} onPress={handleSend} disabled={busy || !selectedMovie || selectedRecipientIds.length === 0} />}>
+    <AppScreen header={header} floatingHeaderOnScroll footer={<ActionButton accentColor={!isPremium ? semanticColors.movieGold : undefined} label={!isPremium ? 'Unlock Premium to send prompts' : busy ? 'Sending...' : selectedRecipientIds.length > 1 ? `Send to ${selectedRecipientIds.length} friends` : 'Send movie request'} onPress={handleSend} disabled={busy || (isPremium && (!selectedMovie || selectedRecipientIds.length === 0))} />}>
       <Text style={styles.title}>Ask for a Movie Rating</Text>
       <Text style={styles.subtitle}>Send a movie to one friend or a group, and each review becomes a shared memory card.</Text>
+      {!isPremium ? (
+        <View style={styles.premiumNotice}>
+          <Ionicons name="lock-closed-outline" size={16} color={colors.accent} />
+          <Text style={styles.premiumNoticeText}>Sending movie prompts is a Premium feature. You can still answer movie prompts friends send you.</Text>
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Ask {selectedRecipientIds.length > 0 ? `(${selectedRecipientIds.length} selected)` : ''}</Text>

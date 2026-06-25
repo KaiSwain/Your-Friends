@@ -19,25 +19,30 @@ export const memoryWallViewOptions: { key: MemoryWallViewMode; label: string }[]
   { key: 'prompts', label: 'Prompts' },
 ];
 
+// Subset used where the Prompts tab is surfaced as its own section instead of a tab.
+export const memoryWallViewOptionsNoPrompts = memoryWallViewOptions.filter((option) => option.key !== 'prompts');
+
 interface MemoryWallViewToggleProps {
   colors?: ColorTokens;
   fonts?: FontSet;
   indicators?: Partial<Record<MemoryWallViewMode, number | boolean>>;
   onChange: (mode: MemoryWallViewMode) => void;
+  options?: { key: MemoryWallViewMode; label: string }[];
   tint?: string;
   value: MemoryWallViewMode;
 }
 
-export function MemoryWallViewToggle({ colors: overrideColors, fonts: overrideFonts, indicators, onChange, tint, value }: MemoryWallViewToggleProps) {
+export function MemoryWallViewToggle({ colors: overrideColors, fonts: overrideFonts, indicators, onChange, options, tint, value }: MemoryWallViewToggleProps) {
   const { colors: appColors, fonts: appFonts } = useTheme();
   const colors = overrideColors ?? appColors;
   const fonts = overrideFonts ?? appFonts;
   const activeTint = tint ?? colors.ink;
   const styles = useMemo(() => makeStyles(colors, fonts, activeTint), [activeTint, colors, fonts]);
+  const visibleOptions = options ?? memoryWallViewOptions;
 
   return (
     <View style={styles.viewToggle} accessibilityRole="tablist">
-      {memoryWallViewOptions.map((option) => {
+      {visibleOptions.map((option) => {
         const active = value === option.key;
         const indicatorValue = indicators?.[option.key];
         const indicatorCount = typeof indicatorValue === 'number' ? indicatorValue : indicatorValue ? 1 : 0;

@@ -47,6 +47,11 @@ const PERKS: Perk[] = [
     body: 'Ask friends for songs, photo memories, voice memories, or notes when you want something new on the wall.',
   },
   {
+    icon: 'film-outline',
+    title: 'Send movie prompts',
+    body: 'Send a movie and collect your friends’ ratings, then watch each review become a shared memory card.',
+  },
+  {
     icon: 'mic-outline',
     title: 'Voice memories',
     body: 'Record quick audio memories and reply to voice prompts when words are better said out loud.',
